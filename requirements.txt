@@ -1,0 +1,11 @@
+requests>=2.28
+Pillow>=9.0
+numpy>=1.23
+opencv-python>=4.5
+imageio>=2.9
+imageio-ffmpeg>=0.4
+moviepy>=1.0.3
+tenacity>=8.0
+tqdm
+logging_config
+PySide6>=6.7

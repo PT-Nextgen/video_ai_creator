@@ -1,0 +1,274 @@
+PENJELASAN GENERAL UNTUK TAHAPAN PROMPT PLANNING :
+
+1. Tujuan utama adalah untuk membuat video dengan durasi panjang
+2. Video ini dibagi menjadi beberapa scene, setiap scene mempunyai 3 pilihan tipe
+   a. Tipe default
+   b. Tipe wan22_i2v
+   c. Tipe i2v
+
+=======================================================================================
+
+SCENE TIPE DEFAULT :
+
+1. Satu scene ini dibagi menjadi dua workflow
+   a. Membuat gambar awal dengan menggunakan AI
+   b. Membuat video berdasarkan gambar awal tersebut dengan menggunakan AI
+2. Gambar awal dibuat dengan menggunakan prompt, template prompt ada di file z_image_promt.json
+   a. positive_prompt : adalah prompt utama untuk membuat gambar
+   b. negative_prompt : adalah hal-hal yang harus dicegah dalam pembuatan gambar, dalam bentuk satu sampai empat kata, dipisah pakai koma
+3. Video dibuat dengan menggunakan gambar awal yang digerakkan dengan prompt, template prompt untuk video ada di file wan22_i2v_prompt.json
+   a. Ada maksimal 5 prompt untuk membuat video dari gambar, dari positive_prompt_one sampai positive_prompt_five
+   b. Prompt ini akan menggerakkan gambar secara berurutan
+   c. positive_prompt_one digunakan pertama kali untuk menggerakkan gambar, menjadi video
+   d. Kemudian frame terakhir dari video akan menjadi gambar acuan untuk prompt berikutnya 
+   e. Prompt berikutnya adalah positive_prompt_two
+   f. Alur ini akan terus berlanjut sampai positive_prompt_five
+   g. Apabila ada prompt kosong, artinya alur akan berhenti
+   h. negative_prompt_one sampai negative_prompt_five : adalah hal-hal yang harus dicegah dalam pembuatan video, dalam bentuk satu sampai empat kata, dipisah pakai koma
+   i. json_api hanya bisa diisi dengan dua pilihan wan22_i2v_4steps_api.json atau wan22_i2v_api.json
+4. Setiap scene mempunyai text audio dalam bahasa Indonesia yang nanti akan dijadikan suara (speech) manusia, panjang text audio dibuat agar bisa menghasilkan suara (speech) manusia dengan durasi hampir sama dengan durasi scene
+5. Setiap scene mempunyai prompt dalam bahasa Inggris untuk membuat sound yang akan dijadikan latar belakang sound, misal suara hujan, suara mesin dan sejenisnya
+6. Sound yang dimaksud dalam point 6 bukan latar belakang musik dan bukan juga suara (speech) manusia, tapi efek suara yang mungkin terdengar dalam setiap scene
+7. Informasi text audio dan prompt untuk sound ada di file scene_meta.json
+
+=======================================================================================
+
+SCENE TIPE WAN22_I2V :
+
+1. Scene ini hanya mempunyai satu workflow
+   a. Membuat video berdasarkan gambar awal dengan menggunakan AI
+   b. Gambar awal sudah diberikan dan tidak perlu dibuat memakai AI
+2. Video dibuat dengan menggunakan gambar awal yang digerakkan dengan prompt, template prompt untuk video ada di file wan22_i2v_prompt.json
+   a. Ada maksimal 5 prompt untuk membuat video dari gambar, dari positive_prompt_one sampai positive_prompt_five
+   b. Prompt ini akan menggerakkan gambar secara berurutan
+   c. positive_prompt_one digunakan pertama kali untuk menggerakkan gambar, menjadi video
+   d. Kemudian frame terakhir dari video akan menjadi gambar acuan untuk prompt berikutnya 
+   e. Prompt berikutnya adalah positive_prompt_two
+   f. Alur ini akan terus berlanjut sampai positive_prompt_five
+   g. Apabila ada prompt kosong, artinya alur akan berhenti
+   h. negative_prompt_one sampai negative_prompt_five : adalah hal-hal yang harus dicegah dalam pembuatan video, dalam bentuk satu sampai empat kata, dipisah pakai koma
+   i. json_api hanya bisa diisi dengan dua pilihan wan22_i2v_4steps_api.json atau wan22_i2v_api.json
+3. Setiap scene mempunyai text audio dalam bahasa Indonesia yang nanti akan dijadikan suara (speech) manusia, panjang text audio dibuat agar bisa menghasilkan suara (speech) manusia dengan durasi hampir sama dengan durasi scene
+4. Setiap scene mempunyai prompt dalam bahasa Inggris untuk membuat sound yang akan dijadikan latar belakang sound, misal suara hujan, suara mesin dan sejenisnya
+5. Sound yang dimaksud dalam point 5 bukan latar belakang musik dan bukan juga suara (speech) manusia, tapi efek suara yang mungkin terdengar dalam setiap scene
+6. Informasi text audio dan prompt untuk sound ada di file scene_meta.json
+
+=======================================================================================
+
+SCENE TIPE I2V :
+
+1. Scene ini tidak mempunyai workflow, beberapa gambar akan diberikan untuk diproses menjadi video
+2. Video dibuat dengan menggabungkan beberapa gambar sehingga menjadi video yang utuh
+3. Perhatikan : semua file json dalam prompt_template tidak boleh diganti
+4. Setiap scene mempunyai text audio dalam bahasa Indonesia yang nanti akan dijadikan suara (speech) manusia, panjang text audio dibuat agar bisa menghasilkan suara (speech) manusia dengan durasi hampir sama dengan durasi scene
+5. Setiap scene mempunyai prompt dalam bahasa Inggris untuk membuat sound yang akan dijadikan latar belakang sound, misal suara hujan, suara mesin dan sejenisnya
+6. Sound yang dimaksud dalam point 5 bukan latar belakang musik dan bukan juga suara (speech) manusia, tapi efek suara yang mungkin terdengar dalam setiap scene
+7. Informasi text audio dan prompt untuk sound ada di file scene_meta.json
+
+=======================================================================================
+
+RULE PEMBUATAN STRUKTUR PROMPT GAMBAR :
+
+1. Prompt HARUS disusun secara berurutan dan deskriptif.
+   Urutan penulisan memengaruhi hasil gambar, bagian awal lebih diprioritaskan oleh model.
+
+2. Bagian pertama prompt WAJIB menjelaskan SUBJECT utama.
+   Subject adalah objek utama yang ingin digambar (manusia, benda, bangunan, makhluk, dll).
+   Contoh: "a cyberpunk samurai", "a realistic portrait of a man".
+
+3. Setelah subject, agent HARUS menambahkan DETAIL SUBJECT.
+   Detail mencakup ciri fisik, atribut, pakaian, ekspresi wajah, atau karakteristik khusus.
+   Contoh: warna rambut, pakaian, armor, ekspresi, usia, gaya.
+
+4. Agent HARUS menambahkan ACTION atau POSE jika relevan.
+   Action menjelaskan apa yang sedang dilakukan subject atau bagaimana posenya.
+   Contoh: standing, walking, looking at the camera, holding a sword.
+
+5. Agent HARUS menambahkan ENVIRONMENT atau BACKGROUND.
+   Environment menjelaskan lokasi, tempat, atau suasana di sekitar subject.
+   Contoh: futuristic city, office room, forest, night scene.
+
+6. Agent HARUS menentukan LIGHTING.
+   Lighting sangat berpengaruh terhadap kualitas visual dan mood gambar.
+   Contoh: cinematic lighting, soft light, dramatic lighting, neon lights, volumetric lighting.
+
+7. Agent HARUS menentukan STYLE atau MEDIUM.
+   Style menjelaskan gaya visual atau media seni yang diinginkan.
+   Contoh: photorealistic, digital painting, anime style, oil painting, 3D render.
+
+8. Agent HARUS menambahkan CAMERA atau COMPOSITION.
+   Camera menjelaskan sudut pandang atau lensa seperti dalam fotografi atau film.
+   Contoh: close-up, wide shot, 85mm lens, shallow depth of field.
+
+10. Prompt HARUS ditulis dalam satu paragraf atau dipisahkan dengan koma.
+    Hindari penggunaan kalimat panjang dengan struktur tata bahasa kompleks.
+
+11. Agent WAJIB membuat NEGATIVE PROMPT secara terpisah (jika sistem mendukung).
+    Negative prompt digunakan untuk menghindari kesalahan visual.
+    Contoh isi negative prompt:
+    low quality, blurry, bad anatomy, bad hands,
+    extra fingers, missing fingers, distorted face,
+    watermark, logo, text.
+
+12. Agent TIDAK BOLEH menggunakan kata yang ambigu tanpa konteks visual.
+    Contoh yang harus dihindari: "nice", "good", "beautiful" tanpa deskripsi tambahan.
+
+13. Agent HARUS menghindari kontradiksi dalam prompt.
+    Contoh: "realistic photo" bersamaan dengan "cartoon style".
+
+14. Agent HARUS memprioritaskan kejelasan dibandingkan kepuitisan bahasa.
+    Prompt bersifat instruksi teknis, bukan narasi sastra.
+
+15. Struktur akhir prompt HARUS mengikuti template berikut:
+
+    [SUBJECT],
+    [DETAIL SUBJECT],
+    [ACTION / POSE],
+    [ENVIRONMENT / BACKGROUND],
+    [LIGHTING],
+    [STYLE],
+    [CAMERA / COMPOSITION]
+
+16. Prompt dibuat dalam bahasa Inggris
+
+=======================================================================================
+
+RULE PEMBUATAN STRUKTUR PROMPT VIDEO :
+
+1. Agent HARUS menjelaskan ACTION dalam bentuk GERAKAN BERKELANJUTAN / CONTINUOUS ACTION.
+   Action tidak boleh statis seperti prompt gambar.
+   Contoh:
+   - "slowly walking forward"
+   - "turning head and smiling"
+   - "camera orbiting around the subject"
+
+2. Agent HARUS menentukan CAMERA MOVEMENT.
+   Contoh:
+   - slow pan
+   - dolly in
+   - tracking shot
+   - handheld
+   - drone shot
+
+3. Agent HARUS menentukan SHOT TYPE.
+   Contoh:
+   - close-up shot
+   - medium shot
+   - wide shot
+   - cinematic establishing shot
+
+4. Agent HARUS menentukan DURATION atau TEMPO secara eksplisit jika dimungkinkan.
+   Contoh:
+   - 5 seconds video
+   - slow motion
+   - real-time movement
+
+5. Agent HARUS menjelaskan TRANSISI GERAKAN / MOTION TRANSITION secara halus.
+   Hindari perubahan mendadak kecuali memang diinginkan.
+   Contoh:
+   - smooth transition
+   - seamless movement
+   - continuous motion
+
+6. Agent HARUS menjelaskan BACKGROUND MOTION jika ada.
+    Lingkungan video tidak boleh selalu statis.
+    Contoh:
+    - moving traffic
+    - flowing water
+    - drifting fog
+    - blowing wind
+
+7. Agent HARUS menjelaskan LIGHTING DYNAMICS jika lighting berubah.
+    Contoh:
+    - light slowly fading
+    - flickering neon lights
+    - dynamic reflections
+
+8. Agent BOLEH menambahkan MOOD atau ATMOSPHERE video.
+    Contoh:
+    - dramatic
+    - calm
+    - tense
+    - futuristic
+
+9. Prompt HARUS ditulis dalam satu paragraf atau dipisahkan dengan koma.
+    Hindari penggunaan kalimat panjang dengan struktur tata bahasa kompleks.
+
+10. Agent WAJIB membuat NEGATIVE PROMPT secara terpisah (jika sistem mendukung).
+    Negative prompt digunakan untuk menghindari kesalahan visual.
+    Contoh isi negative prompt:
+    low quality, blurry, bad anatomy, bad hands,
+    extra fingers, missing fingers, distorted face,
+    watermark, logo, text.
+
+11. Agent TIDAK BOLEH menggunakan kata yang ambigu tanpa konteks visual.
+    Contoh yang harus dihindari: "nice", "good", "beautiful" tanpa deskripsi tambahan.
+
+12. Agent HARUS menghindari kontradiksi dalam prompt.
+    Contoh: "realistic photo" bersamaan dengan "cartoon style".
+
+13. Agent HARUS memprioritaskan kejelasan dibandingkan kepuitisan bahasa.
+    Prompt bersifat instruksi teknis, bukan narasi sastra.
+
+14. Struktur akhir prompt video HARUS mengikuti template berikut:
+
+    [CONTINUOUS ACTION / MOTION],
+    [CAMERA MOVEMENT],
+    [SHOT TYPE],
+    [DURATION / TEMPO],
+    [MOTION TRANSITION],
+    [BACKGROUND MOTION],
+    [LIGHTING + LIGHTING DYNAMICS],
+    [MOOD / ATMOSPHERE]    
+
+15. Prompt dibuat dalam bahasa Inggris
+
+=======================================================================================
+
+TUGAS UTAMA AGENT DALAM TAHAPAN PROMPT PLANNING :
+
+1. Agent melakukan analisa terhadap ide video yang diberikan 
+2. Berdasarkan ide tersebut buatkan scene yang dibutuhkan
+3. Nama scene mulai dari scene_1, sampai jumlah scene yang diinginkan, misal sampai scene_6, apabila ingin membuat 6 scene
+4. Berdasarkan tipe scene yang diberikan, agent akan melakukan tugas yang berbeda
+
+TUGAS AGENT UNTUK SCENE TIPE DEFAULT :
+
+1. Isi positive_prompt dan negative_prompt dalam z_image_prompt.json untuk setiap setiap scene
+2. Isi positive_prompt_two sampai positive_prompt_five dalam wan22_i2v_prompt.json untuk setiap scene
+3. Isi negative_prompt_one sampai negative_prompt_five dalam wan22_i2v_prompt.json untuk setiap scene
+
+TUGAS AGENT UNTUK SCENE TIPE WAN22_I2V :
+
+1. Agent akan diberikan deskripsi gambar awal dan diberikan instruksi prompt seperti apa yang akan dibuat
+2. Isi positive_prompt_two sampai positive_prompt_five dalam wan22_i2v_prompt.json untuk setiap scene
+3. Isi negative_prompt_one sampai negative_prompt_five dalam wan22_i2v_prompt.json untuk setiap scene
+
+TUGAS AGENT UNTUK SCENE TIPE I2V :
+
+1. Tidak ada prompt untuk gambar dan video yang perlu dibuat
+
+TUGAS AGENT DALAM MELENGKAP scene_meta.json :
+
+1. Setiap scene sekarang akan berisi satu file scene_meta.json
+2. Isi scene_title dalam scene_meta.json dengan judul scene, pilih judul yang singkat dalam bahasa Indonesia
+3. Isi duration_seconds dengan durasi scene, durasi dijelaskan melalui perintah yang diberikan kepada agent
+4. Isi voice_text dengan text audio dalam bahasa Indonesia, panjang text audio dibuat agar bisa menghasilkan suara (speech) manusia dengan durasi hampir sama dengan durasi scene
+5. Tidak semua scene mempunyai text audio, apabila ada instruksi untuk mengosongkan voice_text, maka biarkan kosong
+6. Isi sound_prompt dengan prompt untuk membuat sound yang tepat sesuai dengan scene dalam bahasa Inggris, sound yang dimaksud bukan latar belakang musik dan bukan juga suara (speech) manusia, tapi efek suara yang mungkin terdengar dalam setiap scene
+7. Sound prompt terdiri dari beberapa kalimat dipisahkan dengan koma, setiap kalimat maksimal 5 suku kata.
+8. Setiap kalimat akan menjadi satu sound file (wav), jadi nanti akan terdapat beberapa sound (file wav) yang nanti akan digabungkan ke dalam video. 
+9. Tidak semua scene mempunya sound_prompt, apabila ada instruksi untuk mengosongkan sound_prompt, maka biarkan kosong
+10. Isi scene_type sesuai dengan arahan yang diberikan
+11. Biarkan field voice_provider, elevenlabs_voice_id, edgetts_voice_id dan sound_volume, sebab akan diisi manual
+
+OUTPUT YANG DIHARAPKAN :
+
+1. Daftar semua scene dengan nama scene_1 sampai scene_x
+2. Isi file z_image_prompt.json untuk setiap scene
+3. Isi file wan22_i2v_prompt.json untuk setiap scene
+4. Isi file scene_meta.json untuk setiap scene
+
+
+
+

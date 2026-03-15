@@ -1,0 +1,217 @@
+Virtual Environment
+
+Catatan: virtual environment proyek berada di `.venv` pada root repo.
+
+PowerShell (aktifkan):
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+CMD (aktifkan):
+```cmd
+.\.venv\Scripts\activate.bat
+```
+
+Bash (aktifkan):
+```bash
+source ./.venv/bin/activate
+```
+
+Pengeditan prompt sekarang dilakukan melalui `scene_manager_ui.py`.
+
+Yang diatur dari UI:
+- prompt positif dan negatif gambar awal
+- ukuran gambar awal
+- mode Lora, nama Lora, dan kekuatan Lora
+- prompt WAN22
+- pilihan langkah WAN22
+- metadata adegan
+
+Menjalankan UI:
+```powershell
+.\.venv\Scripts\python.exe scene_manager_ui.py
+```
+
+=======================================================================================
+
+Backup Production Script (`backup_production.py`)
+
+Kegunaan:
+- Membuat salinan lengkap dari folder `api_production` ke dalam folder `backup_production` dan
+    menamai ulang salinan tersebut menjadi `api_production_{timestamp}`.
+
+Perilaku singkat:
+- Dijalankan tanpa argumen (jalankan dari root proyek).
+- Jika `backup_production` belum ada, script akan membuatnya.
+- Menyalin seluruh folder `api_production` secara rekursif, menulis ke folder sementara lalu
+    mengganti nama ke format `api_production_YYYYMMDD_HHMMSS` untuk mencegah konflik.
+- Menjamin pembersihan copy parsial jika terjadi kesalahan.
+
+Contoh menjalankan (PowerShell/CMD/Bash):
+```powershell
+python backup_production.py
+```
+
+Catatan:
+- Script ini berguna sebelum melakukan perubahan massal di `api_production` (mis. update banyak scene,
+    mengganti template, atau menjalankan batch generation) sehingga Anda selalu memiliki backup lengkap.
+
+=======================================================================================
+
+RULE PEMBUATAN STRUKTUR PROMPT GAMBAR :
+
+1. Prompt HARUS disusun secara berurutan dan deskriptif.
+   Urutan penulisan memengaruhi hasil gambar, bagian awal lebih diprioritaskan oleh model.
+
+2. Bagian pertama prompt WAJIB menjelaskan SUBJECT utama.
+   Subject adalah objek utama yang ingin digambar (manusia, benda, bangunan, makhluk, dll).
+   Contoh: "a cyberpunk samurai", "a realistic portrait of a man".
+
+3. Setelah subject, agent HARUS menambahkan DETAIL SUBJECT.
+   Detail mencakup ciri fisik, atribut, pakaian, ekspresi wajah, atau karakteristik khusus.
+   Contoh: warna rambut, pakaian, armor, ekspresi, usia, gaya.
+
+4. Agent HARUS menambahkan ACTION atau POSE jika relevan.
+   Action menjelaskan apa yang sedang dilakukan subject atau bagaimana posenya.
+   Contoh: standing, walking, looking at the camera, holding a sword.
+
+5. Agent HARUS menambahkan ENVIRONMENT atau BACKGROUND.
+   Environment menjelaskan lokasi, tempat, atau suasana di sekitar subject.
+   Contoh: futuristic city, office room, forest, night scene.
+
+6. Agent HARUS menentukan LIGHTING.
+   Lighting sangat berpengaruh terhadap kualitas visual dan mood gambar.
+   Contoh: cinematic lighting, soft light, dramatic lighting, neon lights, volumetric lighting.
+
+7. Agent HARUS menentukan STYLE atau MEDIUM.
+   Style menjelaskan gaya visual atau media seni yang diinginkan.
+   Contoh: photorealistic, digital painting, anime style, oil painting, 3D render.
+
+8. Agent HARUS menambahkan CAMERA atau COMPOSITION.
+   Camera menjelaskan sudut pandang atau lensa seperti dalam fotografi atau film.
+   Contoh: close-up, wide shot, 85mm lens, shallow depth of field.
+
+10. Prompt HARUS ditulis dalam satu paragraf atau dipisahkan dengan koma.
+    Hindari penggunaan kalimat panjang dengan struktur tata bahasa kompleks.
+
+11. Agent WAJIB membuat NEGATIVE PROMPT secara terpisah (jika sistem mendukung).
+    Negative prompt digunakan untuk menghindari kesalahan visual.
+    Contoh isi negative prompt:
+    low quality, blurry, bad anatomy, bad hands,
+    extra fingers, missing fingers, distorted face,
+    watermark, logo, text.
+
+12. Agent TIDAK BOLEH menggunakan kata yang ambigu tanpa konteks visual.
+    Contoh yang harus dihindari: "nice", "good", "beautiful" tanpa deskripsi tambahan.
+
+13. Agent HARUS menghindari kontradiksi dalam prompt.
+    Contoh: "realistic photo" bersamaan dengan "cartoon style".
+
+14. Agent HARUS memprioritaskan kejelasan dibandingkan kepuitisan bahasa.
+    Prompt bersifat instruksi teknis, bukan narasi sastra.
+
+15. Struktur akhir prompt HARUS mengikuti template berikut:
+
+    [SUBJECT],
+    [DETAIL SUBJECT],
+    [ACTION / POSE],
+    [ENVIRONMENT / BACKGROUND],
+    [LIGHTING],
+    [STYLE],
+    [CAMERA / COMPOSITION]
+
+16. Prompt dibuat dalam bahasa Inggris
+
+=======================================================================================
+
+RULE PEMBUATAN STRUKTUR PROMPT VIDEO :
+
+1. Agent HARUS menjelaskan ACTION dalam bentuk GERAKAN BERKELANJUTAN / CONTINUOUS ACTION.
+   Action tidak boleh statis seperti prompt gambar.
+   Contoh:
+   - "slowly walking forward"
+   - "turning head and smiling"
+   - "camera orbiting around the subject"
+
+2. Agent HARUS menentukan CAMERA MOVEMENT.
+   Contoh:
+   - slow pan
+   - dolly in
+   - tracking shot
+   - handheld
+   - drone shot
+
+3. Agent HARUS menentukan SHOT TYPE.
+   Contoh:
+   - close-up shot
+   - medium shot
+   - wide shot
+   - cinematic establishing shot
+
+4. Agent HARUS menentukan DURATION atau TEMPO secara eksplisit jika dimungkinkan.
+   Contoh:
+   - 5 seconds video
+   - slow motion
+   - real-time movement
+
+5. Agent HARUS menjelaskan TRANSISI GERAKAN / MOTION TRANSITION secara halus.
+   Hindari perubahan mendadak kecuali memang diinginkan.
+   Contoh:
+   - smooth transition
+   - seamless movement
+   - continuous motion
+
+6. Agent HARUS menjelaskan BACKGROUND MOTION jika ada.
+    Lingkungan video tidak boleh selalu statis.
+    Contoh:
+    - moving traffic
+    - flowing water
+    - drifting fog
+    - blowing wind
+
+7. Agent HARUS menjelaskan LIGHTING DYNAMICS jika lighting berubah.
+    Contoh:
+    - light slowly fading
+    - flickering neon lights
+    - dynamic reflections
+
+8. Agent BOLEH menambahkan MOOD atau ATMOSPHERE video.
+    Contoh:
+    - dramatic
+    - calm
+    - tense
+    - futuristic
+
+9. Prompt HARUS ditulis dalam satu paragraf atau dipisahkan dengan koma.
+    Hindari penggunaan kalimat panjang dengan struktur tata bahasa kompleks.
+
+10. Agent WAJIB membuat NEGATIVE PROMPT secara terpisah (jika sistem mendukung).
+    Negative prompt digunakan untuk menghindari kesalahan visual.
+    Contoh isi negative prompt:
+    low quality, blurry, bad anatomy, bad hands,
+    extra fingers, missing fingers, distorted face,
+    watermark, logo, text.
+
+11. Agent TIDAK BOLEH menggunakan kata yang ambigu tanpa konteks visual.
+    Contoh yang harus dihindari: "nice", "good", "beautiful" tanpa deskripsi tambahan.
+
+12. Agent HARUS menghindari kontradiksi dalam prompt.
+    Contoh: "realistic photo" bersamaan dengan "cartoon style".
+
+13. Agent HARUS memprioritaskan kejelasan dibandingkan kepuitisan bahasa.
+    Prompt bersifat instruksi teknis, bukan narasi sastra.
+
+14. Struktur akhir prompt video HARUS mengikuti template berikut:
+
+    [CONTINUOUS ACTION / MOTION],
+    [CAMERA MOVEMENT],
+    [SHOT TYPE],
+    [DURATION / TEMPO],
+    [MOTION TRANSITION],
+    [BACKGROUND MOTION],
+    [LIGHTING + LIGHTING DYNAMICS],
+    [MOOD / ATMOSPHERE]    
+
+15. Prompt dibuat dalam bahasa Inggris
+
+=======================================================================================

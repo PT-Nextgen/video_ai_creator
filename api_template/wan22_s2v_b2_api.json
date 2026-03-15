@@ -1,0 +1,436 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 676909297921368,
+      "steps": [
+        "103",
+        0
+      ],
+      "cfg": [
+        "105",
+        0
+      ],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "54",
+        0
+      ],
+      "positive": [
+        "93",
+        0
+      ],
+      "negative": [
+        "93",
+        1
+      ],
+      "latent_image": [
+        "93",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "This presenter is explaining an audio-related topic and stares into the camera.",
+      "clip": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "unnatural body bending, torso twisting, shoulders shifting randomly, floating torso, body stretching or shrinking between frames, neck elongation, missing neck, spine distortion, arms crossing through body, uneven shoulder height, body flicker, scale inconsistency, posture warping, unnatural leaning, body vibrating, torso intersecting microphone or logo, jittering position. deformed hands, extra fingers, missing fingers, finger fusion, bent backward fingers, floating or disconnected hands, hands merging with body or microphone, oversized or undersized hands, inconsistent hand position between frames, hands appearing or disappearing suddenly, double hands, palm distortion, wrist twisting unnaturally, jittery finger motion, fingernails flickering. face deformation, asymmetric expression, melted face, mouth jitter, lip morphing, teeth distortion, lips fusing together, over-wide mouth opening, head wobble, unnatural blinking, flickering eyes, eyes misaligned, double pupils, eyelids vanishing, mouth desync with emotion, nose distortion, nostril stretching, jaw popping, head turning unnaturally fast, facial morph between frames, ghosting face, duplicated face overlay, stretched or shrinking head, hair flickering or detaching. flickering brightness, inconsistent exposure, sudden lighting change, shadow popping, overexposed highlights, underexposed shadows, lighting shifting direction, unrealistic glow, color banding, inconsistent white balance, color drift, glowing artifacts on skin, over-saturated tones, inconsistent HDR lighting.frame flicker, motion jitter, ghosting, double exposure, temporal aliasing, inconsistent motion, frame skipping, motion blur hiding facial features, lagging body parts, warped motion trails, interpolation ghost artifacts, unstable subject position, camera shake, unintentional zoom or pan, inconsistent focus depth, frame-to-frame brightness variation. extra limbs, duplicated torso, mutated anatomy, disproportionate body parts, merged geometry, invisible body sections, stretched polygons, low-resolution mesh artifacts, silhouette flicker, melting texture, glitch noise, non-human facial shape, random artifacts near edges.\n",
+      "clip": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "37": {
+    "inputs": {
+      "unet_name": "WAN2.2/wan2.2_s2v_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "38": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "39": {
+    "inputs": {
+      "vae_name": "WAN2.1/wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "52": {
+    "inputs": {
+      "image": "ComfyUI_00172_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "54": {
+    "inputs": {
+      "shift": 8,
+      "model": [
+        "107",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "56": {
+    "inputs": {
+      "audio_encoder": [
+        "57",
+        0
+      ],
+      "audio": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "AudioEncoderEncode",
+    "_meta": {
+      "title": "AudioEncoderEncode"
+    }
+  },
+  "57": {
+    "inputs": {
+      "audio_encoder_name": "wav2vec2_large_english_fp16.safetensors"
+    },
+    "class_type": "AudioEncoderLoader",
+    "_meta": {
+      "title": "AudioEncoderLoader"
+    }
+  },
+  "58": {
+    "inputs": {
+      "audio": "narasumber-5.mp3",
+      "audioUI": "/api/view?filename=narasumber-5.mp3&type=input&subfolder=&rand=0.8781596560555287"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "80": {
+    "inputs": {
+      "samples": [
+        "95",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "82": {
+    "inputs": {
+      "fps": 16,
+      "images": [
+        "96",
+        0
+      ],
+      "audio": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "93": {
+    "inputs": {
+      "width": 480,
+      "height": 848,
+      "length": [
+        "104",
+        0
+      ],
+      "batch_size": 1,
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "audio_encoder_output": [
+        "56",
+        0
+      ],
+      "ref_image": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "WanSoundImageToVideo",
+    "_meta": {
+      "title": "WanSoundImageToVideo"
+    }
+  },
+  "94": {
+    "inputs": {
+      "dim": "t",
+      "index": 0,
+      "amount": 1,
+      "samples": [
+        "79:78",
+        0
+      ]
+    },
+    "class_type": "LatentCut",
+    "_meta": {
+      "title": "LatentCut"
+    }
+  },
+  "95": {
+    "inputs": {
+      "dim": "t",
+      "samples1": [
+        "94",
+        0
+      ],
+      "samples2": [
+        "79:78",
+        0
+      ]
+    },
+    "class_type": "LatentConcat",
+    "_meta": {
+      "title": "LatentConcat"
+    }
+  },
+  "96": {
+    "inputs": {
+      "batch_index": [
+        "100",
+        0
+      ],
+      "length": 4096,
+      "image": [
+        "80",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "ImageFromBatch"
+    }
+  },
+  "100": {
+    "inputs": {
+      "value": 2
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Batch sizes"
+    }
+  },
+  "103": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "104": {
+    "inputs": {
+      "value": 77
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Chunk Length"
+    }
+  },
+  "105": {
+    "inputs": {
+      "value": 3
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "107": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "182",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "113": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "82",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "182": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "79:78": {
+    "inputs": {
+      "dim": "t",
+      "samples1": [
+        "3",
+        0
+      ],
+      "samples2": [
+        "79:77",
+        0
+      ]
+    },
+    "class_type": "LatentConcat",
+    "_meta": {
+      "title": "LatentConcat"
+    }
+  },
+  "79:77": {
+    "inputs": {
+      "seed": 1,
+      "steps": [
+        "103",
+        0
+      ],
+      "cfg": [
+        "105",
+        0
+      ],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "54",
+        0
+      ],
+      "positive": [
+        "79:76",
+        0
+      ],
+      "negative": [
+        "79:76",
+        1
+      ],
+      "latent_image": [
+        "79:76",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "79:76": {
+    "inputs": {
+      "length": [
+        "104",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "video_latent": [
+        "3",
+        0
+      ],
+      "audio_encoder_output": [
+        "56",
+        0
+      ],
+      "ref_image": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "WanSoundImageToVideoExtend",
+    "_meta": {
+      "title": "WanSoundImageToVideoExtend"
+    }
+  }
+}

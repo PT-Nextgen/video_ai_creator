@@ -1,0 +1,29 @@
+{
+  "1": {
+    "inputs": {
+      "text": "voice_text",
+      "voice": "edgetts_voice_id",
+      "speed": 1,
+      "pitch": 0
+    },
+    "class_type": "EdgeTTS",
+    "_meta": {
+      "title": "Edge TTS"
+    }
+  },
+  "2": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "320k",
+      "audioUI": "",
+      "audio": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Audio (MP3)"
+    }
+  }
+}

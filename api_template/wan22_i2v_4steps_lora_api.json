@@ -1,0 +1,731 @@
+{
+  "84": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "85": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 0,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "154",
+        0
+      ],
+      "positive": [
+        "98",
+        0
+      ],
+      "negative": [
+        "98",
+        1
+      ],
+      "latent_image": [
+        "86",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "86": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 244846606059729,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "152",
+        0
+      ],
+      "positive": [
+        "98",
+        0
+      ],
+      "negative": [
+        "98",
+        1
+      ],
+      "latent_image": [
+        "98",
+        2
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "87": {
+    "inputs": {
+      "samples": [
+        "85",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "89": {
+    "inputs": {
+      "text": "negative_prompt_one",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "90": {
+    "inputs": {
+      "vae_name": "WAN2.1/wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "93": {
+    "inputs": {
+      "text": "positive_prompt_one",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "95": {
+    "inputs": {
+      "unet_name": "WAN2.2/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "96": {
+    "inputs": {
+      "unet_name": "WAN2.2/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "97": {
+    "inputs": {
+      "image": "Z-Image_00006_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Start Image"
+    }
+  },
+  "98": {
+    "inputs": {
+      "width": [
+        "214",
+        0
+      ],
+      "height": [
+        "215",
+        0
+      ],
+      "length": [
+        "213",
+        0
+      ],
+      "batch_size": 1,
+      "positive": [
+        "156",
+        0
+      ],
+      "negative": [
+        "158",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ],
+      "clip_vision_output": [
+        "257",
+        0
+      ],
+      "start_image": [
+        "167",
+        2
+      ]
+    },
+    "class_type": "WanImageToVideo",
+    "_meta": {
+      "title": "WanImageToVideo"
+    }
+  },
+  "101": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "102": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "117",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "103": {
+    "inputs": {
+      "shift": 5,
+      "model": [
+        "265",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "104": {
+    "inputs": {
+      "shift": 5,
+      "model": [
+        "264",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "116": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "95",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "117": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "96",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "152": {
+    "inputs": {
+      "index": [
+        "167",
+        1
+      ],
+      "value0": [
+        "104",
+        0
+      ],
+      "value1": [
+        "104",
+        0
+      ],
+      "value2": [
+        "104",
+        0
+      ],
+      "value3": [
+        "104",
+        0
+      ],
+      "value4": [
+        "104",
+        0
+      ]
+    },
+    "class_type": "easy anythingIndexSwitch",
+    "_meta": {
+      "title": "Any Index Switch"
+    }
+  },
+  "154": {
+    "inputs": {
+      "index": [
+        "167",
+        1
+      ],
+      "value0": [
+        "103",
+        0
+      ],
+      "value1": [
+        "103",
+        0
+      ],
+      "value2": [
+        "103",
+        0
+      ],
+      "value3": [
+        "103",
+        0
+      ],
+      "value4": [
+        "103",
+        0
+      ]
+    },
+    "class_type": "easy anythingIndexSwitch",
+    "_meta": {
+      "title": "Any Index Switch"
+    }
+  },
+  "156": {
+    "inputs": {
+      "index": [
+        "167",
+        1
+      ],
+      "value0": [
+        "93",
+        0
+      ],
+      "value1": [
+        "173",
+        0
+      ],
+      "value2": [
+        "193",
+        0
+      ],
+      "value3": [
+        "239",
+        0
+      ],
+      "value4": [
+        "244",
+        0
+      ]
+    },
+    "class_type": "easy anythingIndexSwitch",
+    "_meta": {
+      "title": "Any Index Switch"
+    }
+  },
+  "158": {
+    "inputs": {
+      "index": [
+        "167",
+        1
+      ],
+      "value0": [
+        "89",
+        0
+      ],
+      "value1": [
+        "174",
+        0
+      ],
+      "value2": [
+        "194",
+        0
+      ],
+      "value3": [
+        "238",
+        0
+      ],
+      "value4": [
+        "243",
+        0
+      ]
+    },
+    "class_type": "easy anythingIndexSwitch",
+    "_meta": {
+      "title": "Any Index Switch"
+    }
+  },
+  "167": {
+    "inputs": {
+      "total": 1,
+      "initial_value1": [
+        "97",
+        0
+      ]
+    },
+    "class_type": "easy forLoopStart",
+    "_meta": {
+      "title": "For Loop Start"
+    }
+  },
+  "168": {
+    "inputs": {},
+    "class_type": "easy forLoopEnd",
+    "_meta": {
+      "title": "For Loop End"
+    }
+  },
+  "169": {
+    "inputs": {
+      "flow": [
+        "167",
+        0
+      ],
+      "initial_value1": [
+        "263",
+        2
+      ],
+      "initial_value2": [
+        "231",
+        0
+      ]
+    },
+    "class_type": "easy forLoopEnd",
+    "_meta": {
+      "title": "For Loop End"
+    }
+  },
+  "173": {
+    "inputs": {
+      "text": "positive_prompt_two",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "174": {
+    "inputs": {
+      "text": "negative_prompt_two",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "184": {
+    "inputs": {
+      "preview": "",
+      "previewMode": false,
+      "source": [
+        "167",
+        1
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Current Loop"
+    }
+  },
+  "193": {
+    "inputs": {
+      "text": "positive_prompt_three",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "194": {
+    "inputs": {
+      "text": "negative_prompt_three",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "209": {
+    "inputs": {
+      "frame_rate": [
+        "225",
+        0
+      ],
+      "loop_count": 0,
+      "filename_prefix": "I2VLoop/WanI2VLoop",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "169",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "213": {
+    "inputs": {
+      "value": 81
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Length"
+    }
+  },
+  "214": {
+    "inputs": {
+      "value": 368
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "215": {
+    "inputs": {
+      "value": 640
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "225": {
+    "inputs": {
+      "value": 16
+    },
+    "class_type": "Float",
+    "_meta": {
+      "title": "Frame Per Second"
+    }
+  },
+  "231": {
+    "inputs": {
+      "any_1": [
+        "167",
+        3
+      ],
+      "any_2": [
+        "263",
+        0
+      ]
+    },
+    "class_type": "easy batchAnything",
+    "_meta": {
+      "title": "Batch Any"
+    }
+  },
+  "238": {
+    "inputs": {
+      "text": "negative_prompt_four",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "239": {
+    "inputs": {
+      "text": "positive_prompt_four",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "243": {
+    "inputs": {
+      "text": "negative_prompt_five",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "244": {
+    "inputs": {
+      "text": "positive_prompt_five",
+      "clip": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "254": {
+    "inputs": {
+      "clip_name": "clip_vision_h.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "257": {
+    "inputs": {
+      "crop": "none",
+      "clip_vision": [
+        "254",
+        0
+      ],
+      "image": [
+        "167",
+        2
+      ]
+    },
+    "class_type": "CLIPVisionEncode",
+    "_meta": {
+      "title": "CLIP Vision Encode"
+    }
+  },
+  "260": {
+    "inputs": {
+      "method": "mkl",
+      "image_output": "Hide",
+      "save_prefix": "ComfyUI",
+      "image_ref": [
+        "97",
+        0
+      ],
+      "image_target": [
+        "87",
+        0
+      ]
+    },
+    "class_type": "easy imageColorMatch",
+    "_meta": {
+      "title": "Image Color Match"
+    }
+  },
+  "263": {
+    "inputs": {
+      "split_index": -1,
+      "images": [
+        "260",
+        0
+      ]
+    },
+    "class_type": "VHS_SplitImages",
+    "_meta": {
+      "title": "Next Batch"
+    }
+  },
+  "264": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "strength_model": 1.5,
+      "model": [
+        "101",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "265": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "strength_model": 0.5,
+      "model": [
+        "102",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  }
+}
