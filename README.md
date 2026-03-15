@@ -75,6 +75,7 @@ Field utama:
   - `negative_prompt`
   - `width`
   - `height`
+  - `cfg`
   - `json_api`
 
 Kebutuhan per `scene_type`:
@@ -84,6 +85,8 @@ Kebutuhan per `scene_type`:
   - membutuhkan `scene_meta.json`, `wan22_i2v_prompt.json`, dan minimal satu gambar di root folder scene
 - `wan22_s2v`
   - membutuhkan `scene_meta.json`, `wan22_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_` di root folder scene
+  - `voice_provider` wajib dipilih
+  - `voice_text` wajib diisi
 - `i2v`
   - membutuhkan `scene_meta.json` dan minimal satu gambar di root folder scene
 
@@ -96,6 +99,7 @@ Catatan sumber image:
   - memakai satu gambar terbaru dan satu file audio speech terbaru dari root folder scene
   - file speech harus berawalan `speech_`
   - durasi speech harus kurang dari `19.2` detik
+  - hasil video dipotong mengikuti durasi speech dengan tambahan maksimal `4 frame`
 - `i2v`
   - memakai semua gambar dari root folder scene
 
@@ -144,6 +148,7 @@ Fungsi:
   - ambil satu file audio speech terbaru dari root folder scene
   - upload image dan audio ke ComfyUI
   - generate video dari `wan22_s2v_prompt.json`
+  - potong hasil video sesuai durasi speech dengan tambahan maksimal `4 frame`
 - `scene_type=i2v`
   - ambil semua gambar dari root folder scene
   - compose gambar menjadi video sederhana
@@ -177,6 +182,7 @@ Fungsi utama:
 - edit prompt WAN22 S2V
 - edit ukuran image dan WAN
 - edit ukuran WAN22 S2V
+- edit `CFG` untuk WAN22 S2V
 - edit pengaturan seed image
 - edit Lora image
 - edit Lora WAN High dan Low
@@ -188,7 +194,7 @@ Fungsi utama:
 - menampilkan aset media per scene
 - buka aset ke viewer dengan klik ganda
 - hapus aset dari menu klik kanan
-- jalankan proses image, scene, voice, dan sound
+- jalankan proses image, scene, voice, sound, dan compose
 - menampilkan log proses
 - mengubah konfigurasi server lewat dialog
 
@@ -198,6 +204,14 @@ Perilaku UI:
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_provider` dipilih
 - `sound_prompt` tidak wajib
+- untuk `wan22_s2v`, tab `WAN22 S2V` menyediakan:
+  - `Ukuran`
+  - `CFG`
+  - `Prompt Positif`
+  - `Prompt Negatif`
+- setelah proses selesai dari UI, akan muncul popup:
+  - informasi keberhasilan beserta file output yang terdeteksi
+  - atau ringkasan error jika proses gagal
 
 Menjalankan UI:
 ```powershell
@@ -283,6 +297,16 @@ Resolusi WAN22 S2V yang tersedia:
 - `848x480`
 - `1280x720`
 
+Pengaturan WAN22 S2V:
+- `negative prompt` didukung
+- `cfg` tersedia dari `1.0` sampai `4.0`
+  - default `2.0`
+- node penting:
+  - image input di node `52`
+  - audio input di node `58`
+  - ukuran di node `93`
+  - `cfg` di node `105`
+
 ## Generate Initial Image
 
 Script: `scripts/generate_initial_image.py`
@@ -309,6 +333,7 @@ Fungsi:
 - memilih engine voice otomatis dari `voice_provider`
 - `edgetts` memakai ComfyUI
 - `elevenlabs` memakai API ElevenLabs
+- file output voice selalu memakai awalan `speech_`
 
 Contoh:
 ```powershell
@@ -340,6 +365,10 @@ Fungsi:
 - mencari file video dan audio dalam scene
 - merge video dan audio dengan `ffmpeg` / `ffprobe`
 - menulis output MP4 final ke folder scene
+
+Di UI:
+- tersedia tombol `Compose Adegan`
+- tersedia tombol `Compose Semua Adegan`
 
 Contoh:
 ```powershell
