@@ -99,6 +99,7 @@ Thumbs.db
 
 # Logs / caches / generated
 content_creation.log
+keys.cfg
 history_fetch/
 api_production/
 prompt_planning/

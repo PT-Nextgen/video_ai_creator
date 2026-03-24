@@ -5,12 +5,17 @@ import types
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARENT = os.path.dirname(ROOT)
-API_PRODUCTION = os.path.join(PARENT, os.path.basename(ROOT), "api_production")
+API_PRODUCTION = os.path.join(ROOT, "api_production")
 
 ELEVENLABS_VOICES = [
     ("Yetty Indonesia", "Lpe7uP03WRpCk9XkpFnf"),
     ("Iwan Indonesia", "1kNciG1jHVSuFBPoxdRZ"),
+]
+ELEVENLABS_MODEL_ID = "eleven_v3"
+ELEVENLABS_MODEL_OPTIONS = [
+    ("Eleven v3", "eleven_v3"),
+    ("Eleven Multilingual v2", "eleven_multilingual_v2"),
+    ("Eleven Flash v2.5", "eleven_flash_v2_5"),
 ]
 
 
@@ -20,7 +25,7 @@ def load_json(path):
 
 
 def find_elevenlabs_key():
-    cfg_path = os.path.join(PARENT, "venv", "keys.cfg")
+    cfg_path = os.path.join(ROOT, "keys.cfg")
     if not os.path.exists(cfg_path):
         return None
     try:
@@ -35,7 +40,7 @@ def find_elevenlabs_key():
     return None
 
 
-def synthesize(text, voice_id, api_key, timeout=60):
+def synthesize(text, voice_id, api_key, model_id=ELEVENLABS_MODEL_ID, timeout=60):
     try:
         from elevenlabs import ElevenLabs
     except Exception as e:
@@ -45,7 +50,7 @@ def synthesize(text, voice_id, api_key, timeout=60):
         voice_id=voice_id,
         output_format="mp3_44100_128",
         text=text,
-        model_id="eleven_multilingual_v2",
+        model_id=model_id,
     )
     if isinstance(res, (bytes, bytearray)):
         return bytes(res)
@@ -71,10 +76,11 @@ def synthesize(text, voice_id, api_key, timeout=60):
 
 
 def build_request(scene_meta: dict) -> dict:
+    model_id = str(scene_meta.get("elevenlabs_model_id", ELEVENLABS_MODEL_ID) or ELEVENLABS_MODEL_ID).strip()
     return {
         "voice_id": scene_meta.get("elevenlabs_voice_id"),
         "text": scene_meta.get("voice_text"),
-        "model_id": "eleven_multilingual_v2",
+        "model_id": model_id,
         "output_format": "mp3_44100_128",
     }
 
@@ -103,16 +109,25 @@ def process_scene(scene_dir, api_key, logger=None, write_log=None):
     request = build_request(meta)
     voice_id = request.get("voice_id")
     text = request.get("text")
+    model_id = request.get("model_id") or ELEVENLABS_MODEL_ID
     if not voice_id or not text:
+        if write_log:
+            write_log(f"Scene {scene_dir} tidak memiliki elevenlabs_voice_id atau voice_text yang valid.", level="error")
         if logger:
             logger.warning("scene %s missing voice_id or text", scene_dir)
         return False
 
     try:
-        audio_bytes = synthesize(text, voice_id, api_key)
+        audio_bytes = synthesize(text, voice_id, api_key, model_id=model_id)
     except Exception as e:
         if logger:
             logger.error("ElevenLabs synth failed for %s: %s", scene_dir, e)
+        return False
+    if not audio_bytes:
+        if write_log:
+            write_log(f"ElevenLabs mengembalikan audio kosong untuk {scene_dir}.", level="error")
+        if logger:
+            logger.error("ElevenLabs returned empty audio for %s", scene_dir)
         return False
 
     fname = f"speech_elevenlabs_{int(time.time())}.mp3"

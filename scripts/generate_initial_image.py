@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in os.sys.path:
@@ -64,6 +65,13 @@ def process_scene(scene_dir: str, server: str, timeout: int = 600, interval: flo
     except Exception as e:
         write_log(f"Failed to download image {image_filename} from {image_url}: {e}", level="error")
         return False
+    try:
+        if not os.path.exists(image_out_path) or os.path.getsize(image_out_path) <= 0:
+            write_log(f"Downloaded image missing or empty: {image_out_path}", level="error")
+            return False
+    except Exception as e:
+        write_log(f"Failed to validate downloaded image {image_out_path}: {e}", level="error")
+        return False
 
     write_log(f"Saved image to {image_out_path}")
     return True
@@ -82,17 +90,21 @@ def main():
     if not os.path.exists(base):
         write_log(f"api_production folder not found: {base}", level="error")
         print("api_production folder not found; aborting")
-        return
+        return 1
 
     scenes = sorted([d for d in os.listdir(base) if d.startswith("scene_")])
     if args.scene:
         requested = set(args.scene)
         scenes = [s for s in scenes if s in requested]
+    if not scenes:
+        write_log("Tidak ada scene yang cocok untuk diproses.", level="error")
+        print("No matching scenes found")
+        return 1
 
     loop_count = int(args.loop or 1)
     if loop_count < 1:
         print("Loop count must be >= 1")
-        return
+        return 1
 
     for loop_index in range(loop_count):
         if loop_count > 1:
@@ -104,8 +116,9 @@ def main():
             if not ok:
                 write_log(f"Failed processing {scene}; stopping further work", level="error")
                 print(f"Failed processing {scene}")
-                return
+                return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

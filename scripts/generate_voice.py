@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import os
 import sys
 import time
@@ -12,7 +13,22 @@ from logging_config import setup_logging, get_logger, write_log
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from edgetts.edgetts import build_edgetts_workflow
-from elevenlabs.elevenlabs_tts import API_PRODUCTION, find_elevenlabs_key, process_scene as process_elevenlabs_scene
+
+
+def _load_local_elevenlabs_tts():
+    module_path = os.path.join(ROOT, "elevenlabs", "elevenlabs_tts.py")
+    spec = importlib.util.spec_from_file_location("project_elevenlabs_tts", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load local elevenlabs_tts module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_elevenlabs_tts = _load_local_elevenlabs_tts()
+API_PRODUCTION = _elevenlabs_tts.API_PRODUCTION
+find_elevenlabs_key = _elevenlabs_tts.find_elevenlabs_key
+process_elevenlabs_scene = _elevenlabs_tts.process_scene
 
 
 setup_logging()
@@ -75,6 +91,9 @@ def process_edgetts_scene(scene_dir, server, timeout=POLL_TIMEOUT, interval=POLL
     if scene_meta.get("voice_provider") != "edgetts":
         logger.debug("Scene %s not configured for edgetts", scene_dir)
         return False
+    if not str(scene_meta.get("voice_text", "")).strip() or not str(scene_meta.get("edgetts_voice_id", "")).strip():
+        write_log(f"Scene {scene_dir} tidak memiliki edgetts_voice_id atau voice_text yang valid.")
+        return False
 
     try:
         workflow = build_edgetts_workflow(scene_meta)
@@ -106,6 +125,14 @@ def process_edgetts_scene(scene_dir, server, timeout=POLL_TIMEOUT, interval=POLL
             filename = f"speech_{filename}"
         out_path = os.path.join(scene_dir, filename)
         comfyui_api.download_file_url(file_url, out_path)
+        if not os.path.exists(out_path) or os.path.getsize(out_path) <= 0:
+            write_log(f"File audio EdgeTTS untuk {scene_dir} kosong atau gagal tersimpan.")
+            try:
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+            except OSError:
+                pass
+            return False
         write_log(f"Downloaded audio for {scene_dir} -> {out_path}")
         return True
     except Exception as e:
@@ -116,14 +143,19 @@ def process_edgetts_scene(scene_dir, server, timeout=POLL_TIMEOUT, interval=POLL
 def main(specific_scenes=None, comfyui_server=None):
     if not os.path.exists(API_PRODUCTION):
         print("api_production folder not found:", API_PRODUCTION)
-        return
+        return 1
 
     scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith("scene_")])
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
+    if not scenes:
+        write_log("Tidak ada scene yang cocok untuk diproses.")
+        return 1
 
     elevenlabs_key = find_elevenlabs_key()
     comfyui_server = comfyui_server or get_server_address("comfyui")
+    had_error = False
+    processed_count = 0
 
     for scene in scenes:
         scene_dir = os.path.join(API_PRODUCTION, scene)
@@ -135,19 +167,32 @@ def main(specific_scenes=None, comfyui_server=None):
             meta = load_json(meta_path)
         except Exception as e:
             write_log(f"Gagal membaca {meta_path}: {e}")
+            had_error = True
             continue
 
         provider = str(meta.get("voice_provider", "")).strip().lower()
         print("Processing", scene_dir)
         if provider == "edgetts":
-            process_edgetts_scene(scene_dir, comfyui_server)
+            processed_count += 1
+            if not process_edgetts_scene(scene_dir, comfyui_server):
+                write_log(f"Gagal membuat voice EdgeTTS untuk {scene}.")
+                had_error = True
         elif provider == "elevenlabs":
+            processed_count += 1
             if not elevenlabs_key:
-                write_log("ElevenLabs API key tidak ditemukan.")
+                write_log(f"ElevenLabs API key tidak ditemukan. Gagal memproses {scene}.")
+                had_error = True
                 continue
-            process_elevenlabs_scene(scene_dir, elevenlabs_key, logger=logger, write_log=write_log)
+            if not process_elevenlabs_scene(scene_dir, elevenlabs_key, logger=logger, write_log=write_log):
+                write_log(f"Gagal membuat voice ElevenLabs untuk {scene}.")
+                had_error = True
         else:
             logger.debug("Scene %s tidak memiliki voice_provider yang didukung", scene_dir)
+
+    if processed_count == 0:
+        write_log("Tidak ada scene dengan voice_provider yang didukung untuk diproses.")
+        return 1
+    return 1 if had_error else 0
 
 
 if __name__ == "__main__":
@@ -155,4 +200,4 @@ if __name__ == "__main__":
     parser.add_argument("--scene", "-s", action="append", help="Scene yang diproses (repeatable)")
     parser.add_argument("--server", default=get_server_address("comfyui"), help="ComfyUI server host:port untuk EdgeTTS")
     args = parser.parse_args()
-    main(specific_scenes=args.scene, comfyui_server=args.server)
+    sys.exit(main(specific_scenes=args.scene, comfyui_server=args.server))

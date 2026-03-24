@@ -9,3 +9,4 @@ tenacity>=8.0
 tqdm
 logging_config
 PySide6>=6.7
+elevenlabs>=2.0

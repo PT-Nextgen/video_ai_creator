@@ -17,12 +17,11 @@ from scripts.server_config import get_server_address
 setup_logging()
 logger = get_logger(__name__)
 
-PARENT = os.path.dirname(ROOT)
-API_PRODUCTION = os.path.join(PARENT, os.path.basename(ROOT), 'api_production')
+API_PRODUCTION = os.path.join(ROOT, 'api_production')
 
 
 def find_audiocraft_key():
-    cfg_path = os.path.join(PARENT, 'venv', 'keys.cfg')
+    cfg_path = os.path.join(ROOT, 'keys.cfg')
     if not os.path.exists(cfg_path):
         return None
     try:
@@ -90,7 +89,7 @@ def main(specific_scenes=None, server=None):
 
     api_key = find_audiocraft_key()
     if not api_key:
-        print('AUDIOCRAFTKEY not found. Put keys.cfg in parent/venv or set env variable AUDIOCRAFTKEY')
+        print('AUDIOCRAFTKEY not found. Put keys.cfg in project root or set env variable AUDIOCRAFTKEY')
         return
 
     for scene in scenes:

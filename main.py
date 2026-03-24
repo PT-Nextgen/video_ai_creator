@@ -326,6 +326,13 @@ def process_scene(scene_dir, server):
             write_log(f"Failed to download video {video_filename} from {video_url}: {e}")
             return False
         try:
+            if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
+                write_log(f"Downloaded file missing or empty: {video_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking downloaded file {video_out_path}: {e}")
+            return False
+        try:
             trimmed_duration = trim_video_to_speech_duration(video_out_path, audio_duration, max_extra_frames=4)
             write_log(
                 f"Trimmed wan22_s2v video to speech duration for {scene_dir}: "
@@ -346,6 +353,13 @@ def process_scene(scene_dir, server):
         composed = _compose_i2v_video(scene_dir, imgs, duration_seconds, fps=16)
         if not composed:
             write_log(f"Failed to compose i2v video for {scene_dir}")
+            return False
+        try:
+            if not os.path.exists(composed) or os.path.getsize(composed) == 0:
+                write_log(f"Composed i2v video missing or empty: {composed}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking composed i2v video {composed}: {e}")
             return False
         write_log(f"Completed i2v composition for {scene_dir}: {composed}")
         return True
@@ -516,12 +530,16 @@ def main():
         for m in sorted(missing):
             print('Warning: requested scene not found:', m)
         scenes = [s for s in scenes if s in requested]
+    if not scenes:
+        write_log("Tidak ada scene yang cocok untuk diproses.")
+        print("No matching scenes found")
+        return 1
 
     # Validate loop count
     loop_count = int(args.loop or 1)
     if loop_count < 1:
         print('Loop count must be >= 1')
-        return
+        return 1
 
     for loop_idx in range(loop_count):
         if loop_count > 1:
@@ -533,9 +551,10 @@ def main():
             if not ok:
                 write_log(f"Stopping run due to failure processing {scene}")
                 print(f"Stopped due to failure in {scene}")
-                return
+                return 1
+    return 0
 
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

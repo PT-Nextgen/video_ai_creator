@@ -47,6 +47,14 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 ELEVENLABS_VOICES = [
     ("Yetty Indonesia", "Lpe7uP03WRpCk9XkpFnf"),
     ("Iwan Indonesia", "1kNciG1jHVSuFBPoxdRZ"),
+    ("Kira", "gmnazjXOFoOcWA59sd5m"),
+    ("Zan", "zmqLb9Ysr8fUvDD7hXK8"),
+]
+ELEVENLABS_MODEL_ID = "eleven_v3"
+ELEVENLABS_MODEL_OPTIONS = [
+    ("Eleven v3", "eleven_v3"),
+    ("Eleven Multilingual v2", "eleven_multilingual_v2"),
+    ("Eleven Flash v2.5", "eleven_flash_v2_5"),
 ]
 EDGETTS_VOICES = [
     ("[Indonesian] id-ID Ardi", "[Indonesian] id-ID Ardi"),
@@ -56,6 +64,7 @@ EDGETTS_VOICES = [
 DEFAULT_SCENE_META = {
     "scene_title": "", "duration_seconds": 10, "voice_text": "",
     "voice_provider": "elevenlabs", "elevenlabs_voice_id": "",
+    "elevenlabs_model_id": ELEVENLABS_MODEL_ID,
     "edgetts_voice_id": "", "sound_prompt": "", "sound_volume": "",
     "scene_type": "default",
 }
@@ -412,6 +421,9 @@ class SceneEditorWindow(QMainWindow):
         self.elevenlabs_voice_input.addItem("", "")
         for voice_name, voice_id in ELEVENLABS_VOICES:
             self.elevenlabs_voice_input.addItem(voice_name, voice_id)
+        self.elevenlabs_model_input = QComboBox()
+        for model_label, model_id in ELEVENLABS_MODEL_OPTIONS:
+            self.elevenlabs_model_input.addItem(model_label, model_id)
         self.edgetts_voice_input = QComboBox()
         self.edgetts_voice_input.addItem("", "")
         for voice_name, voice_id in EDGETTS_VOICES:
@@ -512,7 +524,8 @@ class SceneEditorWindow(QMainWindow):
         for signal in [
             self.scene_title_input.textChanged, self.duration_input.currentTextChanged,
             self.scene_type_combo.currentTextChanged, self.voice_provider_combo.currentTextChanged,
-            self.elevenlabs_voice_input.currentTextChanged, self.edgetts_voice_input.currentTextChanged,
+            self.elevenlabs_voice_input.currentTextChanged, self.elevenlabs_model_input.currentTextChanged,
+            self.edgetts_voice_input.currentTextChanged,
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_step_combo.currentIndexChanged, self.wan_size_input.currentTextChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged,
@@ -584,7 +597,8 @@ class SceneEditorWindow(QMainWindow):
         meta_layout.addRow(self.duration_label, self.duration_input)
         for label, widget in [
             ("Tipe Adegan", self.scene_type_combo), ("Penyedia Suara", self.voice_provider_combo),
-            ("Suara ElevenLabs", self.elevenlabs_voice_input), ("ID Suara EdgeTTS", self.edgetts_voice_input),
+            ("Suara ElevenLabs", self.elevenlabs_voice_input), ("Model ElevenLabs", self.elevenlabs_model_input),
+            ("ID Suara EdgeTTS", self.edgetts_voice_input),
             ("Teks Suara", self.voice_text_input), ("Prompt Suara Latar", self.sound_prompt_input),
             ("Volume Suara Latar", self.sound_volume_input),
         ]:
@@ -1018,6 +1032,9 @@ class SceneEditorWindow(QMainWindow):
                 self.elevenlabs_voice_input.addItem(label, elevenlabs_voice_id)
                 index = self.elevenlabs_voice_input.findData(elevenlabs_voice_id)
             self.elevenlabs_voice_input.setCurrentIndex(max(index, 0))
+            elevenlabs_model_id = str(meta.get("elevenlabs_model_id", ELEVENLABS_MODEL_ID))
+            index = self.elevenlabs_model_input.findData(elevenlabs_model_id)
+            self.elevenlabs_model_input.setCurrentIndex(max(index, 0))
             edgetts_voice_id = str(meta.get("edgetts_voice_id", ""))
             index = self.edgetts_voice_input.findData(edgetts_voice_id)
             if index < 0 and edgetts_voice_id:
@@ -1093,6 +1110,7 @@ class SceneEditorWindow(QMainWindow):
             "voice_text": self.voice_text_input.toPlainText().strip(),
             "voice_provider": self.voice_provider_combo.currentText().strip(),
             "elevenlabs_voice_id": str(self.elevenlabs_voice_input.currentData() or "").strip(),
+            "elevenlabs_model_id": str(self.elevenlabs_model_input.currentData() or ELEVENLABS_MODEL_ID).strip(),
             "edgetts_voice_id": str(self.edgetts_voice_input.currentData() or "").strip(),
             "sound_prompt": self.sound_prompt_input.toPlainText().strip(),
             "sound_volume": self.sound_volume_input.text().strip(),
@@ -1165,13 +1183,11 @@ class SceneEditorWindow(QMainWindow):
 
     def parse_seed_value(self):
         if self.z_use_random_seed_input.isChecked():
-            value = self.z_seed_input.text().strip()
-            if not value:
-                return 1
-        else:
-            value = self.z_seed_input.text().strip()
-            if not value:
-                raise ValueError("Seed statik wajib diisi saat Random Seed dimatikan.")
+            # Ignore any stale value in the static seed input when random mode is enabled.
+            return 1
+        value = self.z_seed_input.text().strip()
+        if not value:
+            raise ValueError("Seed statik wajib diisi saat Random Seed dimatikan.")
         try:
             parsed = int(value)
         except ValueError:
