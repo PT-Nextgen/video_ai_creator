@@ -63,7 +63,7 @@
   },
   "37": {
     "inputs": {
-      "unet_name": "WAN2.2/wan2.2_s2v_14B_fp8_scaled.safetensors",
+      "unet_name": "WAN2.2/wan2.2_s2v_14B_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -104,7 +104,7 @@
     "inputs": {
       "shift": 8,
       "model": [
-        "107",
+        "182",
         0
       ]
     },
@@ -276,7 +276,7 @@
   },
   "103": {
     "inputs": {
-      "value": 4
+      "value": 20
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -299,20 +299,6 @@
     "class_type": "PrimitiveFloat",
     "_meta": {
       "title": "CFG"
-    }
-  },
-  "107": {
-    "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
-      "strength_model": 1,
-      "model": [
-        "182",
-        0
-      ]
-    },
-    "class_type": "LoraLoaderModelOnly",
-    "_meta": {
-      "title": "Load LoRA"
     }
   },
   "113": {

@@ -18,8 +18,10 @@ TEMPLATE_B3 = "wan22_s2v_b3_api.json"
 TEMPLATE_B4 = "wan22_s2v_b4_api.json"
 MAX_AUDIO_DURATION = 19.2
 SIZE_OPTIONS = [
+    ("368x640", 368, 640),
     ("480x848", 480, 848),
     ("720x1280", 720, 1280),
+    ("640x368", 640, 368),
     ("848x480", 848, 480),
     ("1280x720", 1280, 720),
 ]
@@ -174,7 +176,7 @@ def build_workflow(s2v_prompt: dict, image_name: str, audio_name: str, audio_dur
         cfg_value = float(s2v_prompt.get("cfg", DEFAULT_PROMPT["cfg"]))
     except (TypeError, ValueError):
         cfg_value = DEFAULT_PROMPT["cfg"]
-    cfg_value = max(1.0, min(4.0, cfg_value))
+    cfg_value = max(1.0, min(6.0, cfg_value))
     if "105" in workflow and isinstance(workflow["105"], dict):
         inputs = workflow["105"].get("inputs")
         if isinstance(inputs, dict):

@@ -44,6 +44,8 @@ Field utama:
   - `voice_text`
   - `voice_provider`
   - `elevenlabs_voice_id`
+  - `elevenlabs_model_id`
+  - `generate_caption`
   - `edgetts_voice_id`
   - `sound_prompt`
   - `sound_volume`
@@ -103,6 +105,26 @@ Catatan sumber image:
 - `i2v`
   - memakai semua gambar dari root folder scene
 
+Catatan voice dan caption:
+- `voice_text`
+  - dipakai sebagai sumber TTS
+  - dipakai juga sebagai sumber caption
+- `elevenlabs_model_id`
+  - model ElevenLabs per scene
+  - nilai yang didukung:
+    - `eleven_v3`
+    - `eleven_multilingual_v2`
+    - `eleven_flash_v2_5`
+- `generate_caption`
+  - boolean
+  - default `true`
+  - jika aktif, video yang selesai dibuat akan langsung diburn caption otomatis
+  - caption tidak membuat file `__captioned` tambahan pada alur otomatis; video final ditimpa dengan versi yang sudah bercaption
+
+Catatan trimming video:
+- pemotongan video mengikuti durasi speech hanya berlaku untuk `scene_type=wan22_s2v`
+- scene type lain tidak dipotong otomatis mengikuti speech
+
 ## Server Config
 
 Konfigurasi server disimpan di `server_config.json`.
@@ -139,19 +161,23 @@ Fungsi:
   - download image
   - upload image ke ComfyUI
   - generate video dari `wan22_i2v_prompt.json`
+  - jika `generate_caption=true`, burn caption ke video hasil
 - `scene_type=wan22_i2v`
   - ambil satu gambar terbaru dari root folder scene
   - upload image ke ComfyUI
   - generate video dari `wan22_i2v_prompt.json`
+  - jika `generate_caption=true`, burn caption ke video hasil
 - `scene_type=wan22_s2v`
   - ambil satu gambar terbaru dari root folder scene
   - ambil satu file audio speech terbaru dari root folder scene
   - upload image dan audio ke ComfyUI
   - generate video dari `wan22_s2v_prompt.json`
   - potong hasil video sesuai durasi speech dengan tambahan maksimal `4 frame`
+  - jika `generate_caption=true`, burn caption ke video hasil setelah trim
 - `scene_type=i2v`
   - ambil semua gambar dari root folder scene
   - compose gambar menjadi video sederhana
+  - jika `generate_caption=true`, burn caption ke video hasil
 
 Argumen:
 - `--server`, `-s`
@@ -180,6 +206,11 @@ Fungsi utama:
 - edit prompt image
 - edit prompt WAN
 - edit prompt WAN22 S2V
+- pilih model ElevenLabs:
+  - `Eleven v3`
+  - `Eleven Multilingual v2`
+  - `Eleven Flash v2.5`
+- aktif/nonaktif caption otomatis per scene lewat checkbox `Generate Caption`
 - edit ukuran image dan WAN
 - edit ukuran WAN22 S2V
 - edit `CFG` untuk WAN22 S2V
@@ -204,6 +235,8 @@ Perilaku UI:
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_provider` dipilih
 - `sound_prompt` tidak wajib
+- `Generate Caption` default aktif untuk scene baru
+- caption tidak lagi dibuat lewat tombol terpisah; caption berjalan otomatis setelah video selesai dibentuk jika `Generate Caption` aktif
 - untuk `wan22_s2v`, tab `WAN22 S2V` menyediakan:
   - `Ukuran`
   - `CFG`
@@ -299,7 +332,7 @@ Resolusi WAN22 S2V yang tersedia:
 
 Pengaturan WAN22 S2V:
 - `negative prompt` didukung
-- `cfg` tersedia dari `1.0` sampai `4.0`
+- `cfg` tersedia dari `1.0` sampai `6.0`
   - default `2.0`
 - node penting:
   - image input di node `52`
@@ -333,11 +366,21 @@ Fungsi:
 - memilih engine voice otomatis dari `voice_provider`
 - `edgetts` memakai ComfyUI
 - `elevenlabs` memakai API ElevenLabs
+- model ElevenLabs dibaca dari `elevenlabs_model_id`
 - file output voice selalu memakai awalan `speech_`
 
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_voice.py --server 127.0.0.1:8188 --scene scene_1
+```
+
+Konfigurasi key:
+- `ELEVENLABSKEY` dibaca dari `keys.cfg` di root project
+
+Contoh `keys.cfg`:
+```ini
+ELEVENLABSKEY=isi_api_key_elevenlabs
+AUDIOCRAFTKEY=isi_api_key_audiocraft
 ```
 
 ### Generate Sound
@@ -350,12 +393,33 @@ Fungsi:
 - menyimpan hasil WAV ke folder scene
 
 Catatan:
-- membaca `../venv/keys.cfg` untuk `AUDIOCRAFTKEY`
+- membaca `keys.cfg` di root project untuk `AUDIOCRAFTKEY`
 
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_sound.py --server 127.0.0.1:7777 --scene scene_1
 ```
+
+## Caption Otomatis
+
+Script pendukung: `scripts/generate_caption.py`
+
+Fungsi:
+- membaca `voice_text` dari `scene_meta.json`
+- membersihkan audio tags seperti `[warmly]` agar tidak ikut tampil di subtitle
+- memakai `faster-whisper` di CPU untuk membantu timing caption
+- membagi caption menjadi beberapa potongan pendek
+- burn subtitle langsung ke video final
+
+Perilaku:
+- caption berjalan otomatis setelah video scene selesai dibuat jika `generate_caption=true`
+- caption juga diterapkan pada output `Compose Adegan`
+- sumber teks caption selalu dari `voice_text`
+- file `.caption.srt` disimpan di samping video yang dicaption
+
+Catatan:
+- `faster-whisper` akan mengunduh model saat pertama kali dipakai
+- model default caption saat ini adalah `base`
 
 ## Compose Video
 
@@ -364,7 +428,8 @@ Script: `scripts/generate_compose.py`
 Fungsi:
 - mencari file video dan audio dalam scene
 - merge video dan audio dengan `ffmpeg` / `ffprobe`
-- menulis output MP4 final ke folder scene
+- menulis output MP4 final ke folder `api_production/combined`
+- jika `generate_caption=true`, output scene di `combined` langsung diburn caption otomatis
 
 Di UI:
 - tersedia tombol `Compose Adegan`

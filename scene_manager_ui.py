@@ -39,6 +39,7 @@ MAIN_SCRIPT = ROOT / "main.py"
 INITIAL_IMAGE_SCRIPT = ROOT / "scripts" / "generate_initial_image.py"
 VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
 SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
+CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -48,6 +49,7 @@ ELEVENLABS_VOICES = [
     ("Yetty Indonesia", "Lpe7uP03WRpCk9XkpFnf"),
     ("Iwan Indonesia", "1kNciG1jHVSuFBPoxdRZ"),
     ("Kira", "gmnazjXOFoOcWA59sd5m"),
+    ("Livna", "GdyFAZdMpKMBHw5pc1Bu"),
     ("Zan", "zmqLb9Ysr8fUvDD7hXK8"),
 ]
 ELEVENLABS_MODEL_ID = "eleven_v3"
@@ -65,6 +67,7 @@ DEFAULT_SCENE_META = {
     "scene_title": "", "duration_seconds": 10, "voice_text": "",
     "voice_provider": "elevenlabs", "elevenlabs_voice_id": "",
     "elevenlabs_model_id": ELEVENLABS_MODEL_ID,
+    "generate_caption": True,
     "edgetts_voice_id": "", "sound_prompt": "", "sound_volume": "",
     "scene_type": "default",
 }
@@ -130,10 +133,37 @@ def build_scene_templates(title: str, scene_type: str, duration: int):
 
 def create_scene_files(scene_dir: Path, meta=None, z_prompt=None, wan_prompt=None, wan22_s2v_prompt=None):
     scene_dir.mkdir(parents=True, exist_ok=True)
-    write_json(scene_dir / "scene_meta.json", meta or DEFAULT_SCENE_META)
+    resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
+    if isinstance(meta, dict):
+        resolved_meta.update(meta)
+    scene_type = str(resolved_meta.get("scene_type", "default")).strip()
+    write_json(scene_dir / "scene_meta.json", resolved_meta)
+    sync_scene_prompt_files(
+        scene_dir,
+        scene_type=scene_type,
+        z_prompt=z_prompt or DEFAULT_Z_IMAGE_PROMPT,
+        wan_prompt=wan_prompt or DEFAULT_WAN_PROMPT,
+        s2v_prompt=wan22_s2v_prompt or DEFAULT_WAN22_S2V_PROMPT,
+    )
+
+
+def sync_scene_prompt_files(scene_dir: Path, scene_type: str, z_prompt: dict, wan_prompt: dict, s2v_prompt: dict):
+    """Ensure prompt JSON files exist according to selected scene type.
+
+    Rules:
+    - z_image_prompt.json: always present
+    - wan22_i2v_prompt.json: only for default/wan22/wan22_i2v
+    - wan22_s2v_prompt.json: always present (used when switching to s2v later)
+    """
     write_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
-    write_json(scene_dir / "wan22_i2v_prompt.json", wan_prompt or DEFAULT_WAN_PROMPT)
-    write_json(scene_dir / "wan22_s2v_prompt.json", wan22_s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
+    write_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
+
+    wan_required_types = {"default", "wan22", "wan22_i2v"}
+    wan_path = scene_dir / "wan22_i2v_prompt.json"
+    if scene_type in wan_required_types:
+        write_json(wan_path, wan_prompt or DEFAULT_WAN_PROMPT)
+    elif wan_path.exists():
+        wan_path.unlink()
 
 
 def duplicate_directory(src: Path, dst: Path):
@@ -428,6 +458,8 @@ class SceneEditorWindow(QMainWindow):
         self.edgetts_voice_input.addItem("", "")
         for voice_name, voice_id in EDGETTS_VOICES:
             self.edgetts_voice_input.addItem(voice_name, voice_id)
+        self.generate_caption_input = QCheckBox("Generate Caption")
+        self.generate_caption_input.setChecked(True)
         self.voice_text_input = QTextEdit()
         self.sound_prompt_input = QTextEdit()
         self.sound_volume_input = QLineEdit()
@@ -469,7 +501,7 @@ class SceneEditorWindow(QMainWindow):
         for label, width, height in WAN22_S2V_SIZE_OPTIONS:
             self.s2v_size_input.addItem(label, (width, height))
         self.s2v_cfg_input = QDoubleSpinBox()
-        self.s2v_cfg_input.setRange(1.0, 4.0)
+        self.s2v_cfg_input.setRange(1.0, 6.0)
         self.s2v_cfg_input.setSingleStep(0.1)
         self.s2v_cfg_input.setDecimals(1)
         self.s2v_cfg_input.setValue(float(DEFAULT_WAN22_S2V_PROMPT.get("cfg", 2.0)))
@@ -530,6 +562,7 @@ class SceneEditorWindow(QMainWindow):
             self.z_size_input.currentTextChanged, self.wan_step_combo.currentIndexChanged, self.wan_size_input.currentTextChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged,
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
+            self.generate_caption_input.checkStateChanged,
             self.wan_use_lora_input.checkStateChanged,
         ]:
             signal.connect(self.refresh_scene_status)
@@ -598,7 +631,7 @@ class SceneEditorWindow(QMainWindow):
         for label, widget in [
             ("Tipe Adegan", self.scene_type_combo), ("Penyedia Suara", self.voice_provider_combo),
             ("Suara ElevenLabs", self.elevenlabs_voice_input), ("Model ElevenLabs", self.elevenlabs_model_input),
-            ("ID Suara EdgeTTS", self.edgetts_voice_input),
+            ("ID Suara EdgeTTS", self.edgetts_voice_input), ("Generate Caption", self.generate_caption_input),
             ("Teks Suara", self.voice_text_input), ("Prompt Suara Latar", self.sound_prompt_input),
             ("Volume Suara Latar", self.sound_volume_input),
         ]:
@@ -1042,6 +1075,7 @@ class SceneEditorWindow(QMainWindow):
                 self.edgetts_voice_input.addItem(label, edgetts_voice_id)
                 index = self.edgetts_voice_input.findData(edgetts_voice_id)
             self.edgetts_voice_input.setCurrentIndex(max(index, 0))
+            self.generate_caption_input.setChecked(bool(meta.get("generate_caption", True)))
             self.voice_text_input.setPlainText(str(meta.get("voice_text", "")))
             self.sound_prompt_input.setPlainText(str(meta.get("sound_prompt", "")))
             self.sound_volume_input.setText(str(meta.get("sound_volume", "")))
@@ -1111,6 +1145,7 @@ class SceneEditorWindow(QMainWindow):
             "voice_provider": self.voice_provider_combo.currentText().strip(),
             "elevenlabs_voice_id": str(self.elevenlabs_voice_input.currentData() or "").strip(),
             "elevenlabs_model_id": str(self.elevenlabs_model_input.currentData() or ELEVENLABS_MODEL_ID).strip(),
+            "generate_caption": self.generate_caption_input.isChecked(),
             "edgetts_voice_id": str(self.edgetts_voice_input.currentData() or "").strip(),
             "sound_prompt": self.sound_prompt_input.toPlainText().strip(),
             "sound_volume": self.sound_volume_input.text().strip(),
@@ -1300,10 +1335,15 @@ class SceneEditorWindow(QMainWindow):
             )
             if reply != QMessageBox.Yes:
                 return False
+        scene_type = str(meta.get("scene_type", "default")).strip()
         write_json(self.current_scene_dir / "scene_meta.json", meta)
-        write_json(self.current_scene_dir / "z_image_prompt.json", z_prompt)
-        write_json(self.current_scene_dir / "wan22_i2v_prompt.json", wan_prompt)
-        write_json(self.current_scene_dir / "wan22_s2v_prompt.json", s2v_prompt)
+        sync_scene_prompt_files(
+            self.current_scene_dir,
+            scene_type=scene_type,
+            z_prompt=z_prompt,
+            wan_prompt=wan_prompt,
+            s2v_prompt=s2v_prompt,
+        )
         self.refresh_scene_status()
         if reload_list:
             self.reload_scene_list()

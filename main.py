@@ -24,6 +24,7 @@ from z_image.z_image import (
 )
 from wan22_i2v.wan22_i2v import build_wan_workflow, send_workflow as send_wan_workflow
 from wan22_s2v.wan22_s2v import (
+    DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT,
     MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION,
     build_wan22_s2v_workflow,
     get_audio_duration as get_s2v_audio_duration,
@@ -31,12 +32,14 @@ from wan22_s2v.wan22_s2v import (
     trim_video_to_speech_duration,
 )
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
+from scripts.generate_caption import apply_caption_to_video
 
 
 API_PRODUCTION = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
 POLL_INTERVAL = 10.0
 POLL_TIMEOUT = 600
+WAN22_S2V_POLL_TIMEOUT = 2400
 
 # initialize logging for the process (idempotent)
 setup_logging()
@@ -50,6 +53,18 @@ def _read_scene_json(scene_dir, filename, required=False):
             raise FileNotFoundError(f"Missing required file: {path}")
         return {}
     return load_json(path)
+
+
+def _ensure_scene_json(scene_dir, filename, default_data):
+    path = os.path.join(scene_dir, filename)
+    if os.path.exists(path):
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, ensure_ascii=False, indent=2)
+        write_log(f"{filename} tidak ditemukan di {scene_dir}; dibuat otomatis dari default.")
+    except Exception as e:
+        write_log(f"Gagal membuat default {filename} di {scene_dir}: {e}", level="error")
 
 
 
@@ -71,6 +86,15 @@ def process_scene(scene_dir, server):
         return False
 
     scene_type = scene_meta.get('scene_type', 'default')
+
+    def _apply_caption_if_enabled(video_path):
+        if not scene_meta.get("generate_caption", True):
+            return True
+        try:
+            return apply_caption_to_video(Path(scene_dir), Path(video_path), overwrite=True)
+        except Exception as e:
+            write_log(f"Failed to apply caption for {scene_dir}: {e}")
+            return False
 
     def _find_images(sd):
         patterns = ['*.png', '*.jpg', '*.jpeg', '*.webp']
@@ -138,7 +162,7 @@ def process_scene(scene_dir, server):
                 break
         return returned_name or os.path.basename(path)
 
-    def _compose_i2v_video(sd, image_paths, duration_seconds, fps=16):
+    def _compose_i2v_video(sd, image_paths, duration_seconds, fps=16, target_w=368, target_h=640):
         # create a simple hold-each-image-for-N-frames video
         n = len(image_paths)
         if n == 0:
@@ -149,8 +173,8 @@ def process_scene(scene_dir, server):
         rem = total_frames % n
         video_name = f"i2v_compose_{int(datetime.utcnow().timestamp())}.mp4"
         video_out_path = os.path.join(sd, video_name)
-        # ensure each source image is placed onto a 368x640 canvas without scaling
-        def _ensure_canvas_size(path, target_w=368, target_h=640):
+        # ensure each source image is placed onto the target canvas without stretching
+        def _ensure_canvas_size(path, target_w=target_w, target_h=target_h):
             # create a resized (fit within target) copy in scene_dir/resized/
             # Behavior: do NOT crop; do NOT stretch. Scale down if larger to fit.
             # Do NOT upscale small images (preserve quality). Then center-pad to target.
@@ -255,10 +279,13 @@ def process_scene(scene_dir, server):
         except Exception as e:
             write_log(f"Error checking downloaded file {video_out_path}: {e}")
             return False
+        if not _apply_caption_if_enabled(video_out_path):
+            return False
         write_log(f"Completed processing {scene_dir}")
         return True
 
     if scene_type == 'wan22_s2v':
+        _ensure_scene_json(scene_dir, 'wan22_s2v_prompt.json', DEFAULT_WAN22_S2V_PROMPT)
         img_path = _find_latest_root_image(scene_dir)
         if not img_path:
             write_log(f"wan22_s2v scene requires at least one input image in root folder {scene_dir}")
@@ -308,7 +335,13 @@ def process_scene(scene_dir, server):
         write_log(f"Posted wan22_s2v workflow for {scene_dir}, prompt_id={prompt_id}")
         video_out = None
         if prompt_id:
-            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+            video_out = comfyui_api.wait_for_output(
+                server,
+                prompt_id,
+                output_type='video',
+                timeout=WAN22_S2V_POLL_TIMEOUT,
+                interval=POLL_INTERVAL,
+            )
         if not video_out:
             write_log(f"No video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
             return False
@@ -341,6 +374,8 @@ def process_scene(scene_dir, server):
         except Exception as e:
             write_log(f"Failed to trim wan22_s2v video for {scene_dir}: {e}")
             return False
+        if not _apply_caption_if_enabled(video_out_path):
+            return False
         write_log(f"Completed processing {scene_dir}")
         return True
 
@@ -350,7 +385,23 @@ def process_scene(scene_dir, server):
             write_log(f"i2v scene requires at least one input image in {scene_dir}; found none")
             return False
         duration_seconds = float(scene_meta.get('duration_seconds', 1))
-        composed = _compose_i2v_video(scene_dir, imgs, duration_seconds, fps=16)
+        z_prompt = _read_scene_json(scene_dir, 'z_image_prompt.json', required=False)
+        try:
+            i2v_width = int(z_prompt.get('width', 368))
+        except (TypeError, ValueError):
+            i2v_width = 368
+        try:
+            i2v_height = int(z_prompt.get('height', 640))
+        except (TypeError, ValueError):
+            i2v_height = 640
+        composed = _compose_i2v_video(
+            scene_dir,
+            imgs,
+            duration_seconds,
+            fps=16,
+            target_w=i2v_width,
+            target_h=i2v_height,
+        )
         if not composed:
             write_log(f"Failed to compose i2v video for {scene_dir}")
             return False
@@ -360,6 +411,8 @@ def process_scene(scene_dir, server):
                 return False
         except Exception as e:
             write_log(f"Error checking composed i2v video {composed}: {e}")
+            return False
+        if not _apply_caption_if_enabled(composed):
             return False
         write_log(f"Completed i2v composition for {scene_dir}: {composed}")
         return True
@@ -507,6 +560,9 @@ def process_scene(scene_dir, server):
             return False
     except Exception as e:
         write_log(f"Error checking downloaded file {video_out_path}: {e}")
+        return False
+
+    if not _apply_caption_if_enabled(video_out_path):
         return False
 
     write_log(f"Completed processing {scene_dir}")

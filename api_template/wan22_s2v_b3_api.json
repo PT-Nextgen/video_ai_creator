@@ -63,7 +63,7 @@
   },
   "37": {
     "inputs": {
-      "unet_name": "WAN2.2/wan2.2_s2v_14B_fp8_scaled.safetensors",
+      "unet_name": "WAN2.2/wan2.2_s2v_14B_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -104,7 +104,7 @@
     "inputs": {
       "shift": 8,
       "model": [
-        "107",
+        "182",
         0
       ]
     },
@@ -276,7 +276,7 @@
   },
   "103": {
     "inputs": {
-      "value": 4
+      "value": 20
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -299,20 +299,6 @@
     "class_type": "PrimitiveFloat",
     "_meta": {
       "title": "CFG"
-    }
-  },
-  "107": {
-    "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
-      "strength_model": 1,
-      "model": [
-        "182",
-        0
-      ]
-    },
-    "class_type": "LoraLoaderModelOnly",
-    "_meta": {
-      "title": "Load LoRA"
     }
   },
   "113": {
@@ -342,59 +328,6 @@
     "class_type": "PathchSageAttentionKJ",
     "_meta": {
       "title": "Patch Sage Attention KJ"
-    }
-  },
-  "79:78": {
-    "inputs": {
-      "dim": "t",
-      "samples1": [
-        "3",
-        0
-      ],
-      "samples2": [
-        "79:77",
-        0
-      ]
-    },
-    "class_type": "LatentConcat",
-    "_meta": {
-      "title": "LatentConcat"
-    }
-  },
-  "79:77": {
-    "inputs": {
-      "seed": 1,
-      "steps": [
-        "103",
-        0
-      ],
-      "cfg": [
-        "105",
-        0
-      ],
-      "sampler_name": "uni_pc",
-      "scheduler": "simple",
-      "denoise": 1,
-      "model": [
-        "54",
-        0
-      ],
-      "positive": [
-        "79:76",
-        0
-      ],
-      "negative": [
-        "79:76",
-        1
-      ],
-      "latent_image": [
-        "79:76",
-        2
-      ]
-    },
-    "class_type": "KSampler",
-    "_meta": {
-      "title": "KSampler"
     }
   },
   "79:76": {
@@ -433,21 +366,93 @@
       "title": "WanSoundImageToVideoExtend"
     }
   },
-  "85:78": {
+  "79:77": {
+    "inputs": {
+      "seed": 1,
+      "steps": [
+        "103",
+        0
+      ],
+      "cfg": [
+        "105",
+        0
+      ],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "54",
+        0
+      ],
+      "positive": [
+        "79:76",
+        0
+      ],
+      "negative": [
+        "79:76",
+        1
+      ],
+      "latent_image": [
+        "79:76",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "79:78": {
     "inputs": {
       "dim": "t",
       "samples1": [
-        "79:78",
+        "3",
         0
       ],
       "samples2": [
-        "85:77",
+        "79:77",
         0
       ]
     },
     "class_type": "LatentConcat",
     "_meta": {
       "title": "LatentConcat"
+    }
+  },
+  "85:76": {
+    "inputs": {
+      "length": [
+        "104",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "video_latent": [
+        "79:78",
+        0
+      ],
+      "audio_encoder_output": [
+        "56",
+        0
+      ],
+      "ref_image": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "WanSoundImageToVideoExtend",
+    "_meta": {
+      "title": "WanSoundImageToVideoExtend"
     }
   },
   "85:77": {
@@ -486,40 +491,21 @@
       "title": "KSampler"
     }
   },
-  "85:76": {
+  "85:78": {
     "inputs": {
-      "length": [
-        "104",
-        0
-      ],
-      "positive": [
-        "6",
-        0
-      ],
-      "negative": [
-        "7",
-        0
-      ],
-      "vae": [
-        "39",
-        0
-      ],
-      "video_latent": [
+      "dim": "t",
+      "samples1": [
         "79:78",
         0
       ],
-      "audio_encoder_output": [
-        "56",
-        0
-      ],
-      "ref_image": [
-        "52",
+      "samples2": [
+        "85:77",
         0
       ]
     },
-    "class_type": "WanSoundImageToVideoExtend",
+    "class_type": "LatentConcat",
     "_meta": {
-      "title": "WanSoundImageToVideoExtend"
+      "title": "LatentConcat"
     }
   }
 }
