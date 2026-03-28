@@ -33,6 +33,7 @@ from wan22_s2v.wan22_s2v import (
 )
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
 from scripts.generate_caption import apply_caption_to_video
+from scripts.generate_compose import compose_scene
 
 
 API_PRODUCTION = os.path.join(os.path.dirname(__file__), 'api_production')
@@ -44,6 +45,15 @@ WAN22_S2V_POLL_TIMEOUT = 2400
 # initialize logging for the process (idempotent)
 setup_logging()
 logger = get_logger(__name__)
+
+
+def _scene_sort_key(name: str):
+    if not str(name).startswith("scene_"):
+        return (10**9, str(name))
+    try:
+        return (int(str(name).split("_", 1)[1]), str(name))
+    except Exception:
+        return (10**9, str(name))
 
 
 def _read_scene_json(scene_dir, filename, required=False):
@@ -95,6 +105,39 @@ def process_scene(scene_dir, server):
         except Exception as e:
             write_log(f"Failed to apply caption for {scene_dir}: {e}")
             return False
+
+    def _mix_scene_audio_to_video(video_path, is_s2v=False):
+        # Mix using the exact compose-scene pipeline, but target only this generated video.
+        # For s2v, keep the original video speech and only mix sound effects.
+        tmp_out = os.path.join(scene_dir, "__scene_mix_tmp__.mp4")
+        if os.path.exists(tmp_out):
+            try:
+                os.remove(tmp_out)
+            except OSError:
+                pass
+        try:
+            compose_scene(
+                scene_dir,
+                fps=None,
+                speech_volume=0.0 if is_s2v else 1.0,
+                video_files=[video_path],
+                out_path_override=tmp_out,
+                include_video_audio=is_s2v,
+            )
+            if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) <= 0:
+                write_log(f"Mixed scene output missing or empty: {tmp_out}")
+                return False
+            os.replace(tmp_out, video_path)
+            return True
+        except Exception as e:
+            write_log(f"Failed to mix scene audio for {scene_dir}: {e}")
+            return False
+        finally:
+            if os.path.exists(tmp_out):
+                try:
+                    os.remove(tmp_out)
+                except OSError:
+                    pass
 
     def _find_images(sd):
         patterns = ['*.png', '*.jpg', '*.jpeg', '*.webp']
@@ -279,6 +322,8 @@ def process_scene(scene_dir, server):
         except Exception as e:
             write_log(f"Error checking downloaded file {video_out_path}: {e}")
             return False
+        if not _mix_scene_audio_to_video(video_out_path, is_s2v=False):
+            return False
         if not _apply_caption_if_enabled(video_out_path):
             return False
         write_log(f"Completed processing {scene_dir}")
@@ -374,6 +419,8 @@ def process_scene(scene_dir, server):
         except Exception as e:
             write_log(f"Failed to trim wan22_s2v video for {scene_dir}: {e}")
             return False
+        if not _mix_scene_audio_to_video(video_out_path, is_s2v=True):
+            return False
         if not _apply_caption_if_enabled(video_out_path):
             return False
         write_log(f"Completed processing {scene_dir}")
@@ -411,6 +458,8 @@ def process_scene(scene_dir, server):
                 return False
         except Exception as e:
             write_log(f"Error checking composed i2v video {composed}: {e}")
+            return False
+        if not _mix_scene_audio_to_video(composed, is_s2v=False):
             return False
         if not _apply_caption_if_enabled(composed):
             return False
@@ -562,6 +611,8 @@ def process_scene(scene_dir, server):
         write_log(f"Error checking downloaded file {video_out_path}: {e}")
         return False
 
+    if not _mix_scene_audio_to_video(video_out_path, is_s2v=False):
+        return False
     if not _apply_caption_if_enabled(video_out_path):
         return False
 
@@ -576,7 +627,7 @@ def main():
     parser.add_argument("--loop", "-L", type=int, default=1, help='Number of times to loop over the selected scenes (default: 1)')
     args = parser.parse_args()
 
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')])
+    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
 
     # If user provided specific scenes, filter available scenes
     if args.scene:

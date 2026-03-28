@@ -14,6 +14,15 @@ from scripts.workflow_builders import load_json
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 
 
+def _scene_sort_key(name: str):
+    if not str(name).startswith("scene_"):
+        return (10**9, str(name))
+    try:
+        return (int(str(name).split("_", 1)[1]), str(name))
+    except Exception:
+        return (10**9, str(name))
+
+
 def process_scene(scene_dir: str, server: str, timeout: int = 600, interval: float = 2.0):
     scene_dir = os.path.abspath(scene_dir)
     write_log(f"Processing scene {scene_dir}")
@@ -92,7 +101,7 @@ def main():
         print("api_production folder not found; aborting")
         return 1
 
-    scenes = sorted([d for d in os.listdir(base) if d.startswith("scene_")])
+    scenes = sorted([d for d in os.listdir(base) if d.startswith("scene_")], key=_scene_sort_key)
     if args.scene:
         requested = set(args.scene)
         scenes = [s for s in scenes if s in requested]

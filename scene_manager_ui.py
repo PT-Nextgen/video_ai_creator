@@ -1629,7 +1629,7 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             COMPOSE_SCRIPT,
-            ["--scene", self.current_scene_dir.name],
+            ["--scene", self.current_scene_dir.name, "--no-final-merge"],
             f"Menggabungkan video dan audio untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir, API_PRODUCTION / "combined"],
         )

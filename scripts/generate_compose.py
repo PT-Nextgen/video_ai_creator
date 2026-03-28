@@ -29,6 +29,45 @@ IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
 BACKGROUND_MUSIC_VOLUME = 0.3
 
 
+def _scene_sort_key(name: str):
+    if not str(name).startswith("scene_"):
+        return (10**9, str(name))
+    try:
+        return (int(str(name).split("_", 1)[1]), str(name))
+    except Exception:
+        return (10**9, str(name))
+
+
+def _safe_remove_file(path):
+    try:
+        os.remove(path)
+        return True
+    except PermissionError:
+        logger.warning('File is locked, skip remove: %s', path)
+        return False
+    except FileNotFoundError:
+        return True
+    except Exception as e:
+        logger.warning('Failed to remove file %s: %s', path, e)
+        return False
+
+
+def _safe_clean_combined_dir(combined_dir, delete_all=True, scene_nums=None):
+    os.makedirs(combined_dir, exist_ok=True)
+    for f in os.listdir(combined_dir):
+        fp = os.path.join(combined_dir, f)
+        if not os.path.isfile(fp):
+            continue
+        if delete_all:
+            _safe_remove_file(fp)
+            continue
+        if scene_nums:
+            for scene_num in scene_nums:
+                if f.startswith(f'Scene_{scene_num}_') and f.lower().endswith('.mp4'):
+                    _safe_remove_file(fp)
+                    break
+
+
 def run(cmd):
     logger.debug('Run: %s', cmd)
     proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -234,10 +273,66 @@ def build_audio_mix_cmd(inputs, volumes, target_audio_path):
     return cmd
 
 
-def compose_scene(scene_dir, fps=None, speech_volume=1.0):
+def compose_scene(
+    scene_dir,
+    fps=None,
+    speech_volume=1.0,
+    video_files=None,
+    out_path_override=None,
+    include_video_audio=False,
+):
     files = sorted(os.listdir(scene_dir))
-    videos = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(VIDEO_EXTS)]
-    audios = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(AUDIO_EXTS)]
+    if video_files is None:
+        videos = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(VIDEO_EXTS)]
+    else:
+        videos = [os.path.abspath(v) for v in video_files if os.path.isfile(v)]
+    all_audios = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(AUDIO_EXTS)]
+
+    meta_path = os.path.join(scene_dir, 'scene_meta.json')
+    try:
+        meta = json.load(open(meta_path, 'r', encoding='utf-8')) if os.path.exists(meta_path) else {}
+    except Exception:
+        meta = {}
+
+    # Select only intended audio sources:
+    # - latest speech_* file
+    # - sound files mapped from sound_prompt
+    latest_speech = None
+    speech_candidates = [a for a in all_audios if os.path.basename(a).lower().startswith('speech_')]
+    if speech_candidates:
+        speech_candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        latest_speech = speech_candidates[0]
+
+    sound_prompt = str(meta.get('sound_prompt', '') or '')
+    sound_volume = str(meta.get('sound_volume', '') or '')
+    prompts = [p.strip() for p in sound_prompt.split(',') if p.strip()]
+    vols = [s.strip() for s in sound_volume.split(',') if s.strip()]
+
+    sound_vols = {}
+    for i, p in enumerate(prompts):
+        prompt_name = p.replace(' ', '_')
+        v = 1.0
+        if i < len(vols):
+            try:
+                v = float(vols[i])
+            except Exception:
+                v = 1.0
+        for f in files:
+            if not f.lower().endswith(AUDIO_EXTS):
+                continue
+            fname_no_ext = os.path.splitext(f)[0].lower()
+            if fname_no_ext == prompt_name.lower():
+                full_path = os.path.join(scene_dir, f)
+                sound_vols[full_path] = v
+                logger.debug('Found sound prompt file: %s with volume %s', full_path, v)
+
+    selected_audios = []
+    if latest_speech:
+        selected_audios.append(latest_speech)
+    for snd_path in sound_vols.keys():
+        if snd_path not in selected_audios:
+            selected_audios.append(snd_path)
+    audios = selected_audios
 
     video_durations = [ffprobe_duration(v) for v in videos]
     audio_durations = [ffprobe_duration(a) for a in audios]
@@ -278,37 +373,6 @@ def compose_scene(scene_dir, fps=None, speech_volume=1.0):
     audio_inputs = []
     volumes = {}
 
-    meta_path = os.path.join(scene_dir, 'scene_meta.json')
-    sound_vols = {}
-    if os.path.exists(meta_path):
-        try:
-            meta = json.load(open(meta_path, 'r', encoding='utf-8'))
-            sound_prompt = meta.get('sound_prompt', '')
-            sound_volume = meta.get('sound_volume', '')
-            prompts = [p.strip() for p in sound_prompt.split(',') if p.strip()]
-            vols = [s.strip() for s in sound_volume.split(',') if s.strip()]
-            for i, p in enumerate(prompts):
-                # Replace spaces with underscores for filename matching
-                prompt_name = p.replace(' ', '_')
-                # default ambient sound level when not specified
-                v = 1.0
-                if i < len(vols):
-                    try:
-                        v = float(vols[i])
-                    except Exception:
-                        v = 1.0
-                # Search for audio files matching this prompt
-                for f in files:
-                    if f.lower().endswith(AUDIO_EXTS):
-                        # Check if filename matches (case-insensitive, ignoring extension)
-                        fname_no_ext = os.path.splitext(f)[0].lower()
-                        if fname_no_ext == prompt_name.lower():
-                            full_path = os.path.join(scene_dir, f)
-                            sound_vols[full_path] = v
-                            logger.debug('Found sound prompt file: %s with volume %s', full_path, v)
-        except Exception as e:
-            logger.warning('Error reading scene_meta.json: %s', e)
-
     padded_audio_inputs = []
     # Determine speech candidates by filename patterns
     speech_keys = ('elevenlabs', 'edgetts', 'voice', 'tts')
@@ -330,6 +394,15 @@ def compose_scene(scene_dir, fps=None, speech_volume=1.0):
 
     audio_inputs = padded_audio_inputs
 
+    if include_video_audio and ffprobe_has_audio(video_normalized):
+        base_audio_path = os.path.join(tmpdir, 'base_video_audio.wav')
+        extract_cmd = f'ffmpeg -y -i "{video_normalized}" -vn -acodec pcm_s16le "{base_audio_path}"'
+        run(extract_cmd)
+        padded_base_audio = os.path.join(tmpdir, 'padded_base_audio.wav')
+        pad_audio_to_duration(base_audio_path, padded_base_audio, target_dur)
+        audio_inputs.append(padded_base_audio)
+        volumes[padded_base_audio] = 1.0
+
     if not audio_inputs:
         silent_path = os.path.join(tmpdir, 'silent.wav')
         cmd = f'ffmpeg -y -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -t {target_dur} -c:a pcm_s16le "{silent_path}"'
@@ -349,14 +422,21 @@ def compose_scene(scene_dir, fps=None, speech_volume=1.0):
         scene_title = meta.get('scene_title', '')
     except Exception:
         pass
-    out_name = f"Scene_{num}_{scene_title.replace(' ', '_')}.mp4"
-    # Output directly to combined directory
-    combined_dir = os.path.join(API_PRODUCTION, 'combined')
-    os.makedirs(combined_dir, exist_ok=True)
-    out_path = os.path.join(combined_dir, out_name)
+    if out_path_override:
+        out_path = str(out_path_override)
+    else:
+        out_name = f"Scene_{num}_{scene_title.replace(' ', '_')}.mp4"
+        # Output directly to combined directory
+        combined_dir = os.path.join(API_PRODUCTION, 'combined')
+        os.makedirs(combined_dir, exist_ok=True)
+        out_path = os.path.join(combined_dir, out_name)
 
-    # Use copy codec for video to avoid re-encoding (video already normalized)
-    cmd = f'ffmpeg -y -i "{video_normalized}" -i "{mixed_audio}" -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest "{out_path}"'
+    # Force stable audio timestamps and duration; this helps downstream transcoders (e.g., Clipchamp/WhatsApp)
+    cmd = (
+        f'ffmpeg -y -i "{video_normalized}" -i "{mixed_audio}" '
+        f'-map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k '
+        f'-af "aresample=async=1:first_pts=0" -t {target_dur:.6f} -movflags +faststart "{out_path}"'
+    )
     run(cmd)
 
     try:
@@ -367,6 +447,39 @@ def compose_scene(scene_dir, fps=None, speech_volume=1.0):
         pass
 
     logger.info('Composed scene output: %s', out_path)
+    return out_path
+
+
+def _get_latest_scene_video(scene_dir):
+    files = sorted(os.listdir(scene_dir))
+    videos = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(VIDEO_EXTS)]
+    if not videos:
+        return None
+    videos.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return videos[0]
+
+
+def export_scene_video_to_combined(scene_dir):
+    latest_video = _get_latest_scene_video(scene_dir)
+    if not latest_video:
+        logger.warning('No video found in %s, skipping export', scene_dir)
+        return None
+
+    scene_name = os.path.basename(scene_dir)
+    num = scene_name.split('_')[-1]
+    scene_title = ''
+    try:
+        meta = json.load(open(os.path.join(scene_dir, 'scene_meta.json'), 'r', encoding='utf-8'))
+        scene_title = meta.get('scene_title', '')
+    except Exception:
+        pass
+
+    out_name = f"Scene_{num}_{scene_title.replace(' ', '_')}.mp4"
+    combined_dir = os.path.join(API_PRODUCTION, 'combined')
+    os.makedirs(combined_dir, exist_ok=True)
+    out_path = os.path.join(combined_dir, out_name)
+    shutil.copyfile(latest_video, out_path)
+    logger.info('Exported scene video: %s -> %s', latest_video, out_path)
     return out_path
 
 
@@ -400,7 +513,7 @@ def image_to_clip(img_path, dst, fps, width, height, duration):
         os.replace(f'{dst}.tmp', dst)
 
 
-def merge_combined_videos():
+def merge_combined_videos(selected_scene_nums=None):
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
     if not os.path.isdir(combined_dir):
         logger.warning('Combined directory not found: %s', combined_dir)
@@ -412,7 +525,15 @@ def merge_combined_videos():
         for f in files
         if f.lower().endswith(VIDEO_EXTS) and f.startswith('Scene_')
     ]
-    images = [os.path.join(combined_dir, f) for f in files if f.lower().endswith(IMAGE_EXTS)]
+    if selected_scene_nums:
+        selected = {str(n) for n in selected_scene_nums}
+        filtered = []
+        for vp in videos:
+            bn = os.path.basename(vp)
+            parts = bn.split('_')
+            if len(parts) >= 2 and parts[1] in selected:
+                filtered.append(vp)
+        videos = filtered
     if not videos:
         logger.warning('No videos in combined to merge.')
         return None
@@ -432,76 +553,50 @@ def merge_combined_videos():
         return (num if isinstance(num, int) else 999999, bn)
     videos.sort(key=scene_key)
 
-    # Master fps and size from first video
-    master_fps = ffprobe_fps(videos[0])
-    master_w, master_h = ffprobe_size(videos[0])
-
     with tempfile.TemporaryDirectory(prefix='merge_') as td:
+        # Master fps and size from first video
+        master_fps = ffprobe_fps(videos[0])
+        master_w, master_h = ffprobe_size(videos[0])
+
         # Check if all videos already have same fps/resolution
         all_same = True
         for v in videos[1:]:
             if ffprobe_fps(v) != master_fps or ffprobe_size(v) != (master_w, master_h):
                 all_same = False
                 break
-        
+
+        norm_paths = []
         if all_same:
-            # All videos compatible - use them directly without normalization
             norm_paths = [v for v in videos]
         else:
-            # Need normalization
-            norm_paths = []
             for i, v in enumerate(videos):
                 dst = os.path.join(td, f'norm_{i:03d}.mp4')
                 normalize_video(v, dst, master_fps, master_w, master_h)
                 norm_paths.append(dst)
 
-        # Create black gap clip
-        gap_path = os.path.join(td, 'gap.mp4')
-        create_black_clip_with_silence(gap_path, master_fps, master_w, master_h, 0.2)
-
-        # Optional random image intro clip (0.2s)
-        intro_path = None
-        if images:
-            img = random.choice(images)
-            intro_path = os.path.join(td, 'intro.mp4')
-            image_to_clip(img, intro_path, master_fps, master_w, master_h, 0.2)
-
-        # Build concat list alternating videos and gaps (no gap after last)
         list_path = os.path.join(td, 'concat_list.txt')
         with open(list_path, 'w', encoding='utf-8') as f:
-            if intro_path:
-                f.write(f"file '{intro_path.replace("'", "'\\''")}'\n")
-            for idx, vp in enumerate(norm_paths):
+            for vp in norm_paths:
                 f.write(f"file '{vp.replace("'", "'\\''")}'\n")
-                if idx < len(norm_paths) - 1:
-                    f.write(f"file '{gap_path.replace("'", "'\\''")}'\n")
 
-        concat_out = os.path.join(td, 'concat.mp4')
-        # Use copy if all videos are already normalized (from scene folder)
+        final_out = os.path.join(combined_dir, 'combined_all.mp4')
         if all_same:
-            # Direct concat without re-encoding
             run(
                 f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
-                f'-c copy "{concat_out}"'
+                f'-c copy -movflags +faststart "{final_out}"'
             )
         else:
-            # Re-encode with basic settings
             run(
                 f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
-                f'-c:v libx264 -preset fast -pix_fmt yuv420p -c:a aac -b:a 192k "{concat_out}"'
+                f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                f'-c:a aac -b:a 192k -movflags +faststart "{final_out}"'
             )
-
-        # Output final combined video - simple copy
-        final_out = os.path.join(combined_dir, 'combined_all.mp4')
-        run(
-            f'ffmpeg -y -i "{concat_out}" -c:v copy -c:a copy "{final_out}"'
-        )
 
     logger.info('Final merged video: %s', final_out)
     return final_out
 
 
-def main(specific_scenes=None, speech_volume=1.0):
+def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False):
     if not os.path.exists(API_PRODUCTION):
         print('api_production folder not found:', API_PRODUCTION)
         return
@@ -511,34 +606,48 @@ def main(specific_scenes=None, speech_volume=1.0):
     
     if specific_scenes:
         # Only delete specific scene files in combined folder
-        os.makedirs(combined_dir, exist_ok=True)
-        for scene in specific_scenes:
-            # Extract scene number from scene name (e.g., scene_1 -> 1)
-            scene_num = scene.split('_')[-1]
-            # Delete any Scene_X_*.mp4 file matching this scene number
-            for f in os.listdir(combined_dir):
-                if f.startswith(f'Scene_{scene_num}_') and f.endswith('.mp4'):
-                    os.remove(os.path.join(combined_dir, f))
-                    logger.info('Removed old scene file: %s', f)
+        scene_nums = [scene.split('_')[-1] for scene in specific_scenes]
+        _safe_clean_combined_dir(combined_dir, delete_all=False, scene_nums=scene_nums)
     else:
-        # Clean entire combined folder when processing all scenes
-        if os.path.exists(combined_dir):
-            shutil.rmtree(combined_dir)
-        os.makedirs(combined_dir, exist_ok=True)
+        # Clean entire combined folder when processing all scenes (lock-tolerant)
+        _safe_clean_combined_dir(combined_dir, delete_all=True)
     
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')])
+    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
     for scene in scenes:
         scene_dir = os.path.join(API_PRODUCTION, scene)
-        print('Composing', scene_dir)
+        print('Collecting', scene_dir)
         try:
-            compose_scene(scene_dir, fps=None, speech_volume=speech_volume)
+            scene_meta_path = os.path.join(scene_dir, 'scene_meta.json')
+            scene_type = ''
+            try:
+                if os.path.exists(scene_meta_path):
+                    with open(scene_meta_path, 'r', encoding='utf-8') as f:
+                        scene_meta = json.load(f)
+                        scene_type = str(scene_meta.get('scene_type', '') or '').strip().lower()
+            except Exception:
+                scene_type = ''
+
+            # Keep s2v speech from generated video and mix only scene sounds.
+            is_s2v = scene_type == 'wan22_s2v'
+            compose_scene(
+                scene_dir,
+                speech_volume=0.0 if is_s2v else speech_volume,
+                include_video_audio=is_s2v,
+            )
         except Exception as e:
             logger.error('Failed to compose %s: %s', scene_dir, e)
-    # After composing, merge all videos in combined
+    # After collecting, merge videos in combined (unless quick mode is requested)
+    if no_final_merge:
+        logger.info('Skip final merge because --no-final-merge is enabled.')
+        return
     try:
-        merge_combined_videos()
+        if specific_scenes:
+            selected_nums = [scene.split('_')[-1] for scene in specific_scenes]
+            merge_combined_videos(selected_scene_nums=selected_nums)
+        else:
+            merge_combined_videos()
     except Exception as e:
         logger.error('Failed to merge combined videos: %s', e)
 
@@ -547,5 +656,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Compose videos and audio per scene')
     parser.add_argument('--scene', '-s', action='append', help='Scene to process (repeatable)')
     parser.add_argument('--speech-volume', type=float, default=1.0, help='Global multiplier for detected speech audio files (can be >1)')
+    parser.add_argument('--no-final-merge', action='store_true', help='Only export scene videos to combined folder, skip combined_all.mp4 merge')
     args = parser.parse_args()
-    main(specific_scenes=args.scene, speech_volume=args.speech_volume)
+    main(specific_scenes=args.scene, speech_volume=args.speech_volume, no_final_merge=args.no_final_merge)

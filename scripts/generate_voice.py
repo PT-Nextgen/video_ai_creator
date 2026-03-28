@@ -38,6 +38,15 @@ POLL_INTERVAL = 3.0
 POLL_TIMEOUT = 600
 
 
+def _scene_sort_key(name: str):
+    if not str(name).startswith("scene_"):
+        return (10**9, str(name))
+    try:
+        return (int(str(name).split("_", 1)[1]), str(name))
+    except Exception:
+        return (10**9, str(name))
+
+
 def wait_for_audio_output(server: str, prompt_id: str, timeout: int = POLL_TIMEOUT, interval: float = POLL_INTERVAL):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -145,7 +154,7 @@ def main(specific_scenes=None, comfyui_server=None):
         print("api_production folder not found:", API_PRODUCTION)
         return 1
 
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith("scene_")])
+    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith("scene_")], key=_scene_sort_key)
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
     if not scenes:

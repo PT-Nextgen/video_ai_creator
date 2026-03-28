@@ -104,7 +104,7 @@
     "inputs": {
       "shift": 8,
       "model": [
-        "182",
+        "107",
         0
       ]
     },
@@ -276,7 +276,7 @@
   },
   "103": {
     "inputs": {
-      "value": 20
+      "value": 4
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -299,6 +299,20 @@
     "class_type": "PrimitiveFloat",
     "_meta": {
       "title": "CFG"
+    }
+  },
+  "107": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "182",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
     }
   },
   "113": {
@@ -330,40 +344,21 @@
       "title": "Patch Sage Attention KJ"
     }
   },
-  "79:76": {
+  "79:78": {
     "inputs": {
-      "length": [
-        "104",
-        0
-      ],
-      "positive": [
-        "6",
-        0
-      ],
-      "negative": [
-        "7",
-        0
-      ],
-      "vae": [
-        "39",
-        0
-      ],
-      "video_latent": [
+      "dim": "t",
+      "samples1": [
         "3",
         0
       ],
-      "audio_encoder_output": [
-        "56",
-        0
-      ],
-      "ref_image": [
-        "52",
+      "samples2": [
+        "79:77",
         0
       ]
     },
-    "class_type": "WanSoundImageToVideoExtend",
+    "class_type": "LatentConcat",
     "_meta": {
-      "title": "WanSoundImageToVideoExtend"
+      "title": "LatentConcat"
     }
   },
   "79:77": {
@@ -402,21 +397,40 @@
       "title": "KSampler"
     }
   },
-  "79:78": {
+  "79:76": {
     "inputs": {
-      "dim": "t",
-      "samples1": [
+      "length": [
+        "104",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "video_latent": [
         "3",
         0
       ],
-      "samples2": [
-        "79:77",
+      "audio_encoder_output": [
+        "56",
+        0
+      ],
+      "ref_image": [
+        "52",
         0
       ]
     },
-    "class_type": "LatentConcat",
+    "class_type": "WanSoundImageToVideoExtend",
     "_meta": {
-      "title": "LatentConcat"
+      "title": "WanSoundImageToVideoExtend"
     }
   }
 }

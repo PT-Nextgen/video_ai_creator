@@ -20,6 +20,15 @@ logger = get_logger(__name__)
 API_PRODUCTION = os.path.join(ROOT, 'api_production')
 
 
+def _scene_sort_key(name: str):
+    if not str(name).startswith("scene_"):
+        return (10**9, str(name))
+    try:
+        return (int(str(name).split("_", 1)[1]), str(name))
+    except Exception:
+        return (10**9, str(name))
+
+
 def find_audiocraft_key():
     cfg_path = os.path.join(ROOT, 'keys.cfg')
     if not os.path.exists(cfg_path):
@@ -83,7 +92,7 @@ def main(specific_scenes=None, server=None):
         print('api_production folder not found:', API_PRODUCTION)
         return
 
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')])
+    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
 

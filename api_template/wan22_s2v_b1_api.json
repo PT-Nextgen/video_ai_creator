@@ -104,7 +104,7 @@
     "inputs": {
       "shift": 8,
       "model": [
-        "182",
+        "107",
         0
       ]
     },
@@ -276,7 +276,7 @@
   },
   "103": {
     "inputs": {
-      "value": 20
+      "value": 4
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -299,6 +299,20 @@
     "class_type": "PrimitiveFloat",
     "_meta": {
       "title": "CFG"
+    }
+  },
+  "107": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "182",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
     }
   },
   "113": {
