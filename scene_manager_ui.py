@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFrame,
     QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+    QInputDialog,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTextEdit, QToolButton,
     QToolBar, QVBoxLayout, QWidget, QStyle, QSizePolicy,
@@ -41,10 +42,12 @@ VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
 SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
+BACKUP_SCRIPT = ROOT / "backup_production.py"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+ARCHIVE_EXTS = {".zip"}
 ELEVENLABS_VOICES = [
     ("Yetty Indonesia", "Lpe7uP03WRpCk9XkpFnf"),
     ("Iwan Indonesia", "1kNciG1jHVSuFBPoxdRZ"),
@@ -110,7 +113,7 @@ def list_output_files(directory: Path):
         return {}
     outputs = {}
     for child in directory.iterdir():
-        if child.is_file() and child.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS):
+        if child.is_file() and child.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS | ARCHIVE_EXTS):
             try:
                 outputs[str(child.resolve())] = child.stat().st_mtime
             except OSError:
@@ -816,6 +819,7 @@ class SceneEditorWindow(QMainWindow):
         add_button("Buat voice untuk semua adegan.", QStyle.SP_MediaSeekForward, self.generate_voice_all_scenes)
         add_button("Buat sound untuk adegan yang dipilih.", QStyle.SP_DialogOpenButton, self.generate_sound_current_scene)
         add_button("Buat sound untuk semua adegan.", QStyle.SP_DialogApplyButton, self.generate_sound_all_scenes)
+        add_button("Simpan backup ZIP dari api_production.", QStyle.SP_DialogSaveButton, self.save_backup_zip)
         return frame
 
     def build_compose_action_group(self):
@@ -1644,6 +1648,35 @@ class SceneEditorWindow(QMainWindow):
             [],
             "Menggabungkan video dan audio untuk semua adegan",
             watch_dirs=[*list_scene_dirs(), API_PRODUCTION / "combined"],
+        )
+
+    def save_backup_zip(self):
+        default_name = f"api_production_{Path.cwd().name}"
+        zip_name, ok = QInputDialog.getText(
+            self,
+            "Nama File ZIP",
+            "Masukkan nama file ZIP backup:",
+            text=default_name,
+        )
+        if not ok:
+            return
+        zip_name = (zip_name or "").strip()
+        if not zip_name:
+            QMessageBox.warning(self, "Nama Tidak Valid", "Nama file ZIP tidak boleh kosong.")
+            return
+        if zip_name.lower().endswith(".zip"):
+            display_name = zip_name
+        else:
+            display_name = f"{zip_name}.zip"
+        if not self.confirm_run_action("Konfirmasi Save", f"Simpan backup sebagai `{display_name}`?"):
+            return
+        if self.current_scene_dir:
+            self.save_current_scene(silent=True)
+        self.start_process(
+            BACKUP_SCRIPT,
+            ["--zip-name", zip_name],
+            "Menyimpan backup ZIP api_production",
+            watch_dirs=[ROOT / "backup_production"],
         )
 
     def on_asset_selected(self, current, previous):

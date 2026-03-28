@@ -1,6 +1,8 @@
 import datetime
 import os
 import shutil
+import tempfile
+import argparse
 
 
 def make_timestamp():
@@ -16,7 +18,7 @@ def unique_path(path):
     return path
 
 
-def copy_and_rename(source_dir, backup_root):
+def zip_and_rename(source_dir, backup_root, zip_name=None):
     source_dir = os.path.abspath(source_dir)
     backup_root = os.path.abspath(backup_root)
 
@@ -25,23 +27,31 @@ def copy_and_rename(source_dir, backup_root):
 
     os.makedirs(backup_root, exist_ok=True)
 
-    ts = make_timestamp()
-    tmp_name = f"api_production_copy_{ts}"
-    tmp_dest = os.path.join(backup_root, tmp_name)
-    final_name = f"api_production_{ts}"
-    final_dest = os.path.join(backup_root, final_name)
+    if zip_name:
+        final_name = zip_name.strip()
+        if not final_name.lower().endswith(".zip"):
+            final_name = f"{final_name}.zip"
+    else:
+        ts = make_timestamp()
+        final_name = f"api_production_{ts}.zip"
 
-    # Ensure unique final name if already present
+    final_dest = os.path.join(backup_root, final_name)
     final_dest = unique_path(final_dest)
 
+    archive_base = os.path.splitext(final_dest)[0]
+    source_parent = os.path.dirname(source_dir)
+    source_name = os.path.basename(source_dir)
+
+    tmp_zip = None
     try:
-        shutil.copytree(source_dir, tmp_dest)
-        os.replace(tmp_dest, final_dest)
+        with tempfile.TemporaryDirectory(prefix="backup_zip_") as tmp_dir:
+            tmp_base = os.path.join(tmp_dir, os.path.basename(archive_base))
+            tmp_zip = shutil.make_archive(tmp_base, "zip", root_dir=source_parent, base_dir=source_name)
+            shutil.copy2(tmp_zip, final_dest)
     except Exception:
-        # clean up partial copy if exists
-        if os.path.exists(tmp_dest):
+        if tmp_zip and os.path.exists(tmp_zip):
             try:
-                shutil.rmtree(tmp_dest)
+                os.remove(tmp_zip)
             except Exception:
                 pass
         raise
@@ -50,13 +60,17 @@ def copy_and_rename(source_dir, backup_root):
 
 
 def main():
-    # Fixed source and backup folder names (no CLI args)
+    parser = argparse.ArgumentParser(description="Backup api_production menjadi file ZIP")
+    parser.add_argument("--zip-name", default="", help="Nama file zip output (opsional, .zip akan ditambahkan jika belum ada)")
+    args = parser.parse_args()
+
+    # Fixed source and backup folder names
     source = "api_production"
     backup_dir = "backup_production"
 
     try:
-        dest = copy_and_rename(source, backup_dir)
-        print(f"OK: copied '{source}' -> '{dest}'")
+        dest = zip_and_rename(source, backup_dir, zip_name=args.zip_name)
+        print(f"OK: zipped '{source}' -> '{dest}'")
         return 0
     except FileNotFoundError as e:
         print(f"Error: {e}")

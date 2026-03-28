@@ -33,8 +33,8 @@ Folder scene berada di `api_production/scene_<n>/`.
 File utama:
 - `scene_meta.json`
 - `z_image_prompt.json`
-- `wan22_i2v_prompt.json`
 - `wan22_s2v_prompt.json`
+- `wan22_i2v_prompt.json` (hanya untuk `default` / `wan22_i2v`)
 
 Field utama:
 - `scene_meta.json`
@@ -80,7 +80,7 @@ Field utama:
   - `cfg`
   - `json_api`
 
-Kebutuhan per `scene_type`:
+Kebutuhan prompt per `scene_type`:
 - `default`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json`, dan `wan22_i2v_prompt.json`
 - `wan22_i2v`
@@ -90,7 +90,7 @@ Kebutuhan per `scene_type`:
   - `voice_provider` wajib dipilih
   - `voice_text` wajib diisi
 - `i2v`
-  - membutuhkan `scene_meta.json` dan minimal satu gambar di root folder scene
+  - membutuhkan `scene_meta.json`, `z_image_prompt.json` (untuk ukuran target video), dan minimal satu gambar di root folder scene
 
 Catatan sumber image:
 - `default`
@@ -226,6 +226,7 @@ Fungsi utama:
 - buka aset ke viewer dengan klik ganda
 - hapus aset dari menu klik kanan
 - jalankan proses image, scene, voice, sound, dan compose
+- tombol `Save` untuk backup `api_production` menjadi ZIP
 - menampilkan log proses
 - mengubah konfigurasi server lewat dialog
 
@@ -413,7 +414,6 @@ Fungsi:
 
 Perilaku:
 - caption berjalan otomatis setelah video scene selesai dibuat jika `generate_caption=true`
-- caption juga diterapkan pada output `Compose Adegan`
 - sumber teks caption selalu dari `voice_text`
 - file `.caption.srt` disimpan di samping video yang dicaption
 
@@ -426,10 +426,13 @@ Catatan:
 Script: `scripts/generate_compose.py`
 
 Fungsi:
-- mencari file video dan audio dalam scene
-- merge video dan audio dengan `ffmpeg` / `ffprobe`
-- menulis output MP4 final ke folder `api_production/combined`
-- jika `generate_caption=true`, output scene di `combined` langsung diburn caption otomatis
+- compose per scene ke folder `api_production/combined` dengan mix audio:
+  - `wan22_s2v`: mempertahankan speech bawaan video dan hanya menambahkan sound
+  - scene type lain: mix speech + sound ke video scene
+- merge semua hasil scene di `combined` menjadi `combined_all.mp4`
+- merge akhir dibuat sederhana:
+  - jika format scene seragam (fps/resolusi), concat langsung `-c copy`
+  - jika berbeda, normalisasi lalu merge
 
 Di UI:
 - tersedia tombol `Compose Adegan`
@@ -439,10 +442,33 @@ Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_compose.py --scene scene_1
 .\.venv\Scripts\python.exe scripts\generate_compose.py --scene scene_1 --scene scene_2
+.\.venv\Scripts\python.exe scripts\generate_compose.py
 ```
 
 Catatan:
 - `ffmpeg` dan `ffprobe` harus tersedia di `PATH`
+
+## Backup Production ZIP
+
+Script: `backup_production.py`
+
+Fungsi:
+- membuat file ZIP yang berisi folder `api_production` saat ini
+- output disimpan ke folder `backup_production`
+
+Argumen:
+- `--zip-name` (opsional)
+  - nama file output ZIP
+  - `.zip` akan ditambahkan otomatis jika belum ada
+
+Contoh:
+```powershell
+.\.venv\Scripts\python.exe backup_production.py --zip-name backup_transformer_v1
+```
+
+Di UI:
+- tombol `Save` ada di grup `Audio`
+- saat diklik, UI akan meminta nama ZIP via dialog lalu konfirmasi sebelum proses dijalankan
 
 ## Logging
 
