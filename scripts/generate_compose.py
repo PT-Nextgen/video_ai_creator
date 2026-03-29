@@ -8,6 +8,12 @@ import argparse
 import random
 import shutil
 from pathlib import Path
+import math
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -36,6 +42,146 @@ def _safe_filename_segment(text: str) -> str:
     cleaned = ''.join('_' if (ch in forbidden or ord(ch) < 32) else ch for ch in text)
     cleaned = '_'.join(cleaned.split())
     return cleaned.strip('._') or "untitled"
+
+
+def _find_first_cover_image(cover_dir: str, temp_dir: str):
+    if not os.path.isdir(cover_dir):
+        return None
+    files = sorted(
+        [
+            os.path.join(cover_dir, f)
+            for f in os.listdir(cover_dir)
+            if os.path.isfile(os.path.join(cover_dir, f))
+        ]
+    )
+    if not files:
+        return None
+    # Accept "any" image-like file by validating with Pillow when available.
+    if Image is not None:
+        for fp in files:
+            try:
+                with Image.open(fp) as im:
+                    out_path = os.path.join(temp_dir, "cover_input.png")
+                    im.convert("RGB").save(out_path, format="PNG")
+                    return out_path
+            except Exception:
+                continue
+    # Fallback: use common image extensions directly.
+    exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+    for fp in files:
+        if os.path.splitext(fp)[1].lower() in exts:
+            return fp
+    return None
+
+
+def _create_cover_clip(cover_image_path, dst, fps, width, height):
+    duration = max(1.0 / max(float(fps), 1.0), 2.0 / max(float(fps), 1.0))  # exactly 2 frames target
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps={fps}"
+    )
+    run(
+        f'ffmpeg -y -loop 1 -i "{cover_image_path}" '
+        f'-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 '
+        f'-t {duration:.6f} -vf "{vf}" '
+        f'-c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k "{dst}"'
+    )
+
+
+def _build_looped_music_track(music_path, dst_wav_path, target_duration, volume):
+    music_dur = ffprobe_duration(music_path)
+    if music_dur <= 0:
+        raise RuntimeError(f"Invalid music duration: {music_path}")
+    reps = max(1, int(math.ceil(target_duration / music_dur)))
+
+    with tempfile.TemporaryDirectory(prefix="musicseg_") as td:
+        seg_paths = []
+        remaining = float(target_duration)
+        for i in range(reps):
+            seg_len = min(music_dur, remaining)
+            if seg_len <= 0.001:
+                break
+            fade_dur = min(0.5, max(0.0, seg_len))
+            fade_start = max(0.0, seg_len - fade_dur)
+            seg_path = os.path.join(td, f"seg_{i:03d}.wav")
+            run(
+                f'ffmpeg -y -i "{music_path}" -t {seg_len:.6f} '
+                f'-af "volume={volume},afade=t=out:st={fade_start:.6f}:d={fade_dur:.6f}" '
+                f'-ac 2 -ar 44100 -c:a pcm_s16le "{seg_path}"'
+            )
+            seg_paths.append(seg_path)
+            remaining -= seg_len
+
+        if not seg_paths:
+            raise RuntimeError("No music segment generated")
+
+        list_path = os.path.join(td, "segments.txt")
+        with open(list_path, "w", encoding="utf-8") as f:
+            for p in seg_paths:
+                safe_p = p.replace("'", "'\\''")
+                f.write(f"file '{safe_p}'\n")
+        run(f'ffmpeg -y -f concat -safe 0 -i "{list_path}" -ac 2 -ar 44100 -c:a pcm_s16le "{dst_wav_path}"')
+
+
+def _mix_background_music(final_video_path, music_path, music_volume):
+    if not music_path or not os.path.isfile(music_path):
+        return final_video_path
+
+    try:
+        volume = float(music_volume)
+    except Exception:
+        volume = BACKGROUND_MUSIC_VOLUME
+    volume = max(0.0, min(2.0, volume))
+
+    target_duration = ffprobe_duration(final_video_path)
+    if target_duration <= 0:
+        return final_video_path
+
+    with tempfile.TemporaryDirectory(prefix="musicmix_") as td:
+        looped_wav = os.path.join(td, "music_looped.wav")
+        _build_looped_music_track(music_path, looped_wav, target_duration, volume)
+
+        out_tmp = os.path.join(td, "final_with_music.mp4")
+        if ffprobe_has_audio(final_video_path):
+            run(
+                f'ffmpeg -y -i "{final_video_path}" -i "{looped_wav}" '
+                f'-filter_complex "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,'
+                f'pan=mono|c0=c0[a0m];'
+                f'[1:a]aformat=sample_rates=44100:channel_layouts=stereo,'
+                f'pan=mono|c0=0.5*c0+0.5*c1[a1m];'
+                f'[a0m][a1m]amix=inputs=2:normalize=0:duration=first[aout]" '
+                f'-map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k '
+                f'-ac 2 -ar 44100 '
+                f'-movflags +faststart "{out_tmp}"'
+            )
+        else:
+            run(
+                f'ffmpeg -y -i "{final_video_path}" -i "{looped_wav}" '
+                f'-filter_complex "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,'
+                f'pan=mono|c0=0.5*c0+0.5*c1[mixm];'
+                f'[mixm]pan=stereo|c0=c0|c1=c0[aout]" '
+                f'-map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k -ac 2 -ar 44100 '
+                f'-movflags +faststart "{out_tmp}"'
+            )
+        shutil.copyfile(out_tmp, final_video_path)
+
+    return final_video_path
+
+
+def _force_dual_mono_audio(final_video_path):
+    if not ffprobe_has_audio(final_video_path):
+        return final_video_path
+    with tempfile.TemporaryDirectory(prefix="dualmono_") as td:
+        out_tmp = os.path.join(td, "final_dual_mono.mp4")
+        run(
+            f'ffmpeg -y -i "{final_video_path}" '
+            f'-filter_complex "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,'
+            f'pan=stereo|c0=c0|c1=c0[a0]" '
+            f'-map 0:v -map "[a0]" -c:v copy -c:a aac -b:a 192k -ac 2 -ar 44100 '
+            f'-movflags +faststart "{out_tmp}"'
+        )
+        shutil.copyfile(out_tmp, final_video_path)
+    return final_video_path
 
 
 def _scene_sort_key(name: str):
@@ -524,7 +670,7 @@ def image_to_clip(img_path, dst, fps, width, height, duration):
         os.replace(f'{dst}.tmp', dst)
 
 
-def merge_combined_videos(selected_scene_nums=None):
+def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
     if not os.path.isdir(combined_dir):
         logger.warning('Combined directory not found: %s', combined_dir)
@@ -568,6 +714,12 @@ def merge_combined_videos(selected_scene_nums=None):
         # Master fps and size from first video
         master_fps = ffprobe_fps(videos[0])
         master_w, master_h = ffprobe_size(videos[0])
+        cover_dir = os.path.join(API_PRODUCTION, 'cover')
+        cover_src = _find_first_cover_image(cover_dir, td)
+        cover_clip = None
+        if cover_src:
+            cover_clip = os.path.join(td, "cover_intro.mp4")
+            _create_cover_clip(cover_src, cover_clip, master_fps, master_w, master_h)
 
         # Check if all videos already have same fps/resolution
         all_same = True
@@ -575,15 +727,24 @@ def merge_combined_videos(selected_scene_nums=None):
             if ffprobe_fps(v) != master_fps or ffprobe_size(v) != (master_w, master_h):
                 all_same = False
                 break
+        # If cover intro exists, safest path is normalize+reencode merge.
+        if cover_clip:
+            all_same = False
 
         norm_paths = []
         if all_same:
             norm_paths = [v for v in videos]
         else:
+            if cover_clip:
+                norm_cover = os.path.join(td, 'norm_cover.mp4')
+                normalize_video(cover_clip, norm_cover, master_fps, master_w, master_h)
+                norm_paths.append(norm_cover)
             for i, v in enumerate(videos):
                 dst = os.path.join(td, f'norm_{i:03d}.mp4')
                 normalize_video(v, dst, master_fps, master_w, master_h)
                 norm_paths.append(dst)
+        if all_same and cover_clip:
+            norm_paths = [cover_clip] + norm_paths
 
         list_path = os.path.join(td, 'concat_list.txt')
         with open(list_path, 'w', encoding='utf-8') as f:
@@ -603,11 +764,15 @@ def merge_combined_videos(selected_scene_nums=None):
                 f'-c:a aac -b:a 192k -movflags +faststart "{final_out}"'
             )
 
+    if music_file:
+        _mix_background_music(final_out, music_file, music_volume)
+    _force_dual_mono_audio(final_out)
+
     logger.info('Final merged video: %s', final_out)
     return final_out
 
 
-def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False):
+def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
     if not os.path.exists(API_PRODUCTION):
         print('api_production folder not found:', API_PRODUCTION)
         return
@@ -656,9 +821,16 @@ def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False):
     try:
         if specific_scenes:
             selected_nums = [scene.split('_')[-1] for scene in specific_scenes]
-            merge_combined_videos(selected_scene_nums=selected_nums)
+            merge_combined_videos(
+                selected_scene_nums=selected_nums,
+                music_file=music_file,
+                music_volume=music_volume,
+            )
         else:
-            merge_combined_videos()
+            merge_combined_videos(
+                music_file=music_file,
+                music_volume=music_volume,
+            )
     except Exception as e:
         logger.error('Failed to merge combined videos: %s', e)
 
@@ -668,5 +840,14 @@ if __name__ == '__main__':
     parser.add_argument('--scene', '-s', action='append', help='Scene to process (repeatable)')
     parser.add_argument('--speech-volume', type=float, default=1.0, help='Global multiplier for detected speech audio files (can be >1)')
     parser.add_argument('--no-final-merge', action='store_true', help='Only export scene videos to combined folder, skip combined_all.mp4 merge')
+    parser.add_argument('--music-file', default='', help='Optional background music file path for final combined video')
+    parser.add_argument('--music-volume', type=float, default=BACKGROUND_MUSIC_VOLUME, help='Background music volume in range 0.0 to 2.0')
     args = parser.parse_args()
-    main(specific_scenes=args.scene, speech_volume=args.speech_volume, no_final_merge=args.no_final_merge)
+    music_volume = max(0.0, min(2.0, float(args.music_volume)))
+    main(
+        specific_scenes=args.scene,
+        speech_volume=args.speech_volume,
+        no_final_merge=args.no_final_merge,
+        music_file=str(args.music_file or '').strip() or None,
+        music_volume=music_volume,
+    )

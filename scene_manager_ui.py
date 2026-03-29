@@ -36,6 +36,7 @@ from z_image.z_image import get_template_name as get_z_image_template_name
 
 ROOT = Path(__file__).resolve().parent
 API_PRODUCTION = ROOT / "api_production"
+MUSIC_DIR = ROOT / "music"
 MAIN_SCRIPT = ROOT / "main.py"
 INITIAL_IMAGE_SCRIPT = ROOT / "scripts" / "generate_initial_image.py"
 VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
@@ -376,6 +377,34 @@ class ProcessDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Log Proses"))
         layout.addWidget(log_widget)
+
+
+class ComposeMusicDialog(QDialog):
+    def __init__(self, music_files: list[Path], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Music Compose")
+        self.music_combo = QComboBox(self)
+        self.music_combo.addItem("(Tanpa music)", "")
+        for path in music_files:
+            self.music_combo.addItem(path.name, str(path))
+
+        self.volume_input = QDoubleSpinBox(self)
+        self.volume_input.setRange(0.0, 2.0)
+        self.volume_input.setDecimals(2)
+        self.volume_input.setSingleStep(0.05)
+        self.volume_input.setValue(1.00)
+
+        layout = QFormLayout(self)
+        layout.addRow("File Music", self.music_combo)
+        layout.addRow("Volume (0.00 - 2.00)", self.volume_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def get_values(self):
+        return str(self.music_combo.currentData() or "").strip(), float(self.volume_input.value())
 
 
 class MediaPreviewLabel(QLabel):
@@ -862,7 +891,6 @@ class SceneEditorWindow(QMainWindow):
             button.clicked.connect(handler)
             layout.addWidget(button)
 
-        add_button("Gabungkan video dan audio untuk adegan yang dipilih.", QStyle.SP_FileDialogContentsView, self.compose_current_scene)
         add_button("Gabungkan video dan audio untuk semua adegan.", QStyle.SP_DialogYesButton, self.compose_all_scenes)
         return frame
 
@@ -1663,11 +1691,27 @@ class SceneEditorWindow(QMainWindow):
             return
         if self.current_scene_dir:
             self.save_current_scene(silent=True)
+
+        music_files = []
+        if MUSIC_DIR.exists():
+            exts = {".m4a", ".mp3", ".wav"}
+            music_files = sorted(
+                [p for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in exts],
+                key=lambda p: p.name.lower(),
+            )
+        dialog = ComposeMusicDialog(music_files, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        music_file, music_volume = dialog.get_values()
+        args = []
+        if music_file:
+            args.extend(["--music-file", music_file, "--music-volume", f"{music_volume:.2f}"])
+
         self.start_process(
             COMPOSE_SCRIPT,
-            [],
+            args,
             "Menggabungkan video dan audio untuk semua adegan",
-            watch_dirs=[*list_scene_dirs(), API_PRODUCTION / "combined"],
+            watch_dirs=[*list_scene_dirs(), API_PRODUCTION / "combined", MUSIC_DIR],
         )
 
     def save_backup_zip(self):

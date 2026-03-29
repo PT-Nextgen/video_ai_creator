@@ -430,19 +430,28 @@ Fungsi:
   - `wan22_s2v`: mempertahankan speech bawaan video dan hanya menambahkan sound
   - scene type lain: mix speech + sound ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
+- pada merge akhir bisa menambahkan background music opsional:
+  - file music dari folder `music` dengan ekstensi `.m4a`, `.mp3`, `.wav`
+  - music bisa kosong (tidak dipilih)
+  - volume music bisa diatur dari `0.00` sampai `2.00`
+  - music dipotong jika lebih panjang dari video
+  - music diulang jika lebih pendek dari video
+  - fade out `0.5` detik pada akhir setiap segmen music (termasuk saat loop dan akhir video)
+- jika folder `cover` berisi gambar, gambar pertama dipakai sebagai intro `2 frame` di awal video final
 - merge akhir dibuat sederhana:
   - jika format scene seragam (fps/resolusi), concat langsung `-c copy`
   - jika berbeda, normalisasi lalu merge
 
 Di UI:
-- tersedia tombol `Compose Adegan`
 - tersedia tombol `Compose Semua Adegan`
+- saat `Compose Semua Adegan`, muncul dialog untuk memilih music dan volume
 
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_compose.py --scene scene_1
 .\.venv\Scripts\python.exe scripts\generate_compose.py --scene scene_1 --scene scene_2
 .\.venv\Scripts\python.exe scripts\generate_compose.py
+.\.venv\Scripts\python.exe scripts\generate_compose.py --music-file ".\\music\\Another Night (Corporate).m4a" --music-volume 1.00
 ```
 
 Catatan:
@@ -467,7 +476,7 @@ Contoh:
 ```
 
 Di UI:
-- tombol `Save` ada di grup `Audio`
+- tombol `Save` ada di grup `Backup`
 - saat diklik, UI akan meminta nama ZIP via dialog lalu konfirmasi sebelum proses dijalankan
 
 ## Logging
