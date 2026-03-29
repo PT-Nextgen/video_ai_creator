@@ -250,7 +250,11 @@ Perilaku UI:
 Menjalankan UI:
 ```powershell
 .\.venv\Scripts\python.exe scene_manager_ui.py
+.\run_ui.bat
 ```
+
+Catatan:
+- `run_ui.bat` otomatis memakai Python dari `.venv` sehingga tidak perlu aktivasi manual virtual environment.
 
 ## Image Models
 
