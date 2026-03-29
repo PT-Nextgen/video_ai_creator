@@ -29,6 +29,15 @@ IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
 BACKGROUND_MUSIC_VOLUME = 0.3
 
 
+def _safe_filename_segment(text: str) -> str:
+    text = str(text or "")
+    # Replace Windows-forbidden filename chars and control chars.
+    forbidden = '<>:"/\\|?*'
+    cleaned = ''.join('_' if (ch in forbidden or ord(ch) < 32) else ch for ch in text)
+    cleaned = '_'.join(cleaned.split())
+    return cleaned.strip('._') or "untitled"
+
+
 def _scene_sort_key(name: str):
     if not str(name).startswith("scene_"):
         return (10**9, str(name))
@@ -425,7 +434,8 @@ def compose_scene(
     if out_path_override:
         out_path = str(out_path_override)
     else:
-        out_name = f"Scene_{num}_{scene_title.replace(' ', '_')}.mp4"
+        safe_title = _safe_filename_segment(scene_title)
+        out_name = f"Scene_{num}_{safe_title}.mp4"
         # Output directly to combined directory
         combined_dir = os.path.join(API_PRODUCTION, 'combined')
         os.makedirs(combined_dir, exist_ok=True)
@@ -474,7 +484,8 @@ def export_scene_video_to_combined(scene_dir):
     except Exception:
         pass
 
-    out_name = f"Scene_{num}_{scene_title.replace(' ', '_')}.mp4"
+    safe_title = _safe_filename_segment(scene_title)
+    out_name = f"Scene_{num}_{safe_title}.mp4"
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
     os.makedirs(combined_dir, exist_ok=True)
     out_path = os.path.join(combined_dir, out_name)

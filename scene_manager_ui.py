@@ -768,6 +768,7 @@ class SceneEditorWindow(QMainWindow):
         self.toolbar.addSeparator()
         self.toolbar.addWidget(self.build_run_action_group())
         self.toolbar.addWidget(self.build_audio_action_group())
+        self.toolbar.addWidget(self.build_backup_action_group())
         self.toolbar.addWidget(self.build_compose_action_group())
 
     def build_run_action_group(self):
@@ -819,7 +820,26 @@ class SceneEditorWindow(QMainWindow):
         add_button("Buat voice untuk semua adegan.", QStyle.SP_MediaSeekForward, self.generate_voice_all_scenes)
         add_button("Buat sound untuk adegan yang dipilih.", QStyle.SP_DialogOpenButton, self.generate_sound_current_scene)
         add_button("Buat sound untuk semua adegan.", QStyle.SP_DialogApplyButton, self.generate_sound_all_scenes)
-        add_button("Simpan backup ZIP dari api_production.", QStyle.SP_DialogSaveButton, self.save_backup_zip)
+        return frame
+
+    def build_backup_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #f5f3ff; border: 1px solid #c4b5fd; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        title = QLabel("Backup", frame)
+        title.setStyleSheet("font-weight: 600; color: #5b21b6;")
+        layout.addWidget(title)
+
+        button = QToolButton(frame)
+        button.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        button.setToolTip("Simpan backup ZIP dari api_production.")
+        button.setStatusTip("Simpan backup ZIP dari api_production.")
+        button.clicked.connect(self.save_backup_zip)
+        layout.addWidget(button)
         return frame
 
     def build_compose_action_group(self):
