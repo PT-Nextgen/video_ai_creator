@@ -253,8 +253,15 @@ Menjalankan UI:
 .\run_ui.bat
 ```
 
+Linux/macOS:
+```bash
+./.venv/bin/python scene_manager_ui.py
+./run_ui.sh
+```
+
 Catatan:
 - `run_ui.bat` otomatis memakai Python dari `.venv` sehingga tidak perlu aktivasi manual virtual environment.
+- `run_ui.sh` otomatis memakai Python dari `.venv` dan menjalankan UI di background.
 
 ## Image Models
 
