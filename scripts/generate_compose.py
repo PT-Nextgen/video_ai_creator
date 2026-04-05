@@ -750,7 +750,8 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         list_path = os.path.join(td, 'concat_list.txt')
         with open(list_path, 'w', encoding='utf-8') as f:
             for vp in norm_paths:
-                f.write(f"file '{vp.replace("'", "'\\''")}'\n")
+                escaped_vp = vp.replace("'", "'\\''")
+                f.write(f"file '{escaped_vp}'\n")
 
         final_out = os.path.join(combined_dir, 'combined_all.mp4')
         if all_same:
