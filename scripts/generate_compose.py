@@ -308,7 +308,8 @@ def concat_videos(video_files, out_path):
     with tempfile.NamedTemporaryFile('w', delete=False, suffix='.txt') as f:
         for p in video_files:
             # escape single quotes
-            f.write(f"file '{p.replace("'", "'\\''")}'\n")
+            escaped = p.replace("'", "'\\''")
+            f.write(f"file '{escaped}'\n")
         list_path = f.name
     cmd = f'ffmpeg -y -f concat -safe 0 -i "{list_path}" -c copy "{out_path}"'
     try:
