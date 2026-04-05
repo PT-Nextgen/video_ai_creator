@@ -25,7 +25,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 PARENT = os.path.dirname(ROOT)
-API_PRODUCTION = os.path.join(PARENT, os.path.basename(ROOT), 'api_production')
+API_PRODUCTION = None
 
 VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.mkv')
 AUDIO_EXTS = ('.m4a', '.wav', '.mp3')
@@ -143,13 +143,12 @@ def _mix_background_music(final_video_path, music_path, music_volume):
 
         out_tmp = os.path.join(td, "final_with_music.mp4")
         if ffprobe_has_audio(final_video_path):
+            # Keep original speech track as-is, only scale music by selected volume.
             run(
                 f'ffmpeg -y -i "{final_video_path}" -i "{looped_wav}" '
-                f'-filter_complex "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,'
-                f'pan=mono|c0=c0[a0m];'
-                f'[1:a]aformat=sample_rates=44100:channel_layouts=stereo,'
-                f'pan=mono|c0=0.5*c0+0.5*c1[a1m];'
-                f'[a0m][a1m]amix=inputs=2:normalize=0:duration=first[aout]" '
+                f'-filter_complex "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[a0];'
+                f'[1:a]aformat=sample_rates=44100:channel_layouts=stereo[a1];'
+                f'[a0][a1]amix=inputs=2:normalize=0:duration=first[aout]" '
                 f'-map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k '
                 f'-ac 2 -ar 44100 '
                 f'-movflags +faststart "{out_tmp}"'
@@ -157,9 +156,7 @@ def _mix_background_music(final_video_path, music_path, music_volume):
         else:
             run(
                 f'ffmpeg -y -i "{final_video_path}" -i "{looped_wav}" '
-                f'-filter_complex "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,'
-                f'pan=mono|c0=0.5*c0+0.5*c1[mixm];'
-                f'[mixm]pan=stereo|c0=c0|c1=c0[aout]" '
+                f'-filter_complex "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[aout]" '
                 f'-map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k -ac 2 -ar 44100 '
                 f'-movflags +faststart "{out_tmp}"'
             )
@@ -169,18 +166,7 @@ def _mix_background_music(final_video_path, music_path, music_volume):
 
 
 def _force_dual_mono_audio(final_video_path):
-    if not ffprobe_has_audio(final_video_path):
-        return final_video_path
-    with tempfile.TemporaryDirectory(prefix="dualmono_") as td:
-        out_tmp = os.path.join(td, "final_dual_mono.mp4")
-        run(
-            f'ffmpeg -y -i "{final_video_path}" '
-            f'-filter_complex "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,'
-            f'pan=stereo|c0=c0|c1=c0[a0]" '
-            f'-map 0:v -map "[a0]" -c:v copy -c:a aac -b:a 192k -ac 2 -ar 44100 '
-            f'-movflags +faststart "{out_tmp}"'
-        )
-        shutil.copyfile(out_tmp, final_video_path)
+    # Intentionally no-op to preserve original speech loudness/channel balance.
     return final_video_path
 
 
@@ -228,8 +214,10 @@ def run(cmd):
     proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:
         logger.error('Command failed: %s', cmd)
-        logger.error(proc.stderr.decode('utf-8', errors='ignore'))
-        raise RuntimeError('ffmpeg command failed')
+        stderr_text = proc.stderr.decode('utf-8', errors='ignore')
+        if stderr_text:
+            logger.error(stderr_text)
+        raise RuntimeError(f'ffmpeg command failed: {stderr_text[:500]}')
     return proc.stdout
 
 
@@ -584,6 +572,8 @@ def compose_scene(
         safe_title = _safe_filename_segment(scene_title)
         out_name = f"Scene_{num}_{safe_title}.mp4"
         # Output directly to combined directory
+        if not API_PRODUCTION:
+            raise RuntimeError("Project root belum diset untuk compose.")
         combined_dir = os.path.join(API_PRODUCTION, 'combined')
         os.makedirs(combined_dir, exist_ok=True)
         out_path = os.path.join(combined_dir, out_name)
@@ -633,6 +623,8 @@ def export_scene_video_to_combined(scene_dir):
 
     safe_title = _safe_filename_segment(scene_title)
     out_name = f"Scene_{num}_{safe_title}.mp4"
+    if not API_PRODUCTION:
+        raise RuntimeError("Project root belum diset untuk export scene.")
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
     os.makedirs(combined_dir, exist_ok=True)
     out_path = os.path.join(combined_dir, out_name)
@@ -642,11 +634,25 @@ def export_scene_video_to_combined(scene_dir):
 
 
 def normalize_video(src, dst, fps, width, height):
-    # Simple re-encode with standard settings
-    cmd = (
-        f'ffmpeg -y -i "{src}" -vf "scale={width}:{height},fps={fps}" '
-        f'-c:v libx264 -preset fast -pix_fmt yuv420p -c:a aac -b:a 192k "{dst}"'
-    )
+    # Re-encode with fixed video settings and guaranteed stereo AAC audio.
+    # If source has no audio stream, add silent audio so concat remains stable.
+    if ffprobe_has_audio(src):
+        cmd = (
+            f'ffmpeg -y -i "{src}" -vf "scale={width}:{height},fps={fps}" '
+            f'-af "aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo" '
+            f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+            f'-c:a aac -b:a 192k -ac 2 -ar 44100 "{dst}"'
+        )
+    else:
+        duration = max(0.1, ffprobe_duration(src))
+        cmd = (
+            f'ffmpeg -y -i "{src}" '
+            f'-f lavfi -t {duration:.6f} -i anullsrc=channel_layout=stereo:sample_rate=44100 '
+            f'-vf "scale={width}:{height},fps={fps}" '
+            f'-map 0:v:0 -map 1:a:0 '
+            f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+            f'-c:a aac -b:a 192k -ac 2 -ar 44100 -shortest "{dst}"'
+        )
     run(cmd)
 
 
@@ -672,6 +678,8 @@ def image_to_clip(img_path, dst, fps, width, height, duration):
 
 
 def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
+    if not API_PRODUCTION:
+        raise RuntimeError("Project root belum diset untuk merge.")
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
     if not os.path.isdir(combined_dir):
         logger.warning('Combined directory not found: %s', combined_dir)
@@ -754,16 +762,38 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
                 f.write(f"file '{escaped_vp}'\n")
 
         final_out = os.path.join(combined_dir, 'combined_all.mp4')
+        if os.path.exists(final_out):
+            _safe_remove_file(final_out)
+
         if all_same:
-            run(
-                f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
-                f'-c copy -movflags +faststart "{final_out}"'
-            )
+            try:
+                run(
+                    f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
+                    f'-c copy -movflags +faststart "{final_out}"'
+                )
+            except Exception as e:
+                logger.warning('Concat copy failed, fallback to re-encode merge: %s', e)
+                # Build fully normalized clips (with guaranteed audio), then concat re-encode.
+                norm_paths = []
+                for i, v in enumerate(videos):
+                    dst = os.path.join(td, f'norm_fallback_{i:03d}.mp4')
+                    normalize_video(v, dst, master_fps, master_w, master_h)
+                    norm_paths.append(dst)
+                fallback_list = os.path.join(td, 'concat_list_fallback.txt')
+                with open(fallback_list, 'w', encoding='utf-8') as f2:
+                    for vp in norm_paths:
+                        escaped_vp = vp.replace("'", "'\\''")
+                        f2.write(f"file '{escaped_vp}'\n")
+                run(
+                    f'ffmpeg -y -f concat -safe 0 -i "{fallback_list}" '
+                    f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                    f'-c:a aac -b:a 192k -ac 2 -ar 44100 -movflags +faststart "{final_out}"'
+                )
         else:
             run(
                 f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
                 f'-c:v libx264 -preset fast -pix_fmt yuv420p '
-                f'-c:a aac -b:a 192k -movflags +faststart "{final_out}"'
+                f'-c:a aac -b:a 192k -ac 2 -ar 44100 -movflags +faststart "{final_out}"'
             )
 
     if music_file:
@@ -774,10 +804,12 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
     return final_out
 
 
-def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
+def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
+    global API_PRODUCTION
+    API_PRODUCTION = os.path.join(ROOT, 'api_production', str(project_name).strip())
     if not os.path.exists(API_PRODUCTION):
-        print('api_production folder not found:', API_PRODUCTION)
-        return
+        print('Project folder not found:', API_PRODUCTION)
+        return 1
     
     # Clean combined folder before starting
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
@@ -819,7 +851,7 @@ def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_fi
     # After collecting, merge videos in combined (unless quick mode is requested)
     if no_final_merge:
         logger.info('Skip final merge because --no-final-merge is enabled.')
-        return
+        return 0
     try:
         if specific_scenes:
             selected_nums = [scene.split('_')[-1] for scene in specific_scenes]
@@ -835,10 +867,13 @@ def main(specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_fi
             )
     except Exception as e:
         logger.error('Failed to merge combined videos: %s', e)
+        return 1
+    return 0
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Compose videos and audio per scene')
+    parser.add_argument('--project', '-p', required=True, help='Nama project di dalam folder api_production')
     parser.add_argument('--scene', '-s', action='append', help='Scene to process (repeatable)')
     parser.add_argument('--speech-volume', type=float, default=1.0, help='Global multiplier for detected speech audio files (can be >1)')
     parser.add_argument('--no-final-merge', action='store_true', help='Only export scene videos to combined folder, skip combined_all.mp4 merge')
@@ -846,10 +881,11 @@ if __name__ == '__main__':
     parser.add_argument('--music-volume', type=float, default=BACKGROUND_MUSIC_VOLUME, help='Background music volume in range 0.0 to 2.0')
     args = parser.parse_args()
     music_volume = max(0.0, min(2.0, float(args.music_volume)))
-    main(
+    raise SystemExit(main(
+        project_name=args.project,
         specific_scenes=args.scene,
         speech_volume=args.speech_volume,
         no_final_merge=args.no_final_merge,
         music_file=str(args.music_file or '').strip() or None,
         music_volume=music_volume,
-    )
+    ))

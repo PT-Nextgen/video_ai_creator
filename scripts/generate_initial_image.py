@@ -12,6 +12,7 @@ from scripts import comfyui_api
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
+from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 
 
 def _scene_sort_key(name: str):
@@ -34,6 +35,16 @@ def process_scene(scene_dir: str, server: str, timeout: int = 600, interval: flo
 
     prompts = load_json(z_prompt_path)
     model_name = get_model_display_name(prompts)
+
+    if is_gemini_prompt(prompts):
+        try:
+            out_path = generate_scene_image(scene_dir, prompts)
+            write_log(f"Saved image to {out_path}")
+            return True
+        except Exception as e:
+            write_log(f"Failed to generate Gemini image for {scene_dir}: {e}", level="error")
+            return False
+
     workflow = build_z_image_workflow(prompts)
 
     try:
@@ -89,16 +100,17 @@ def process_scene(scene_dir: str, server: str, timeout: int = 600, interval: flo
 def main():
     parser = argparse.ArgumentParser(description="Generate initial images for scenes via ComfyUI")
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
+    parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", action="append", help="Scene name to process (e.g., scene_1). Repeatable")
     parser.add_argument("--loop", "-L", type=int, default=1, help="Number of times to process each selected scene")
     args = parser.parse_args()
 
     setup_logging()
 
-    base = os.path.join(PROJECT_ROOT, "api_production")
+    base = os.path.join(PROJECT_ROOT, "api_production", str(args.project).strip())
     if not os.path.exists(base):
-        write_log(f"api_production folder not found: {base}", level="error")
-        print("api_production folder not found; aborting")
+        write_log(f"Project folder not found: {base}", level="error")
+        print("Project folder not found; aborting")
         return 1
 
     scenes = sorted([d for d in os.listdir(base) if d.startswith("scene_")], key=_scene_sort_key)

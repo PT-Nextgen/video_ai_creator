@@ -18,7 +18,7 @@ def unique_path(path):
     return path
 
 
-def zip_and_rename(source_dir, backup_root, zip_name=None):
+def zip_project(source_dir, backup_root, project_name):
     source_dir = os.path.abspath(source_dir)
     backup_root = os.path.abspath(backup_root)
 
@@ -27,16 +27,10 @@ def zip_and_rename(source_dir, backup_root, zip_name=None):
 
     os.makedirs(backup_root, exist_ok=True)
 
-    if zip_name:
-        final_name = zip_name.strip()
-        if not final_name.lower().endswith(".zip"):
-            final_name = f"{final_name}.zip"
-    else:
-        ts = make_timestamp()
-        final_name = f"api_production_{ts}.zip"
-
+    final_name = f"{project_name}.zip"
     final_dest = os.path.join(backup_root, final_name)
-    final_dest = unique_path(final_dest)
+    if os.path.exists(final_dest):
+        os.remove(final_dest)
 
     archive_base = os.path.splitext(final_dest)[0]
     source_parent = os.path.dirname(source_dir)
@@ -60,17 +54,21 @@ def zip_and_rename(source_dir, backup_root, zip_name=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backup api_production menjadi file ZIP")
-    parser.add_argument("--zip-name", default="", help="Nama file zip output (opsional, .zip akan ditambahkan jika belum ada)")
+    parser = argparse.ArgumentParser(description="Backup satu project api_production menjadi file ZIP")
+    parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     args = parser.parse_args()
 
-    # Fixed source and backup folder names
-    source = "api_production"
+    project_name = str(args.project).strip()
+    if not project_name:
+        print("Error: project name cannot be empty")
+        return 2
+
+    source = os.path.join("api_production", project_name)
     backup_dir = "backup_production"
 
     try:
-        dest = zip_and_rename(source, backup_dir, zip_name=args.zip_name)
-        print(f"OK: zipped '{source}' -> '{dest}'")
+        dest = zip_project(source, backup_dir, project_name=project_name)
+        print(f"OK: zipped project '{project_name}' -> '{dest}'")
         return 0
     except FileNotFoundError as e:
         print(f"Error: {e}")

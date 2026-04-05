@@ -86,23 +86,24 @@ def generate_sound_for_prompt(server: str, api_key: str, prompt: str, duration: 
         return False
 
 
-def main(specific_scenes=None, server=None):
+def main(project_name, specific_scenes=None, server=None):
     server = server or get_server_address("audio")
-    if not os.path.exists(API_PRODUCTION):
-        print('api_production folder not found:', API_PRODUCTION)
-        return
+    project_dir = os.path.join(API_PRODUCTION, str(project_name).strip())
+    if not os.path.exists(project_dir):
+        print('Project folder not found:', project_dir)
+        return 1
 
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
+    scenes = sorted([d for d in os.listdir(project_dir) if d.startswith('scene_')], key=_scene_sort_key)
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
 
     api_key = find_audiocraft_key()
     if not api_key:
         print('AUDIOCRAFTKEY not found. Put keys.cfg in project root or set env variable AUDIOCRAFTKEY')
-        return
+        return 1
 
     for scene in scenes:
-        scene_dir = os.path.join(API_PRODUCTION, scene)
+        scene_dir = os.path.join(project_dir, scene)
         meta_path = os.path.join(scene_dir, 'scene_meta.json')
         if not os.path.exists(meta_path):
             logger.debug('no scene_meta.json in %s', scene_dir)
@@ -135,11 +136,13 @@ def main(specific_scenes=None, server=None):
             ok = generate_sound_for_prompt(server, api_key, p, duration, out_path)
             if not ok:
                 logger.error('Failed to generate audio for scene %s prompt "%s"', scene, p)
+    return 0
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate sound assets via nextgenserver audio API')
+    parser.add_argument('--project', '-p', required=True, help='Nama project di dalam folder api_production')
     parser.add_argument('--scene', '-s', action='append', help='Scene to process (repeatable)')
     parser.add_argument('--server', default=get_server_address("audio"), help='Audio server host:port')
     args = parser.parse_args()
-    main(specific_scenes=args.scene, server=args.server)
+    raise SystemExit(main(project_name=args.project, specific_scenes=args.scene, server=args.server))

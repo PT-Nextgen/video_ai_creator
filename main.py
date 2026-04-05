@@ -20,8 +20,10 @@ from scripts.workflow_builders import load_json
 from z_image.z_image import (
     build_z_image_workflow,
     get_model_display_name as get_image_model_display_name,
+    get_model_key as get_image_model_key,
     send_workflow as send_z_image_workflow,
 )
+from gemini.gemini_image import MODEL_GEMINI_FLASH_05K, generate_scene_image, is_gemini_prompt
 from wan22_i2v.wan22_i2v import build_wan_workflow, send_workflow as send_wan_workflow
 from wan22_s2v.wan22_s2v import (
     DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT,
@@ -36,7 +38,7 @@ from scripts.generate_caption import apply_caption_to_video
 from scripts.generate_compose import compose_scene
 
 
-API_PRODUCTION = os.path.join(os.path.dirname(__file__), 'api_production')
+API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
 POLL_INTERVAL = 10.0
 POLL_TIMEOUT = 600
@@ -466,62 +468,82 @@ def process_scene(scene_dir, server):
         write_log(f"Completed i2v composition for {scene_dir}: {composed}")
         return True
 
-    # default behavior: z_image prompt -> upload -> wan22 prompt -> wait/download video
+    # default behavior: create initial image -> upload -> wan22 prompt -> wait/download video
     try:
         z_prompt = _read_scene_json(scene_dir, 'z_image_prompt.json', required=True)
         image_model_name = get_image_model_display_name(z_prompt)
-        z_workflow = build_z_image_workflow(z_prompt)
     except Exception as e:
-        write_log(f"Failed to build z_image workflow for {scene_dir}: {e}")
+        write_log(f"Failed to read z_image prompt for {scene_dir}: {e}")
         return False
 
-    z_result = send_z_image_workflow(
-        z_workflow,
-        server,
-        log_file=LOG_FILE,
-        source_label=os.path.join(scene_dir, 'z_image_prompt.json'),
-        model_name=image_model_name,
-    )
-    prompt_id = z_result.get('prompt_id') or z_result.get('id')
-    write_log(f"Posted {image_model_name} workflow for {scene_dir}, prompt_id={prompt_id}")
-    try:
-        hist = comfyui_api.get_history_for_prompt(server, prompt_id)
-        write_log(f"History for prompt_id={prompt_id}: {json.dumps(hist)}")
-    except Exception as e:
-        write_log(f"Failed to fetch history for prompt_id={prompt_id}: {e}")
-
-    image_out = None
-    if prompt_id:
-        image_out = comfyui_api.wait_for_output(server, prompt_id, output_type='image', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
-
-    if not image_out:
-        write_log(f"No image found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-        return False
-
-    write_log(f"Image output info: {json.dumps(image_out)}")
-    image_filename = image_out.get('filename') or image_out.get('name') or image_out.get('file')
-    image_subfolder = image_out.get('subfolder')
-    image_type = image_out.get('type')
-
-    if not image_filename:
-        write_log(f"Cannot determine image filename from output: {json.dumps(image_out)}")
-        return False
-
-    image_url = comfyui_api.get_file_url(server, image_filename, subfolder=image_subfolder, type_=image_type)
-    image_out_path = os.path.join(scene_dir, image_filename)
-    try:
-        comfyui_api.download_file_url(image_url, image_out_path)
-    except Exception as e:
-        write_log(f"Failed to download image {image_filename} from {image_url}: {e}")
-        return False
-
-    try:
-        if not os.path.exists(image_out_path) or os.path.getsize(image_out_path) == 0:
-            write_log(f"Downloaded file missing or empty: {image_out_path}")
+    image_out_path = None
+    if is_gemini_prompt(z_prompt) or get_image_model_key(z_prompt) == MODEL_GEMINI_FLASH_05K:
+        try:
+            image_out_path = generate_scene_image(scene_dir, z_prompt)
+        except Exception as e:
+            write_log(f"Failed to generate Gemini image for {scene_dir}: {e}")
             return False
-    except Exception as e:
-        write_log(f"Error checking downloaded file {image_out_path}: {e}")
-        return False
+        if not image_out_path or not os.path.exists(image_out_path):
+            write_log(f"Gemini image not found for {scene_dir}: {image_out_path}")
+            return False
+        if os.path.getsize(image_out_path) == 0:
+            write_log(f"Gemini image is empty for {scene_dir}: {image_out_path}")
+            return False
+        write_log(f"Generated {image_model_name} image for {scene_dir}: {image_out_path}")
+    else:
+        try:
+            z_workflow = build_z_image_workflow(z_prompt)
+        except Exception as e:
+            write_log(f"Failed to build z_image workflow for {scene_dir}: {e}")
+            return False
+
+        z_result = send_z_image_workflow(
+            z_workflow,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'z_image_prompt.json'),
+            model_name=image_model_name,
+        )
+        prompt_id = z_result.get('prompt_id') or z_result.get('id')
+        write_log(f"Posted {image_model_name} workflow for {scene_dir}, prompt_id={prompt_id}")
+        try:
+            hist = comfyui_api.get_history_for_prompt(server, prompt_id)
+            write_log(f"History for prompt_id={prompt_id}: {json.dumps(hist)}")
+        except Exception as e:
+            write_log(f"Failed to fetch history for prompt_id={prompt_id}: {e}")
+
+        image_out = None
+        if prompt_id:
+            image_out = comfyui_api.wait_for_output(server, prompt_id, output_type='image', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+
+        if not image_out:
+            write_log(f"No image found for {scene_dir} (prompt_id={prompt_id}); stopping run")
+            return False
+
+        write_log(f"Image output info: {json.dumps(image_out)}")
+        image_filename = image_out.get('filename') or image_out.get('name') or image_out.get('file')
+        image_subfolder = image_out.get('subfolder')
+        image_type = image_out.get('type')
+
+        if not image_filename:
+            write_log(f"Cannot determine image filename from output: {json.dumps(image_out)}")
+            return False
+
+        image_url = comfyui_api.get_file_url(server, image_filename, subfolder=image_subfolder, type_=image_type)
+        image_out_path = os.path.join(scene_dir, image_filename)
+        try:
+            comfyui_api.download_file_url(image_url, image_out_path)
+        except Exception as e:
+            write_log(f"Failed to download image {image_filename} from {image_url}: {e}")
+            return False
+
+        try:
+            if not os.path.exists(image_out_path) or os.path.getsize(image_out_path) == 0:
+                write_log(f"Downloaded file missing or empty: {image_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking downloaded file {image_out_path}: {e}")
+            return False
 
     try:
         upload_info = comfyui_api.upload_file(server, image_out_path)
@@ -623,11 +645,18 @@ def process_scene(scene_dir, server):
 def main():
     parser = argparse.ArgumentParser(description="Run content creation workflow via ComfyUI")
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
+    parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", action='append', help='Scene name to process (e.g., scene_3). Repeatable to specify multiple scenes')
     parser.add_argument("--loop", "-L", type=int, default=1, help='Number of times to loop over the selected scenes (default: 1)')
     args = parser.parse_args()
 
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
+    project_dir = os.path.join(API_PRODUCTION_ROOT, str(args.project).strip())
+    if not os.path.isdir(project_dir):
+        write_log(f"Project folder tidak ditemukan: {project_dir}")
+        print(f"Project folder not found: {project_dir}")
+        return 1
+
+    scenes = sorted([d for d in os.listdir(project_dir) if d.startswith('scene_')], key=_scene_sort_key)
 
     # If user provided specific scenes, filter available scenes
     if args.scene:
@@ -652,7 +681,7 @@ def main():
         if loop_count > 1:
             print(f"Starting loop {loop_idx+1}/{loop_count}")
         for scene in scenes:
-            scene_dir = os.path.join(API_PRODUCTION, scene)
+            scene_dir = os.path.join(project_dir, scene)
             print(f"Processing {scene_dir}")
             ok = process_scene(scene_dir, args.server)
             if not ok:

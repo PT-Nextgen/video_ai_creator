@@ -33,12 +33,14 @@ from z_image.z_image import SIZE_OPTIONS as Z_IMAGE_SIZES
 from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
+from gemini.gemini_image import MODEL_GEMINI_FLASH_05K
 
 ROOT = Path(__file__).resolve().parent
 API_PRODUCTION = ROOT / "api_production"
 MUSIC_DIR = ROOT / "music"
 MAIN_SCRIPT = ROOT / "main.py"
 INITIAL_IMAGE_SCRIPT = ROOT / "scripts" / "generate_initial_image.py"
+COVER_IMAGE_SCRIPT = ROOT / "scripts" / "generate_cover_image.py"
 VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
 SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
@@ -96,10 +98,13 @@ def scene_dir_name(index: int) -> str:
     return f"scene_{index}"
 
 
-def list_scene_dirs():
-    API_PRODUCTION.mkdir(parents=True, exist_ok=True)
+def list_scene_dirs_in_project(project_dir: Path | None):
+    if project_dir is None:
+        return []
+    if not project_dir.exists() or not project_dir.is_dir():
+        return []
     scenes = []
-    for child in API_PRODUCTION.iterdir():
+    for child in project_dir.iterdir():
         if child.is_dir() and child.name.startswith("scene_"):
             try:
                 scenes.append((int(child.name.split("_", 1)[1]), child))
@@ -203,6 +208,8 @@ def find_latest_speech_asset(scene_dir: Path):
 def validate_scene_data(meta: dict, z_prompt: dict, wan_prompt: dict, scene_dir: Path | None = None):
     issues = []
     scene_type = str(meta.get("scene_type", "default")).strip()
+    image_model_key = get_z_image_model_key(z_prompt)
+    is_gemini_image = image_model_key == MODEL_GEMINI_FLASH_05K
     if not str(meta.get("scene_title", "")).strip():
         issues.append("Judul adegan wajib diisi.")
     try:
@@ -214,13 +221,13 @@ def validate_scene_data(meta: dict, z_prompt: dict, wan_prompt: dict, scene_dir:
     if scene_type == "default":
         if not str(z_prompt.get("positive_prompt", "")).strip():
             issues.append("Prompt positif gambar awal wajib diisi.")
-        if not z_prompt.get("use_random_seed", True):
+        if not is_gemini_image and not z_prompt.get("use_random_seed", True):
             try:
                 if int(z_prompt.get("seed", 0)) <= 0:
                     issues.append("Seed statik harus berupa bilangan bulat positif.")
             except Exception:
                 issues.append("Seed statik harus berupa bilangan bulat positif.")
-        if z_prompt.get("use_lora"):
+        if not is_gemini_image and z_prompt.get("use_lora"):
             if not str(z_prompt.get("lora_name", "")).strip():
                 issues.append("Nama Lora wajib diisi saat Lora digunakan.")
             try:
@@ -407,6 +414,148 @@ class ComposeMusicDialog(QDialog):
         return str(self.music_combo.currentData() or "").strip(), float(self.volume_input.value())
 
 
+class CoverPromptDialog(QDialog):
+    def __init__(self, prompt_data: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Generate Cover")
+        self.resize(760, 760)
+
+        self.model_input = QComboBox(self)
+        for model_key, label in IMAGE_MODEL_OPTIONS:
+            self.model_input.addItem(label, model_key)
+
+        self.size_input = QComboBox(self)
+        for label, width, height in Z_IMAGE_SIZES:
+            self.size_input.addItem(label, (width, height))
+
+        self.use_random_seed_input = QCheckBox("Random Seed", self)
+        self.seed_input = QLineEdit(self)
+        self.use_lora_input = QCheckBox("Pakai Lora", self)
+        self.lora_name_input = QLineEdit(self)
+        self.lora_strength_input = QLineEdit(self)
+        self.positive_input = QTextEdit(self)
+        self.negative_input = QTextEdit(self)
+
+        form = QFormLayout(self)
+        form.addRow("Model", self.model_input)
+        form.addRow("Ukuran", self.size_input)
+        form.addRow("", self.use_random_seed_input)
+        form.addRow("Seed Statik", self.seed_input)
+        form.addRow("", self.use_lora_input)
+        form.addRow("Nama Lora", self.lora_name_input)
+        form.addRow("Kekuatan Lora", self.lora_strength_input)
+        form.addRow("Prompt Positif", self.positive_input)
+        form.addRow("Prompt Negatif", self.negative_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+        self.use_random_seed_input.toggled.connect(self._update_seed_enabled)
+        self.use_lora_input.toggled.connect(self._update_lora_enabled)
+        self.model_input.currentIndexChanged.connect(self._update_model_fields)
+
+        self._load_data(prompt_data or {})
+        self._update_seed_enabled()
+        self._update_lora_enabled()
+        self._update_model_fields()
+
+    def _load_data(self, data: dict):
+        model_key = get_z_image_model_key(data)
+        idx = self.model_input.findData(model_key)
+        self.model_input.setCurrentIndex(max(idx, 0))
+
+        width = int(data.get("width", DEFAULT_Z_IMAGE_PROMPT["width"]))
+        height = int(data.get("height", DEFAULT_Z_IMAGE_PROMPT["height"]))
+        size_idx = -1
+        for i in range(self.size_input.count()):
+            val = self.size_input.itemData(i)
+            if isinstance(val, tuple) and val == (width, height):
+                size_idx = i
+                break
+        self.size_input.setCurrentIndex(max(size_idx, 0))
+
+        self.use_random_seed_input.setChecked(bool(data.get("use_random_seed", True)))
+        self.seed_input.setText(str(data.get("seed", 1)))
+        self.use_lora_input.setChecked(bool(data.get("use_lora", False)))
+        self.lora_name_input.setText(str(data.get("lora_name", "")))
+        self.lora_strength_input.setText(str(data.get("strength_model", 1.0)))
+        self.positive_input.setPlainText(str(data.get("positive_prompt", "")))
+        self.negative_input.setPlainText(str(data.get("negative_prompt", "")))
+
+    def _update_seed_enabled(self):
+        self.seed_input.setEnabled(not self.use_random_seed_input.isChecked())
+
+    def _update_lora_enabled(self):
+        enabled = self.use_lora_input.isChecked()
+        self.lora_name_input.setEnabled(enabled)
+        self.lora_strength_input.setEnabled(enabled)
+
+    def _update_model_fields(self):
+        model_key = str(self.model_input.currentData() or MODEL_Z_IMAGE_TURBO)
+        can_use_negative = z_image_supports_negative_prompt({"image_model": model_key})
+        self.negative_input.setEnabled(can_use_negative)
+        if not can_use_negative:
+            self.negative_input.setPlainText("")
+
+        is_gemini = model_key == MODEL_GEMINI_FLASH_05K
+        self.use_lora_input.setEnabled(not is_gemini)
+        self.use_random_seed_input.setEnabled(not is_gemini)
+        if is_gemini:
+            self.use_lora_input.setChecked(False)
+            self.use_random_seed_input.setChecked(True)
+            self.seed_input.setText("1")
+        self._update_seed_enabled()
+        self._update_lora_enabled()
+
+    def get_data(self):
+        model_key = str(self.model_input.currentData() or MODEL_Z_IMAGE_TURBO)
+        use_lora = self.use_lora_input.isChecked()
+        use_random_seed = self.use_random_seed_input.isChecked()
+
+        seed_val = 1
+        if not use_random_seed:
+            try:
+                seed_val = int(self.seed_input.text().strip() or "1")
+            except ValueError:
+                raise ValueError("Seed statik harus berupa bilangan bulat positif.")
+            if seed_val <= 0:
+                raise ValueError("Seed statik harus berupa bilangan bulat positif.")
+
+        lora_strength = 1.0
+        if use_lora:
+            try:
+                lora_strength = float(self.lora_strength_input.text().strip() or "1.0")
+            except ValueError:
+                raise ValueError("Kekuatan Lora harus berupa bilangan desimal positif.")
+            if lora_strength <= 0:
+                raise ValueError("Kekuatan Lora harus berupa bilangan desimal positif.")
+
+        data = {
+            "image_model": model_key,
+            "positive_prompt": self.positive_input.toPlainText().strip(),
+            "negative_prompt": (
+                self.negative_input.toPlainText().strip()
+                if z_image_supports_negative_prompt({"image_model": model_key})
+                else ""
+            ),
+            "width": int((self.size_input.currentData() or (368, 640))[0]),
+            "height": int((self.size_input.currentData() or (368, 640))[1]),
+            "use_random_seed": use_random_seed,
+            "seed": seed_val,
+            "use_lora": use_lora,
+            "lora_name": self.lora_name_input.text().strip() if use_lora else "",
+            "strength_model": lora_strength,
+        }
+        data["json_api"] = get_z_image_template_name(data)
+        if not data["positive_prompt"]:
+            raise ValueError("Prompt positif cover wajib diisi.")
+        if use_lora and not data["lora_name"]:
+            raise ValueError("Nama Lora wajib diisi saat Lora digunakan.")
+        return data
+
+
 class MediaPreviewLabel(QLabel):
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
@@ -453,6 +602,7 @@ class SceneEditorWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Pengelola Adegan")
         self.resize(1700, 980)
+        self.current_project_name = ""
         self.current_scene_dir = None
         self.process = None
         self.process_context = None
@@ -583,6 +733,7 @@ class SceneEditorWindow(QMainWindow):
         self.update_scene_type_tabs()
         self.update_scene_type_specific_fields()
         self.reload_scene_list()
+        self.refresh_project_state()
 
     def install_field_watchers(self):
         for signal in [
@@ -785,6 +936,10 @@ class SceneEditorWindow(QMainWindow):
             self.toolbar.addAction(action)
             return action
 
+        add_action("Project Baru", "Buat project baru.", QStyle.SP_FileDialogNewFolder, self.new_project)
+        add_action("Buka Project", "Buka project yang sudah ada.", QStyle.SP_DirOpenIcon, self.open_project)
+        add_action("Tutup Project", "Tutup project aktif.", QStyle.SP_DialogCloseButton, self.close_project)
+        self.toolbar.addSeparator()
         add_action("Tambah Adegan", "Tambahkan adegan baru di akhir daftar.", QStyle.SP_FileDialogNewFolder, self.add_scene)
         add_action("Sisipkan Adegan", "Sisipkan adegan baru sebelum adegan yang sedang dipilih.", QStyle.SP_ArrowDown, self.insert_scene)
         add_action("Hapus Adegan", "Hapus adegan yang sedang dipilih.", QStyle.SP_TrashIcon, self.delete_scene)
@@ -796,9 +951,102 @@ class SceneEditorWindow(QMainWindow):
         add_action("Muat Ulang", "Muat ulang daftar adegan dan statusnya.", QStyle.SP_BrowserReload, self.reload_scene_list)
         self.toolbar.addSeparator()
         self.toolbar.addWidget(self.build_run_action_group())
+        self.toolbar.addWidget(self.build_cover_action_group())
         self.toolbar.addWidget(self.build_audio_action_group())
         self.toolbar.addWidget(self.build_backup_action_group())
         self.toolbar.addWidget(self.build_compose_action_group())
+
+    def project_dir(self) -> Path | None:
+        name = str(self.current_project_name or "").strip()
+        if not name:
+            return None
+        return API_PRODUCTION / name
+
+    def list_projects(self):
+        API_PRODUCTION.mkdir(parents=True, exist_ok=True)
+        items = []
+        reserved = {"combined", "cover"}
+        for child in API_PRODUCTION.iterdir():
+            if (
+                child.is_dir()
+                and child.name not in reserved
+                and not child.name.startswith("scene_")
+                and not child.name.startswith("__")
+            ):
+                items.append(child.name)
+        items.sort(key=lambda s: s.lower())
+        return items
+
+    def list_scene_dirs_current(self):
+        return list_scene_dirs_in_project(self.project_dir())
+
+    def refresh_project_state(self):
+        project_label = self.current_project_name if self.current_project_name else "(tidak ada project)"
+        self.setWindowTitle(f"Pengelola Adegan - {project_label}")
+        if not self.current_project_name:
+            self.current_scene_dir = None
+            self.scene_list.clear()
+            self.status_label.setPlainText("Belum ada project yang dibuka.")
+            self.viewer_info_label.setText("Buka project terlebih dahulu.")
+
+    def ensure_project_selected(self, notify=True):
+        if self.project_dir() is not None:
+            return True
+        if notify:
+            QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
+        return False
+
+    def new_project(self):
+        if self.current_scene_dir:
+            self.save_current_scene(silent=True, reload_list=False)
+        name, ok = QInputDialog.getText(self, "Project Baru", "Masukkan nama project:")
+        if not ok:
+            return
+        project_name = (name or "").strip()
+        if not project_name:
+            QMessageBox.warning(self, "Nama Tidak Valid", "Nama project tidak boleh kosong.")
+            return
+        if any(ch in project_name for ch in '\\/:*?"<>|'):
+            QMessageBox.warning(self, "Nama Tidak Valid", "Nama project mengandung karakter yang tidak valid.")
+            return
+        API_PRODUCTION.mkdir(parents=True, exist_ok=True)
+        pdir = API_PRODUCTION / project_name
+        if pdir.exists():
+            QMessageBox.warning(self, "Project Sudah Ada", f"Project `{project_name}` sudah ada.")
+            return
+        pdir.mkdir(parents=True, exist_ok=False)
+        write_json(pdir / "cover_prompt.json", copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT))
+        default_scene = pdir / scene_dir_name(1)
+        meta, z_prompt, wan_prompt, s2v_prompt = build_scene_templates("", "default", 10)
+        create_scene_files(default_scene, meta, z_prompt, wan_prompt, s2v_prompt)
+        self.current_project_name = project_name
+        self.reload_scene_list()
+        self.select_scene_by_name(default_scene.name)
+        self.refresh_project_state()
+        self.statusBar().showMessage(f"Project {project_name} dibuat.", 3000)
+
+    def open_project(self):
+        if self.current_scene_dir:
+            self.save_current_scene(silent=True, reload_list=False)
+        projects = self.list_projects()
+        if not projects:
+            QMessageBox.information(self, "Project Kosong", "Belum ada project di api_production.")
+            return
+        selected, ok = QInputDialog.getItem(self, "Buka Project", "Pilih project:", projects, 0, False)
+        if not ok:
+            return
+        self.current_project_name = str(selected).strip()
+        self.reload_scene_list()
+        self.refresh_project_state()
+        self.statusBar().showMessage(f"Project {self.current_project_name} dibuka.", 3000)
+
+    def close_project(self):
+        if self.current_scene_dir:
+            self.save_current_scene(silent=True, reload_list=False)
+        self.release_media_locks()
+        self.current_project_name = ""
+        self.current_scene_dir = None
+        self.refresh_project_state()
 
     def build_run_action_group(self):
         frame = QFrame(self)
@@ -851,6 +1099,26 @@ class SceneEditorWindow(QMainWindow):
         add_button("Buat sound untuk semua adegan.", QStyle.SP_DialogApplyButton, self.generate_sound_all_scenes)
         return frame
 
+    def build_cover_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #ecfeff; border: 1px solid #67e8f9; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        title = QLabel("Cover", frame)
+        title.setStyleSheet("font-weight: 600; color: #0e7490;")
+        layout.addWidget(title)
+
+        button = QToolButton(frame)
+        button.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        button.setToolTip("Buka dialog konfigurasi dan generate cover project.")
+        button.setStatusTip("Buka dialog konfigurasi dan generate cover project.")
+        button.clicked.connect(self.open_cover_dialog)
+        layout.addWidget(button)
+        return frame
+
     def build_backup_action_group(self):
         frame = QFrame(self)
         frame.setFrameShape(QFrame.StyledPanel)
@@ -865,8 +1133,8 @@ class SceneEditorWindow(QMainWindow):
 
         button = QToolButton(frame)
         button.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
-        button.setToolTip("Simpan backup ZIP dari api_production.")
-        button.setStatusTip("Simpan backup ZIP dari api_production.")
+        button.setToolTip("Simpan backup ZIP project aktif.")
+        button.setStatusTip("Simpan backup ZIP project aktif.")
         button.clicked.connect(self.save_backup_zip)
         layout.addWidget(button)
         return frame
@@ -967,10 +1235,20 @@ class SceneEditorWindow(QMainWindow):
 
     def update_image_model_fields_enabled(self):
         model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO)
+        is_gemini = model_key == MODEL_GEMINI_FLASH_05K
         can_use_negative = z_image_supports_negative_prompt({"image_model": model_key})
         self.z_negative_input.setEnabled(can_use_negative)
         if not can_use_negative:
             self.z_negative_input.setPlainText("")
+        self.z_use_lora_input.setEnabled(not is_gemini)
+        if is_gemini and self.z_use_lora_input.isChecked():
+            self.z_use_lora_input.setChecked(False)
+        self.z_use_random_seed_input.setEnabled(not is_gemini)
+        if is_gemini:
+            self.z_use_random_seed_input.setChecked(True)
+            self.z_seed_input.setText("1")
+        self.update_seed_fields_enabled()
+        self.update_lora_fields_enabled()
 
     def update_wan_lora_fields_enabled(self):
         enabled = self.wan_use_lora_input.isChecked()
@@ -1031,11 +1309,15 @@ class SceneEditorWindow(QMainWindow):
         return Path(value) if value else None
 
     def reload_scene_list(self):
+        if not self.ensure_project_selected(notify=False):
+            self.scene_list.clear()
+            self.current_scene_dir = None
+            return
         current_name = self.current_scene_dir.name if self.current_scene_dir else None
         was_loading = self.loading_scene
         self.loading_scene = True
         self.scene_list.clear()
-        for scene_dir in list_scene_dirs():
+        for scene_dir in self.list_scene_dirs_current():
             meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
             wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
@@ -1073,6 +1355,9 @@ class SceneEditorWindow(QMainWindow):
     def on_scene_reordered(self):
         if self.loading_scene:
             return
+        project_dir = self.project_dir()
+        if project_dir is None:
+            return
         self.release_media_locks()
         if self.current_scene_dir:
             self.save_current_scene(silent=True, reload_list=False)
@@ -1081,13 +1366,13 @@ class SceneEditorWindow(QMainWindow):
             return
         temp_paths = []
         for idx, old_path in enumerate(ordered_paths, start=1):
-            temp_path = API_PRODUCTION / f"__reorder_tmp_{idx}"
+            temp_path = project_dir / f"__reorder_tmp_{idx}"
             if temp_path.exists():
                 shutil.rmtree(temp_path)
             old_path.rename(temp_path)
             temp_paths.append(temp_path)
         for idx, temp_path in enumerate(temp_paths, start=1):
-            temp_path.rename(API_PRODUCTION / scene_dir_name(idx))
+            temp_path.rename(project_dir / scene_dir_name(idx))
         current_row = self.scene_list.currentRow()
         self.reload_scene_list()
         if 0 <= current_row < self.scene_list.count():
@@ -1335,7 +1620,7 @@ class SceneEditorWindow(QMainWindow):
 
     def ensure_all_scenes_are_runnable(self):
         problem_summaries = []
-        for scene_dir in list_scene_dirs():
+        for scene_dir in self.list_scene_dirs_current():
             issues = self.get_scene_issues(scene_dir)
             if issues:
                 problem_summaries.append(f"{scene_dir.name}: " + "; ".join(issues))
@@ -1411,16 +1696,24 @@ class SceneEditorWindow(QMainWindow):
         return dialog.get_data()
 
     def add_scene(self):
+        if not self.ensure_project_selected():
+            return
         data = self.open_scene_dialog("Tambah Adegan")
         if data is None:
             return
-        new_dir = API_PRODUCTION / scene_dir_name(len(list_scene_dirs()) + 1)
+        project_dir = self.project_dir()
+        if project_dir is None:
+            QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
+            return
+        new_dir = project_dir / scene_dir_name(len(self.list_scene_dirs_current()) + 1)
         meta, z_prompt, wan_prompt, s2v_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
         create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt)
         self.reload_scene_list()
         self.select_scene_by_name(new_dir.name)
 
     def insert_scene(self):
+        if not self.ensure_project_selected():
+            return
         current = self.current_scene_path_from_ui()
         if current is None:
             self.add_scene()
@@ -1430,8 +1723,12 @@ class SceneEditorWindow(QMainWindow):
         if data is None:
             return
         insert_index = int(current.name.split("_", 1)[1])
-        scenes = list_scene_dirs()
-        temp_root = API_PRODUCTION / "__insert_tmp__"
+        project_dir = self.project_dir()
+        if project_dir is None:
+            QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
+            return
+        scenes = self.list_scene_dirs_current()
+        temp_root = project_dir / "__insert_tmp__"
         if temp_root.exists():
             shutil.rmtree(temp_root)
         temp_root.mkdir(parents=True, exist_ok=True)
@@ -1444,12 +1741,14 @@ class SceneEditorWindow(QMainWindow):
         for scene in scenes:
             shutil.rmtree(scene)
         for child in sorted(temp_root.iterdir(), key=lambda p: p.name):
-            child.rename(API_PRODUCTION / child.name)
+            child.rename(project_dir / child.name)
         temp_root.rmdir()
         self.reload_scene_list()
         self.select_scene_by_name(scene_dir_name(insert_index))
 
     def delete_scene(self):
+        if not self.ensure_project_selected():
+            return
         current = self.current_scene_path_from_ui()
         if current is None:
             return
@@ -1459,16 +1758,20 @@ class SceneEditorWindow(QMainWindow):
             return
         shutil.rmtree(current)
         # renumber after delete to keep contiguous scene folder names
-        scenes = list_scene_dirs()
+        project_dir = self.project_dir()
+        if project_dir is None:
+            QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
+            return
+        scenes = self.list_scene_dirs_current()
         temp_paths = []
         for idx, path in enumerate(scenes, start=1):
-            temp = API_PRODUCTION / f"__delete_tmp_{idx}"
+            temp = project_dir / f"__delete_tmp_{idx}"
             if temp.exists():
                 shutil.rmtree(temp)
             path.rename(temp)
             temp_paths.append(temp)
         for idx, temp in enumerate(temp_paths, start=1):
-            temp.rename(API_PRODUCTION / scene_dir_name(idx))
+            temp.rename(project_dir / scene_dir_name(idx))
         self.reload_scene_list()
 
     def add_asset_to_scene(self):
@@ -1554,6 +1857,8 @@ class SceneEditorWindow(QMainWindow):
         self._run_current_scene()
 
     def _run_current_scene(self):
+        if not self.ensure_project_selected():
+            return
         if not self.current_scene_dir:
             QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
             return
@@ -1565,7 +1870,7 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             MAIN_SCRIPT,
-            ["--server", self.comfyui_server_address(), "--scene", self.current_scene_dir.name],
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--scene", self.current_scene_dir.name],
             f"Menjalankan {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
@@ -1576,6 +1881,8 @@ class SceneEditorWindow(QMainWindow):
         self._run_all_scenes()
 
     def _run_all_scenes(self):
+        if not self.ensure_project_selected():
+            return
         if not self.ensure_server_config_loaded():
             return
         if self.current_scene_dir:
@@ -1584,9 +1891,9 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             MAIN_SCRIPT,
-            ["--server", self.comfyui_server_address()],
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name],
             "Menjalankan semua adegan",
-            watch_dirs=list_scene_dirs(),
+            watch_dirs=self.list_scene_dirs_current(),
         )
 
     def generate_initial_image_only(self):
@@ -1595,6 +1902,8 @@ class SceneEditorWindow(QMainWindow):
         self._generate_initial_image_only()
 
     def _generate_initial_image_only(self):
+        if not self.ensure_project_selected():
+            return
         if not self.current_scene_dir:
             QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
             return
@@ -1604,12 +1913,14 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             INITIAL_IMAGE_SCRIPT,
-            ["--server", self.comfyui_server_address(), "--scene", self.current_scene_dir.name],
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--scene", self.current_scene_dir.name],
             f"Membuat gambar awal untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
 
     def generate_voice_current_scene(self):
+        if not self.ensure_project_selected():
+            return
         if not self.confirm_run_action("Buat Voice", "Buat voice untuk adegan yang sedang dipilih?"):
             return
         if not self.current_scene_dir:
@@ -1621,12 +1932,14 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             VOICE_SCRIPT,
-            ["--server", self.comfyui_server_address(), "--scene", self.current_scene_dir.name],
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--scene", self.current_scene_dir.name],
             f"Membuat voice untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
 
     def generate_voice_all_scenes(self):
+        if not self.ensure_project_selected():
+            return
         if not self.confirm_run_action("Buat Semua Voice", "Buat voice untuk semua adegan?"):
             return
         if not self.ensure_server_config_loaded():
@@ -1635,12 +1948,14 @@ class SceneEditorWindow(QMainWindow):
             self.save_current_scene(silent=True)
         self.start_process(
             VOICE_SCRIPT,
-            ["--server", self.comfyui_server_address()],
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name],
             "Membuat voice untuk semua adegan",
-            watch_dirs=list_scene_dirs(),
+            watch_dirs=self.list_scene_dirs_current(),
         )
 
     def generate_sound_current_scene(self):
+        if not self.ensure_project_selected():
+            return
         if not self.confirm_run_action("Buat Sound", "Buat sound untuk adegan yang sedang dipilih?"):
             return
         if not self.current_scene_dir:
@@ -1652,12 +1967,14 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             SOUND_SCRIPT,
-            ["--server", self.audio_server_address(), "--scene", self.current_scene_dir.name],
+            ["--server", self.audio_server_address(), "--project", self.current_project_name, "--scene", self.current_scene_dir.name],
             f"Membuat sound untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
 
     def generate_sound_all_scenes(self):
+        if not self.ensure_project_selected():
+            return
         if not self.confirm_run_action("Buat Semua Sound", "Buat sound untuk semua adegan?"):
             return
         if not self.ensure_server_config_loaded():
@@ -1666,12 +1983,14 @@ class SceneEditorWindow(QMainWindow):
             self.save_current_scene(silent=True)
         self.start_process(
             SOUND_SCRIPT,
-            ["--server", self.audio_server_address()],
+            ["--server", self.audio_server_address(), "--project", self.current_project_name],
             "Membuat sound untuk semua adegan",
-            watch_dirs=list_scene_dirs(),
+            watch_dirs=self.list_scene_dirs_current(),
         )
 
     def compose_current_scene(self):
+        if not self.ensure_project_selected():
+            return
         if not self.confirm_run_action("Compose Adegan", "Gabungkan video dan audio untuk adegan yang sedang dipilih?"):
             return
         if not self.current_scene_dir:
@@ -1681,12 +2000,14 @@ class SceneEditorWindow(QMainWindow):
             return
         self.start_process(
             COMPOSE_SCRIPT,
-            ["--scene", self.current_scene_dir.name, "--no-final-merge"],
+            ["--project", self.current_project_name, "--scene", self.current_scene_dir.name, "--no-final-merge"],
             f"Menggabungkan video dan audio untuk {self.current_scene_dir.name}",
-            watch_dirs=[self.current_scene_dir, API_PRODUCTION / "combined"],
+            watch_dirs=[self.current_scene_dir, (self.project_dir() / "combined") if self.project_dir() else (API_PRODUCTION / "combined")],
         )
 
     def compose_all_scenes(self):
+        if not self.ensure_project_selected():
+            return
         if not self.confirm_run_action("Compose Semua Adegan", "Gabungkan video dan audio untuk semua adegan?"):
             return
         if self.current_scene_dir:
@@ -1704,6 +2025,7 @@ class SceneEditorWindow(QMainWindow):
             return
         music_file, music_volume = dialog.get_values()
         args = []
+        args.extend(["--project", self.current_project_name])
         if music_file:
             args.extend(["--music-file", music_file, "--music-volume", f"{music_volume:.2f}"])
 
@@ -1711,35 +2033,63 @@ class SceneEditorWindow(QMainWindow):
             COMPOSE_SCRIPT,
             args,
             "Menggabungkan video dan audio untuk semua adegan",
-            watch_dirs=[*list_scene_dirs(), API_PRODUCTION / "combined", MUSIC_DIR],
+            watch_dirs=[*self.list_scene_dirs_current(), self.project_dir() / "combined" if self.project_dir() else API_PRODUCTION / "combined", MUSIC_DIR],
+        )
+
+    def cover_prompt_path(self):
+        pdir = self.project_dir()
+        if pdir is None:
+            return None
+        return pdir / "cover_prompt.json"
+
+    def load_cover_prompt(self):
+        path = self.cover_prompt_path()
+        if path is None:
+            return copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
+        return load_json(path, DEFAULT_Z_IMAGE_PROMPT)
+
+    def open_cover_dialog(self):
+        if not self.ensure_project_selected():
+            return
+        prompt_data = self.load_cover_prompt()
+        dialog = CoverPromptDialog(prompt_data, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            cover_prompt = dialog.get_data()
+        except ValueError as e:
+            QMessageBox.warning(self, "Data Cover Tidak Valid", str(e))
+            return
+        cover_path = self.cover_prompt_path()
+        if cover_path is None:
+            QMessageBox.warning(self, "Project Tidak Valid", "Project aktif tidak valid.")
+            return
+        write_json(cover_path, cover_prompt)
+        if not self.ensure_server_config_loaded():
+            return
+        if not self.confirm_run_action("Generate Cover", f"Generate `cover.png` untuk project `{self.current_project_name}`?"):
+            return
+        pdir = self.project_dir()
+        watch_dirs = [pdir / "cover"] if pdir else []
+        self.start_process(
+            COVER_IMAGE_SCRIPT,
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name],
+            f"Membuat cover untuk project {self.current_project_name}",
+            watch_dirs=watch_dirs,
         )
 
     def save_backup_zip(self):
-        default_name = f"api_production_{Path.cwd().name}"
-        zip_name, ok = QInputDialog.getText(
-            self,
-            "Nama File ZIP",
-            "Masukkan nama file ZIP backup:",
-            text=default_name,
-        )
-        if not ok:
+        if not self.ensure_project_selected():
             return
-        zip_name = (zip_name or "").strip()
-        if not zip_name:
-            QMessageBox.warning(self, "Nama Tidak Valid", "Nama file ZIP tidak boleh kosong.")
-            return
-        if zip_name.lower().endswith(".zip"):
-            display_name = zip_name
-        else:
-            display_name = f"{zip_name}.zip"
+        display_name = f"{self.current_project_name}.zip"
         if not self.confirm_run_action("Konfirmasi Save", f"Simpan backup sebagai `{display_name}`?"):
             return
         if self.current_scene_dir:
             self.save_current_scene(silent=True)
         self.start_process(
             BACKUP_SCRIPT,
-            ["--zip-name", zip_name],
-            "Menyimpan backup ZIP api_production",
+            ["--project", self.current_project_name],
+            f"Menyimpan backup ZIP project {self.current_project_name}",
             watch_dirs=[ROOT / "backup_production"],
         )
 

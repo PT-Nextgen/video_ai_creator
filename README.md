@@ -1,6 +1,6 @@
 ## Overview
 
-Proyek ini menjalankan pipeline pembuatan konten video per scene dari folder `api_production/scene_*`.
+Proyek ini menjalankan pipeline pembuatan konten video per scene berbasis project dari folder `api_production/<project_name>/scene_*`.
 
 ## Virtual Environment
 
@@ -28,7 +28,7 @@ source ./.venv/bin/activate
 
 ## Scene Structure
 
-Folder scene berada di `api_production/scene_<n>/`.
+Folder scene berada di `api_production/<project_name>/scene_<n>/`.
 
 File utama:
 - `scene_meta.json`
@@ -61,6 +61,12 @@ Field utama:
   - `lora_name`
   - `strength_model`
   - `json_api`
+
+Nilai `image_model` yang didukung:
+- `z-image turbo`
+- `flux.2`
+- `flux.2 klein 9b`
+- `gemini-3.1-flash-image-preview`
 - `wan22_i2v_prompt.json`
   - `positive_prompt_one` sampai `positive_prompt_five`
   - `negative_prompt_one` sampai `negative_prompt_five`
@@ -158,7 +164,8 @@ Script utama: `main.py`
 Fungsi:
 - `scene_type=default`
   - generate image dari `z_image_prompt.json`
-  - download image
+    - jika model ComfyUI (`Z-Image Turbo` / `Flux.*`): generate via ComfyUI dan download image
+    - jika model Gemini: generate via Gemini API
   - upload image ke ComfyUI
   - generate video dari `wan22_i2v_prompt.json`
   - jika `generate_caption=true`, burn caption ke video hasil
@@ -182,6 +189,8 @@ Fungsi:
 Argumen:
 - `--server`, `-s`
   - ComfyUI server `host:port`
+- `--project`, `-p`
+  - nama project di dalam `api_production`
 - `--scene`, `-S`
   - nama scene, repeatable
 - `--loop`, `-L`
@@ -189,9 +198,9 @@ Argumen:
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe main.py --server 127.0.0.1:8188
-.\.venv\Scripts\python.exe main.py --server 127.0.0.1:8188 --scene scene_1
-.\.venv\Scripts\python.exe main.py --server 127.0.0.1:8188 --scene scene_1 --scene scene_2
+.\.venv\Scripts\python.exe main.py --server 127.0.0.1:8188 --project demo_project
+.\.venv\Scripts\python.exe main.py --server 127.0.0.1:8188 --project demo_project --scene scene_1
+.\.venv\Scripts\python.exe main.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --scene scene_2
 ```
 
 ## Scene Manager UI
@@ -199,7 +208,12 @@ Contoh:
 Script: `scene_manager_ui.py`
 
 Fungsi utama:
-- menampilkan daftar scene di `api_production/`
+- project-based workspace:
+  - `Project Baru` membuat folder project baru di `api_production/<project_name>`
+  - `Buka Project` memilih project yang sudah ada
+  - `Tutup Project` menutup project aktif
+  - nama project harus unik (tidak boleh duplikat)
+- menampilkan daftar scene dari project aktif
 - drag-and-drop untuk reorder scene
 - tambah, sisipkan, dan hapus scene
 - edit metadata scene
@@ -222,19 +236,29 @@ Fungsi utama:
   - `Z-Image Turbo`
   - `Flux.2`
   - `Flux.2 Klein 9B`
+  - `Gemini 3.1 Flash Image Preview 0.5K`
 - menampilkan aset media per scene
 - buka aset ke viewer dengan klik ganda
 - hapus aset dari menu klik kanan
+- group `Cover` untuk generate `cover.png` per project
 - jalankan proses image, scene, voice, sound, dan compose
-- tombol `Save` untuk backup `api_production` menjadi ZIP
+- tombol `Save` untuk backup project aktif menjadi ZIP
 - menampilkan log proses
 - mengubah konfigurasi server lewat dialog
 
 Perilaku UI:
+- operasi scene hanya aktif jika project sudah dibuka
+- tombol `Cover` membuka dialog konfigurasi image cover (struktur sama seperti `Gambar Awal`)
+- konfigurasi cover disimpan global per project di `cover_prompt.json`
+- hasil generate cover disimpan ke `api_production/<project_name>/cover/cover.png`
 - `Status Adegan` menampilkan masalah validasi scene aktif
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_provider` dipilih
+- saat model image `Gemini 3.1 Flash Image Preview 0.5K` dipilih:
+  - negative prompt dinonaktifkan
+  - pengaturan seed statik dinonaktifkan
+  - pengaturan Lora image dinonaktifkan
 - `sound_prompt` tidak wajib
 - `Generate Caption` default aktif untuk scene baru
 - caption tidak lagi dibuat lewat tombol terpisah; caption berjalan otomatis setelah video selesai dibentuk jika `Generate Caption` aktif
@@ -268,6 +292,7 @@ Catatan:
 Implementasi domain image:
 - `z_image/z_image.py`
 - `flux2/flux2.py`
+- `gemini/gemini_image.py`
 
 Model yang tersedia:
 - `Z-Image Turbo`
@@ -282,6 +307,12 @@ Model yang tersedia:
   - template normal: `api_template/flux2_k9_api.json`
   - template Lora: `api_template/flux2_k9_lora_api.json`
   - memakai positive dan negative prompt
+- `Gemini 3.1 Flash Image Preview 0.5K`
+  - generate image via Gemini API (tanpa ComfyUI workflow)
+  - ukuran asli generate `0.5K`, lalu diproses ke ukuran scene dengan metode `scale + center crop` (tanpa stretching)
+  - `json_api` disimpan sebagai `gemini_flash_05k`
+  - tidak memakai negative prompt
+  - tidak memakai seed statik dan Lora image
 
 Resolusi image yang tersedia:
 - `368x640`
@@ -358,13 +389,38 @@ Script: `scripts/generate_initial_image.py`
 
 Fungsi:
 - membaca `z_image_prompt.json`
-- membangun workflow image sesuai model yang dipilih
-- mengirim workflow ke ComfyUI
-- mendownload image hasil ke folder scene
+- jika model ComfyUI:
+  - membangun workflow image sesuai model yang dipilih
+  - mengirim workflow ke ComfyUI
+  - mendownload image hasil ke folder scene
+- jika model Gemini:
+  - generate image via Gemini API
+  - simpan image hasil ke folder scene sesuai ukuran target scene (scale + center crop)
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe scripts\generate_initial_image.py --server 127.0.0.1:8188 --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_initial_image.py --server 127.0.0.1:8188 --project demo_project --scene scene_1
+```
+
+Script khusus Gemini (opsional): `scripts/generate_initial_image_gemini.py`
+
+Contoh:
+```powershell
+.\.venv\Scripts\python.exe scripts\generate_initial_image_gemini.py --project demo_project --scene scene_1
+```
+
+## Generate Cover Project
+
+Script: `scripts/generate_cover_image.py`
+
+Fungsi:
+- membaca `cover_prompt.json` pada root project
+- generate image cover sesuai model image (`ComfyUI` atau `Gemini`)
+- menyimpan hasil final sebagai `api_production/<project_name>/cover/cover.png`
+
+Contoh:
+```powershell
+.\.venv\Scripts\python.exe scripts\generate_cover_image.py --server 127.0.0.1:8188 --project demo_project
 ```
 
 ## Voice dan Sound
@@ -383,7 +439,7 @@ Fungsi:
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe scripts\generate_voice.py --server 127.0.0.1:8188 --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_voice.py --server 127.0.0.1:8188 --project demo_project --scene scene_1
 ```
 
 Konfigurasi key:
@@ -393,7 +449,14 @@ Contoh `keys.cfg`:
 ```ini
 ELEVENLABSKEY=isi_api_key_elevenlabs
 AUDIOCRAFTKEY=isi_api_key_audiocraft
+GEMINIKEY=isi_api_key_gemini
 ```
+
+Catatan key Gemini:
+- pencarian key Gemini dilakukan dengan urutan:
+  - `GEMINIKEY` di `keys.cfg`
+  - `GEMINI_API_KEY` di `keys.cfg` atau environment variable
+  - `GOOGLE_API_KEY` di `keys.cfg` atau environment variable
 
 ### Generate Sound
 
@@ -409,7 +472,7 @@ Catatan:
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe scripts\generate_sound.py --server 127.0.0.1:7777 --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_sound.py --server 127.0.0.1:7777 --project demo_project --scene scene_1
 ```
 
 ## Caption Otomatis
@@ -437,7 +500,7 @@ Catatan:
 Script: `scripts/generate_compose.py`
 
 Fungsi:
-- compose per scene ke folder `api_production/combined` dengan mix audio:
+- compose per scene ke folder `api_production/<project_name>/combined` dengan mix audio:
   - `wan22_s2v`: mempertahankan speech bawaan video dan hanya menambahkan sound
   - scene type lain: mix speech + sound ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
@@ -459,36 +522,37 @@ Di UI:
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe scripts\generate_compose.py --scene scene_1
-.\.venv\Scripts\python.exe scripts\generate_compose.py --scene scene_1 --scene scene_2
-.\.venv\Scripts\python.exe scripts\generate_compose.py
-.\.venv\Scripts\python.exe scripts\generate_compose.py --music-file ".\\music\\Another Night (Corporate).m4a" --music-volume 1.00
+.\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --scene scene_1 --scene scene_2
+.\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project
+.\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --music-file ".\\music\\Another Night (Corporate).m4a" --music-volume 1.00
 ```
 
 Catatan:
 - `ffmpeg` dan `ffprobe` harus tersedia di `PATH`
+- jangan menjalankan `generate_compose.py` paralel untuk project yang sama karena semua proses menulis ke folder `combined` yang sama
 
 ## Backup Production ZIP
 
 Script: `backup_production.py`
 
 Fungsi:
-- membuat file ZIP yang berisi folder `api_production` saat ini
+- membuat file ZIP yang berisi satu folder project aktif
 - output disimpan ke folder `backup_production`
+- nama file ZIP selalu `<project_name>.zip`
 
 Argumen:
-- `--zip-name` (opsional)
-  - nama file output ZIP
-  - `.zip` akan ditambahkan otomatis jika belum ada
+- `--project`, `-p`
+  - nama project yang akan dibackup
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe backup_production.py --zip-name backup_transformer_v1
+.\.venv\Scripts\python.exe backup_production.py --project demo_project
 ```
 
 Di UI:
 - tombol `Save` ada di grup `Backup`
-- saat diklik, UI akan meminta nama ZIP via dialog lalu konfirmasi sebelum proses dijalankan
+- saat diklik, UI akan konfirmasi backup project aktif dengan nama file tetap `<project_name>.zip`
 
 ## Logging
 

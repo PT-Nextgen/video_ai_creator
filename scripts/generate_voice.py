@@ -26,7 +26,6 @@ def _load_local_elevenlabs_tts():
 
 
 _elevenlabs_tts = _load_local_elevenlabs_tts()
-API_PRODUCTION = _elevenlabs_tts.API_PRODUCTION
 find_elevenlabs_key = _elevenlabs_tts.find_elevenlabs_key
 process_elevenlabs_scene = _elevenlabs_tts.process_scene
 
@@ -149,12 +148,13 @@ def process_edgetts_scene(scene_dir, server, timeout=POLL_TIMEOUT, interval=POLL
         return False
 
 
-def main(specific_scenes=None, comfyui_server=None):
-    if not os.path.exists(API_PRODUCTION):
-        print("api_production folder not found:", API_PRODUCTION)
+def main(project_name, specific_scenes=None, comfyui_server=None):
+    project_dir = os.path.join(ROOT, "api_production", str(project_name).strip())
+    if not os.path.exists(project_dir):
+        print("Project folder not found:", project_dir)
         return 1
 
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith("scene_")], key=_scene_sort_key)
+    scenes = sorted([d for d in os.listdir(project_dir) if d.startswith("scene_")], key=_scene_sort_key)
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
     if not scenes:
@@ -167,7 +167,7 @@ def main(specific_scenes=None, comfyui_server=None):
     processed_count = 0
 
     for scene in scenes:
-        scene_dir = os.path.join(API_PRODUCTION, scene)
+        scene_dir = os.path.join(project_dir, scene)
         meta_path = os.path.join(scene_dir, "scene_meta.json")
         if not os.path.exists(meta_path):
             logger.debug("No scene_meta.json in %s", scene_dir)
@@ -206,7 +206,8 @@ def main(specific_scenes=None, comfyui_server=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate voice untuk scene sesuai voice_provider")
+    parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-s", action="append", help="Scene yang diproses (repeatable)")
     parser.add_argument("--server", default=get_server_address("comfyui"), help="ComfyUI server host:port untuk EdgeTTS")
     args = parser.parse_args()
-    sys.exit(main(specific_scenes=args.scene, comfyui_server=args.server))
+    sys.exit(main(project_name=args.project, specific_scenes=args.scene, comfyui_server=args.server))
