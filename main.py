@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+import time
 from pathlib import Path
 from datetime import datetime
 import sys
@@ -23,7 +24,7 @@ from z_image.z_image import (
     get_model_key as get_image_model_key,
     send_workflow as send_z_image_workflow,
 )
-from gemini.gemini_image import MODEL_GEMINI_FLASH_05K, generate_scene_image, is_gemini_prompt
+from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image, is_gemini_prompt
 from wan22_i2v.wan22_i2v import build_wan_workflow, send_workflow as send_wan_workflow
 from wan22_s2v.wan22_s2v import (
     DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT,
@@ -36,6 +37,8 @@ from wan22_s2v.wan22_s2v import (
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
 from scripts.generate_caption import apply_caption_to_video
 from scripts.generate_compose import compose_scene
+from scripts.generate_web_scroll_video import generate_web_scroll_video
+from scripts.generate_image_pan_video import generate_image_pan_video
 
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
@@ -43,6 +46,22 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
 POLL_INTERVAL = 10.0
 POLL_TIMEOUT = 600
 WAN22_S2V_POLL_TIMEOUT = 2400
+I2V_FPS = 16
+WEB_SCROLL_FPS = 16
+DEFAULT_WEB_SCROLL_PROMPT = {
+    "url": "",
+    "width": 368,
+    "height": 640,
+    "duration_seconds": 5.0,
+    "speed": 1,
+    "capture_mode": "live_capture",
+}
+DEFAULT_IMAGE_PAN_PROMPT = {
+    "width": 480,
+    "height": 848,
+    "direction": "from_right",
+    "capture_mode": "live_capture",
+}
 
 # initialize logging for the process (idempotent)
 setup_logging()
@@ -98,6 +117,12 @@ def process_scene(scene_dir, server):
         return False
 
     scene_type = scene_meta.get('scene_type', 'default')
+
+    def _safe_error_text(err):
+        text = str(err)
+        # Keep logs single-line and console-safe on cp1252 terminals.
+        text = " ".join(text.splitlines()).strip()
+        return text.encode("cp1252", errors="replace").decode("cp1252")
 
     def _apply_caption_if_enabled(video_path):
         if not scene_meta.get("generate_caption", True):
@@ -447,7 +472,7 @@ def process_scene(scene_dir, server):
             scene_dir,
             imgs,
             duration_seconds,
-            fps=16,
+            fps=I2V_FPS,
             target_w=i2v_width,
             target_h=i2v_height,
         )
@@ -468,6 +493,121 @@ def process_scene(scene_dir, server):
         write_log(f"Completed i2v composition for {scene_dir}: {composed}")
         return True
 
+    if scene_type == 'web_scroll':
+        _ensure_scene_json(scene_dir, 'web_scroll_prompt.json', DEFAULT_WEB_SCROLL_PROMPT)
+        try:
+            web_prompt = _read_scene_json(scene_dir, 'web_scroll_prompt.json', required=True)
+        except Exception as e:
+            write_log(f"Failed to read web_scroll_prompt.json for {scene_dir}: {e}")
+            return False
+        web_url = str(web_prompt.get('url', '')).strip()
+        web_width = int(web_prompt.get('width', 368))
+        web_height = int(web_prompt.get('height', 640))
+        try:
+            web_duration = float(web_prompt.get('duration_seconds', 5.0))
+        except (TypeError, ValueError):
+            web_duration = 5.0
+        web_speed = int(web_prompt.get('speed', 1))
+        web_capture_mode = str(web_prompt.get('capture_mode', 'live_capture')).strip() or 'live_capture'
+        composed = None
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                composed = generate_web_scroll_video(
+                    scene_dir=scene_dir,
+                    url=web_url,
+                    width=web_width,
+                    height=web_height,
+                    duration_seconds=web_duration,
+                    speed=web_speed,
+                    fps=WEB_SCROLL_FPS,
+                    capture_mode=web_capture_mode,
+                )
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                write_log(f"web_scroll attempt {attempt}/3 failed for {scene_dir}: {_safe_error_text(e)}")
+                if attempt < 3:
+                    time.sleep(1.0 * attempt)
+        if last_error is not None or not composed:
+            write_log(f"Failed to generate web_scroll video for {scene_dir}: {_safe_error_text(last_error)}")
+            return False
+        try:
+            if not os.path.exists(composed) or os.path.getsize(composed) == 0:
+                write_log(f"Composed web_scroll video missing or empty: {composed}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking composed web_scroll video {composed}: {e}")
+            return False
+        if not _mix_scene_audio_to_video(composed, is_s2v=False):
+            return False
+        if not _apply_caption_if_enabled(composed):
+            return False
+        write_log(f"Completed web_scroll composition for {scene_dir}: {composed}")
+        return True
+
+    if scene_type == 'image_pan':
+        _ensure_scene_json(scene_dir, 'image_pan_prompt.json', DEFAULT_IMAGE_PAN_PROMPT)
+        try:
+            pan_prompt = _read_scene_json(scene_dir, 'image_pan_prompt.json', required=True)
+        except Exception as e:
+            write_log(f"Failed to read image_pan_prompt.json for {scene_dir}: {e}")
+            return False
+        img_path = _find_latest_root_image(scene_dir)
+        if not img_path:
+            write_log(f"image_pan scene requires at least one input image in root folder {scene_dir}")
+            return False
+        try:
+            pan_width = int(pan_prompt.get('width', 480))
+            pan_height = int(pan_prompt.get('height', 848))
+            pan_duration = float(scene_meta.get('duration_seconds', 5.0))
+            pan_direction = str(pan_prompt.get('direction', 'from_right')).strip() or 'from_right'
+            pan_capture_mode = str(pan_prompt.get('capture_mode', 'live_capture')).strip() or 'live_capture'
+        except Exception as e:
+            write_log(f"Invalid image_pan prompt value for {scene_dir}: {e}")
+            return False
+        if pan_duration <= 0:
+            write_log(f"Invalid scene duration for image_pan in {scene_dir}: {pan_duration}")
+            return False
+        composed = None
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                composed = generate_image_pan_video(
+                    scene_dir=scene_dir,
+                    image_path=img_path,
+                    width=pan_width,
+                    height=pan_height,
+                    duration_seconds=pan_duration,
+                    direction=pan_direction,
+                    fps=I2V_FPS,
+                    capture_mode=pan_capture_mode,
+                )
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                write_log(f"image_pan attempt {attempt}/3 failed for {scene_dir}: {_safe_error_text(e)}")
+                if attempt < 3:
+                    time.sleep(1.0 * attempt)
+        if last_error is not None or not composed:
+            write_log(f"Failed to generate image_pan video for {scene_dir}: {_safe_error_text(last_error)}")
+            return False
+        try:
+            if not os.path.exists(composed) or os.path.getsize(composed) == 0:
+                write_log(f"Composed image_pan video missing or empty: {composed}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking composed image_pan video {composed}: {e}")
+            return False
+        if not _mix_scene_audio_to_video(composed, is_s2v=False):
+            return False
+        if not _apply_caption_if_enabled(composed):
+            return False
+        write_log(f"Completed image_pan composition for {scene_dir}: {composed}")
+        return True
+
     # default behavior: create initial image -> upload -> wan22 prompt -> wait/download video
     try:
         z_prompt = _read_scene_json(scene_dir, 'z_image_prompt.json', required=True)
@@ -477,7 +617,7 @@ def process_scene(scene_dir, server):
         return False
 
     image_out_path = None
-    if is_gemini_prompt(z_prompt) or get_image_model_key(z_prompt) == MODEL_GEMINI_FLASH_05K:
+    if is_gemini_prompt(z_prompt) or get_image_model_key(z_prompt) == MODEL_GEMINI_IMAGE:
         try:
             image_out_path = generate_scene_image(scene_dir, z_prompt)
         except Exception as e:

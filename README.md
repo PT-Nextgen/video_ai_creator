@@ -35,6 +35,8 @@ File utama:
 - `z_image_prompt.json`
 - `wan22_s2v_prompt.json`
 - `wan22_i2v_prompt.json` (hanya untuk `default` / `wan22_i2v`)
+- `web_scroll_prompt.json` (untuk `web_scroll`)
+- `image_pan_prompt.json` (untuk `image_pan`)
 
 Field utama:
 - `scene_meta.json`
@@ -51,6 +53,7 @@ Field utama:
   - `sound_volume`
 - `z_image_prompt.json`
   - `image_model`
+  - `gemini_model_id` (khusus saat `image_model=gemini`)
   - `positive_prompt`
   - `negative_prompt`
   - `width`
@@ -66,7 +69,7 @@ Nilai `image_model` yang didukung:
 - `z-image turbo`
 - `flux.2`
 - `flux.2 klein 9b`
-- `gemini-3.1-flash-image-preview`
+- `gemini`
 - `wan22_i2v_prompt.json`
   - `positive_prompt_one` sampai `positive_prompt_five`
   - `negative_prompt_one` sampai `negative_prompt_five`
@@ -85,6 +88,18 @@ Nilai `image_model` yang didukung:
   - `height`
   - `cfg`
   - `json_api`
+- `web_scroll_prompt.json`
+  - `url`
+  - `width`
+  - `height`
+  - `duration_seconds`
+  - `speed`
+  - `capture_mode` (`live_capture` / `stable_pan`)
+- `image_pan_prompt.json`
+  - `width` (portrait only)
+  - `height` (portrait only)
+  - `direction` (`from_right` / `from_left`)
+  - `capture_mode` (`live_capture` / `stable_pan`)
 
 Kebutuhan prompt per `scene_type`:
 - `default`
@@ -97,6 +112,16 @@ Kebutuhan prompt per `scene_type`:
   - `voice_text` wajib diisi
 - `i2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json` (untuk ukuran target video), dan minimal satu gambar di root folder scene
+- `web_scroll`
+  - membutuhkan `scene_meta.json` dan `web_scroll_prompt.json`
+  - `url` wajib diisi dan harus valid (`http://` atau `https://`)
+  - `duration_seconds` wajib angka desimal `0.0` sampai `20.0` (kelipatan `0.1`)
+  - `speed` wajib bilangan bulat `1` sampai `5`
+- `image_pan`
+  - membutuhkan `scene_meta.json`, `z_image_prompt.json`, dan minimal satu gambar di root folder scene
+  - `width`/`height` pada `image_pan_prompt.json` wajib portrait (tinggi > lebar)
+  - durasi diambil dari `scene_meta.duration_seconds`
+  - `direction` wajib `from_right` atau `from_left`
 
 Catatan sumber image:
 - `default`
@@ -110,6 +135,18 @@ Catatan sumber image:
   - hasil video dipotong mengikuti durasi speech dengan tambahan maksimal `4 frame`
 - `i2v`
   - memakai semua gambar dari root folder scene
+- `web_scroll`
+  - membuat video dengan membuka URL website lalu scroll dari atas ke bawah selama durasi
+  - jika output portrait, browser dirender sebagai mobile browser (emulasi)
+  - jika output landscape, browser dirender sebagai desktop browser (non-mobile)
+  - mode default `live_capture`; mode alternatif `stable_pan`
+  - fps mengikuti scene type `i2v` (`16`)
+- `image_pan`
+  - membuat video dari satu gambar awal dengan pan horizontal sesuai arah (`from_right` / `from_left`)
+  - pan selalu menempuh penuh dari sisi ke sisi dalam durasi scene
+  - frame selalu mengikuti tinggi penuh gambar sumber (full height), lalu bergerak ke samping
+  - mode default `live_capture`; mode alternatif `stable_pan`
+  - fps mengikuti scene type `i2v` (`16`)
 
 Catatan voice dan caption:
 - `voice_text`
@@ -185,6 +222,23 @@ Fungsi:
   - ambil semua gambar dari root folder scene
   - compose gambar menjadi video sederhana
   - jika `generate_caption=true`, burn caption ke video hasil
+- `scene_type=web_scroll`
+  - membaca `web_scroll_prompt.json`
+  - render website di browser headless dan scroll dari atas ke bawah selama durasi
+  - output portrait memakai mobile emulation, output landscape memakai desktop context
+  - kecepatan scroll disesuaikan dengan `speed`
+  - mode capture:
+    - `live_capture` (default): screenshot frame-per-frame saat halaman di-scroll
+    - `stable_pan`: full-page screenshot lalu pan vertikal (fallback ke `live_capture` jika screenshot terlalu besar)
+  - jika `generate_caption=true`, burn caption ke video hasil
+- `scene_type=image_pan`
+  - membaca `image_pan_prompt.json`
+  - mengambil satu gambar terbaru dari root folder scene sebagai sumber pan horizontal
+  - arah pan ditentukan oleh `direction` (`from_right` atau `from_left`)
+  - mode capture:
+    - `live_capture` (default): pan langsung pada source image
+    - `stable_pan`: pan supersample untuk hasil gerak lebih halus
+  - jika `generate_caption=true`, burn caption ke video hasil
 
 Argumen:
 - `--server`, `-s`
@@ -236,7 +290,7 @@ Fungsi utama:
   - `Z-Image Turbo`
   - `Flux.2`
   - `Flux.2 Klein 9B`
-  - `Gemini 3.1 Flash Image Preview 0.5K`
+  - `Gemini`
 - menampilkan aset media per scene
 - buka aset ke viewer dengan klik ganda
 - hapus aset dari menu klik kanan
@@ -255,13 +309,23 @@ Perilaku UI:
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_provider` dipilih
-- saat model image `Gemini 3.1 Flash Image Preview 0.5K` dipilih:
+- saat model image `Gemini` dipilih:
+  - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
   - negative prompt dinonaktifkan
   - pengaturan seed statik dinonaktifkan
   - pengaturan Lora image dinonaktifkan
 - `sound_prompt` tidak wajib
 - `Generate Caption` default aktif untuk scene baru
 - caption tidak lagi dibuat lewat tombol terpisah; caption berjalan otomatis setelah video selesai dibentuk jika `Generate Caption` aktif
+- untuk `web_scroll`:
+  - tab `S2V`, `I2V`, dan `Gambar Awal` disembunyikan
+  - tab `Web Scroll` ditampilkan dengan input: `url`, `ukuran`, `duration_seconds`, `speed`, `capture_mode`
+  - tombol `Generate Image Awal` nonaktif (disabled)
+- untuk `image_pan`:
+  - tab `Gambar Awal` tetap tersedia
+  - tab `Image Pan` ditampilkan dengan input: `ukuran` (portrait-only), `direction`, `capture_mode`
+  - durasi diatur dari field durasi scene di tab `Metadata`
+  - tombol `Generate Image Awal` tetap aktif
 - untuk `wan22_s2v`, tab `WAN22 S2V` menyediakan:
   - `Ukuran`
   - `CFG`
@@ -307,8 +371,9 @@ Model yang tersedia:
   - template normal: `api_template/flux2_k9_api.json`
   - template Lora: `api_template/flux2_k9_lora_api.json`
   - memakai positive dan negative prompt
-- `Gemini 3.1 Flash Image Preview 0.5K`
+- `Gemini`
   - generate image via Gemini API (tanpa ComfyUI workflow)
+  - model Gemini spesifik dipilih dari `gemini_model_id`
   - ukuran asli generate `0.5K`, lalu diproses ke ukuran scene dengan metode `scale + center crop` (tanpa stretching)
   - `json_api` disimpan sebagai `gemini_flash_05k`
   - tidak memakai negative prompt

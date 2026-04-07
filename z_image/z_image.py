@@ -11,7 +11,7 @@ from flux2.flux2 import (
     is_flux2_prompt,
     supports_negative_prompt as flux_supports_negative_prompt,
 )
-from gemini.gemini_image import MODEL_GEMINI_FLASH_05K, is_gemini_prompt
+from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, is_gemini_prompt
 from scripts import comfyui_api
 from logging_config import get_logger, write_log
 
@@ -24,7 +24,7 @@ IMAGE_MODEL_OPTIONS = [
     (MODEL_Z_IMAGE_TURBO, "Z-Image Turbo"),
     (MODEL_FLUX2, "Flux.2"),
     (MODEL_FLUX2_K9, "Flux.2 Klein 9B"),
-    (MODEL_GEMINI_FLASH_05K, "Gemini 3.1 Flash Image Preview 0.5K"),
+    (MODEL_GEMINI_IMAGE, "Gemini"),
 ]
 TEMPLATE_DEFAULT = "z_image_api.json"
 TEMPLATE_LORA = "z_image_lora_api.json"
@@ -47,6 +47,7 @@ DEFAULT_PROMPT = {
     "use_lora": False,
     "lora_name": "",
     "strength_model": 1.0,
+    "gemini_model_id": MODEL_GEMINI_FLASH_05K,
     "json_api": TEMPLATE_DEFAULT,
 }
 
@@ -73,7 +74,7 @@ def _traverse_and_replace(node, replace_map):
 
 def get_model_key(z_prompt: dict | None = None) -> str:
     if is_gemini_prompt(z_prompt):
-        return MODEL_GEMINI_FLASH_05K
+        return MODEL_GEMINI_IMAGE
     if is_flux2_prompt(z_prompt):
         return get_flux_model_key(z_prompt)
     return MODEL_Z_IMAGE_TURBO
@@ -91,14 +92,14 @@ def supports_negative_prompt(z_prompt: dict | None = None) -> bool:
     model_key = get_model_key(z_prompt)
     if model_key == MODEL_Z_IMAGE_TURBO:
         return True
-    if model_key == MODEL_GEMINI_FLASH_05K:
+    if model_key == MODEL_GEMINI_IMAGE:
         return False
     return flux_supports_negative_prompt(z_prompt)
 
 
 def get_template_name(z_prompt: dict | None = None) -> str:
     z_prompt = z_prompt or {}
-    if get_model_key(z_prompt) == MODEL_GEMINI_FLASH_05K:
+    if get_model_key(z_prompt) == MODEL_GEMINI_IMAGE:
         return "gemini_flash_05k"
     if get_model_key(z_prompt) in {MODEL_FLUX2, MODEL_FLUX2_K9}:
         return get_flux2_template_name(z_prompt)
@@ -142,7 +143,7 @@ def build_workflow(z_prompt: dict) -> dict:
 
 
 def build_z_image_workflow(z_prompt: dict) -> dict:
-    if get_model_key(z_prompt) == MODEL_GEMINI_FLASH_05K:
+    if get_model_key(z_prompt) == MODEL_GEMINI_IMAGE:
         raise RuntimeError("Gemini image model does not use ComfyUI workflow.")
     if get_model_key(z_prompt) in {MODEL_FLUX2, MODEL_FLUX2_K9}:
         return build_flux2_workflow(z_prompt)

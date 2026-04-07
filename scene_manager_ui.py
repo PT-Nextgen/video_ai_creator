@@ -3,6 +3,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QProcess, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QPixmap
@@ -33,7 +34,7 @@ from z_image.z_image import SIZE_OPTIONS as Z_IMAGE_SIZES
 from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
-from gemini.gemini_image import MODEL_GEMINI_FLASH_05K
+from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
 
 ROOT = Path(__file__).resolve().parent
 API_PRODUCTION = ROOT / "api_production"
@@ -76,6 +77,20 @@ DEFAULT_SCENE_META = {
     "generate_caption": True,
     "edgetts_voice_id": "", "sound_prompt": "", "sound_volume": "",
     "scene_type": "default",
+}
+DEFAULT_WEB_SCROLL_PROMPT = {
+    "url": "",
+    "width": 368,
+    "height": 640,
+    "duration_seconds": 5.0,
+    "speed": 1,
+    "capture_mode": "live_capture",
+}
+DEFAULT_IMAGE_PAN_PROMPT = {
+    "width": 480,
+    "height": 848,
+    "direction": "from_right",
+    "capture_mode": "live_capture",
 }
 
 
@@ -137,10 +152,20 @@ def build_scene_templates(title: str, scene_type: str, duration: int):
         copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT),
         copy.deepcopy(DEFAULT_WAN_PROMPT),
         copy.deepcopy(DEFAULT_WAN22_S2V_PROMPT),
+        copy.deepcopy(DEFAULT_WEB_SCROLL_PROMPT),
+        copy.deepcopy(DEFAULT_IMAGE_PAN_PROMPT),
     )
 
 
-def create_scene_files(scene_dir: Path, meta=None, z_prompt=None, wan_prompt=None, wan22_s2v_prompt=None):
+def create_scene_files(
+    scene_dir: Path,
+    meta=None,
+    z_prompt=None,
+    wan_prompt=None,
+    wan22_s2v_prompt=None,
+    web_scroll_prompt=None,
+    image_pan_prompt=None,
+):
     scene_dir.mkdir(parents=True, exist_ok=True)
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
     if isinstance(meta, dict):
@@ -153,10 +178,20 @@ def create_scene_files(scene_dir: Path, meta=None, z_prompt=None, wan_prompt=Non
         z_prompt=z_prompt or DEFAULT_Z_IMAGE_PROMPT,
         wan_prompt=wan_prompt or DEFAULT_WAN_PROMPT,
         s2v_prompt=wan22_s2v_prompt or DEFAULT_WAN22_S2V_PROMPT,
+        web_prompt=web_scroll_prompt or DEFAULT_WEB_SCROLL_PROMPT,
+        image_pan_prompt=image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT,
     )
 
 
-def sync_scene_prompt_files(scene_dir: Path, scene_type: str, z_prompt: dict, wan_prompt: dict, s2v_prompt: dict):
+def sync_scene_prompt_files(
+    scene_dir: Path,
+    scene_type: str,
+    z_prompt: dict,
+    wan_prompt: dict,
+    s2v_prompt: dict,
+    web_prompt: dict,
+    image_pan_prompt: dict,
+):
     """Ensure prompt JSON files exist according to selected scene type.
 
     Rules:
@@ -166,6 +201,8 @@ def sync_scene_prompt_files(scene_dir: Path, scene_type: str, z_prompt: dict, wa
     """
     write_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
     write_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
+    write_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
+    write_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
 
     wan_required_types = {"default", "wan22", "wan22_i2v"}
     wan_path = scene_dir / "wan22_i2v_prompt.json"
@@ -205,18 +242,41 @@ def find_latest_speech_asset(scene_dir: Path):
     return items[0]
 
 
-def validate_scene_data(meta: dict, z_prompt: dict, wan_prompt: dict, scene_dir: Path | None = None):
+def _is_valid_web_url(value: str):
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _is_one_decimal_step(value: float):
+    return abs((value * 10.0) - round(value * 10.0)) < 1e-9
+
+
+def validate_scene_data(
+    meta: dict,
+    z_prompt: dict,
+    wan_prompt: dict,
+    s2v_prompt: dict | None = None,
+    web_prompt: dict | None = None,
+    image_pan_prompt: dict | None = None,
+    scene_dir: Path | None = None,
+):
     issues = []
     scene_type = str(meta.get("scene_type", "default")).strip()
+    s2v_prompt = s2v_prompt or DEFAULT_WAN22_S2V_PROMPT
+    web_prompt = web_prompt or DEFAULT_WEB_SCROLL_PROMPT
+    image_pan_prompt = image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT
     image_model_key = get_z_image_model_key(z_prompt)
-    is_gemini_image = image_model_key == MODEL_GEMINI_FLASH_05K
+    is_gemini_image = image_model_key == MODEL_GEMINI_IMAGE
     if not str(meta.get("scene_title", "")).strip():
         issues.append("Judul adegan wajib diisi.")
     try:
-        if scene_type != "wan22_s2v" and int(meta.get("duration_seconds", 0)) <= 0:
+        if scene_type not in {"wan22_s2v", "web_scroll"} and int(meta.get("duration_seconds", 0)) <= 0:
             issues.append("Durasi harus lebih besar dari 0.")
     except Exception:
-        if scene_type != "wan22_s2v":
+        if scene_type not in {"wan22_s2v", "web_scroll"}:
             issues.append("Durasi harus berupa angka.")
     if scene_type == "default":
         if not str(z_prompt.get("positive_prompt", "")).strip():
@@ -275,6 +335,50 @@ def validate_scene_data(meta: dict, z_prompt: dict, wan_prompt: dict, scene_dir:
             else:
                 if duration >= WAN22_S2V_MAX_AUDIO_DURATION:
                     issues.append(f"Durasi audio speech WAN22 S2V harus kurang dari {WAN22_S2V_MAX_AUDIO_DURATION} detik.")
+    if scene_type == "web_scroll":
+        url = str(web_prompt.get("url", "")).strip()
+        if not url:
+            issues.append("URL website wajib diisi untuk adegan web_scroll.")
+        elif not _is_valid_web_url(url):
+            issues.append("Format URL website tidak valid. Gunakan URL dengan http:// atau https://")
+        try:
+            duration_value = float(web_prompt.get("duration_seconds", -1))
+        except Exception:
+            issues.append("Durasi web_scroll harus berupa angka desimal 0.0 sampai 20.0 dengan 1 angka di belakang koma.")
+        else:
+            if duration_value < 0 or duration_value > 20:
+                issues.append("Durasi web_scroll harus di antara 0.0 sampai 20.0 detik.")
+            elif not _is_one_decimal_step(duration_value):
+                issues.append("Durasi web_scroll harus kelipatan 0.1 detik (1 angka di belakang koma).")
+        try:
+            speed_value = int(web_prompt.get("speed", 0))
+        except Exception:
+            issues.append("Speed web_scroll harus berupa bilangan bulat positif dari 1 sampai 5.")
+        else:
+            if speed_value < 1 or speed_value > 5:
+                issues.append("Speed web_scroll harus di antara 1 sampai 5.")
+        capture_mode = str(web_prompt.get("capture_mode", "live_capture")).strip()
+        if capture_mode not in {"stable_pan", "live_capture"}:
+            issues.append("Mode web_scroll tidak valid. Pilih `stable_pan` atau `live_capture`.")
+    if scene_type == "image_pan":
+        if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
+            issues.append("Adegan image_pan membutuhkan satu gambar awal di folder scene.")
+        try:
+            pan_width = int(image_pan_prompt.get("width", DEFAULT_IMAGE_PAN_PROMPT["width"]))
+            pan_height = int(image_pan_prompt.get("height", DEFAULT_IMAGE_PAN_PROMPT["height"]))
+        except Exception:
+            pan_width = 0
+            pan_height = 0
+        if pan_width <= 0 or pan_height <= 0:
+            issues.append("Ukuran image_pan tidak valid.")
+        elif pan_height <= pan_width:
+            issues.append("Ukuran image_pan harus portrait (tinggi lebih besar dari lebar).")
+        pan_direction = str(image_pan_prompt.get("direction", "from_right")).strip()
+        if pan_direction not in {"from_right", "from_left"}:
+            issues.append("Arah image_pan tidak valid. Pilih `from_right` atau `from_left`.")
+        pan_mode = str(image_pan_prompt.get("capture_mode", "live_capture")).strip()
+        if pan_mode not in {"stable_pan", "live_capture"}:
+            issues.append("Mode image_pan tidak valid. Pilih `stable_pan` atau `live_capture`.")
     if scene_type == "i2v" and scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
         issues.append("Adegan i2v membutuhkan minimal satu gambar lokal di folder scene.")
     provider = str(meta.get("voice_provider", "")).strip()
@@ -310,7 +414,7 @@ class SceneTemplateDialog(QDialog):
         self.setWindowTitle(title)
         self.title_input = QLineEdit()
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v"])
+        self.type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan"])
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 3600)
         self.duration_spin.setValue(10)
@@ -326,7 +430,7 @@ class SceneTemplateDialog(QDialog):
         self.update_fields_for_scene_type(self.type_combo.currentText())
 
     def update_fields_for_scene_type(self, scene_type: str):
-        self.duration_spin.setEnabled(scene_type != "wan22_s2v")
+        self.duration_spin.setEnabled(scene_type not in {"wan22_s2v", "web_scroll"})
 
     def get_data(self):
         return {
@@ -423,6 +527,10 @@ class CoverPromptDialog(QDialog):
         self.model_input = QComboBox(self)
         for model_key, label in IMAGE_MODEL_OPTIONS:
             self.model_input.addItem(label, model_key)
+        self.gemini_model_input = QComboBox(self)
+        self.gemini_models = list_gemini_image_models()
+        for model_id in self.gemini_models:
+            self.gemini_model_input.addItem(model_id, model_id)
 
         self.size_input = QComboBox(self)
         for label, width, height in Z_IMAGE_SIZES:
@@ -438,6 +546,7 @@ class CoverPromptDialog(QDialog):
 
         form = QFormLayout(self)
         form.addRow("Model", self.model_input)
+        form.addRow("Model Gemini", self.gemini_model_input)
         form.addRow("Ukuran", self.size_input)
         form.addRow("", self.use_random_seed_input)
         form.addRow("Seed Statik", self.seed_input)
@@ -483,6 +592,12 @@ class CoverPromptDialog(QDialog):
         self.lora_strength_input.setText(str(data.get("strength_model", 1.0)))
         self.positive_input.setPlainText(str(data.get("positive_prompt", "")))
         self.negative_input.setPlainText(str(data.get("negative_prompt", "")))
+        selected_gemini_model = str(data.get("gemini_model_id", MODEL_GEMINI_FLASH_05K)).strip()
+        idx = self.gemini_model_input.findData(selected_gemini_model)
+        if idx < 0 and selected_gemini_model:
+            self.gemini_model_input.addItem(selected_gemini_model, selected_gemini_model)
+            idx = self.gemini_model_input.findData(selected_gemini_model)
+        self.gemini_model_input.setCurrentIndex(max(idx, 0))
 
     def _update_seed_enabled(self):
         self.seed_input.setEnabled(not self.use_random_seed_input.isChecked())
@@ -499,7 +614,11 @@ class CoverPromptDialog(QDialog):
         if not can_use_negative:
             self.negative_input.setPlainText("")
 
-        is_gemini = model_key == MODEL_GEMINI_FLASH_05K
+        is_gemini = model_key == MODEL_GEMINI_IMAGE
+        self.gemini_model_input.setVisible(is_gemini)
+        label = self.layout().labelForField(self.gemini_model_input)
+        if label is not None:
+            label.setVisible(is_gemini)
         self.use_lora_input.setEnabled(not is_gemini)
         self.use_random_seed_input.setEnabled(not is_gemini)
         if is_gemini:
@@ -534,6 +653,11 @@ class CoverPromptDialog(QDialog):
 
         data = {
             "image_model": model_key,
+            "gemini_model_id": (
+                str(self.gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
+                if model_key == MODEL_GEMINI_IMAGE
+                else ""
+            ),
             "positive_prompt": self.positive_input.toPlainText().strip(),
             "negative_prompt": (
                 self.negative_input.toPlainText().strip()
@@ -612,7 +736,9 @@ class SceneEditorWindow(QMainWindow):
         self.z_tab = None
         self.wan_tab = None
         self.s2v_tab = None
+        self.web_tab = None
         self.assets_tab = None
+        self.generate_initial_image_button = None
         self.duration_label = None
         self.s2v_negative_label = None
         self.scene_list = SceneListWidget()
@@ -626,7 +752,7 @@ class SceneEditorWindow(QMainWindow):
         for value in [5, 10, 15, 20, 25]:
             self.duration_input.addItem(str(value), value)
         self.scene_type_combo = QComboBox()
-        self.scene_type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v"])
+        self.scene_type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan"])
         self.voice_provider_combo = QComboBox()
         self.voice_provider_combo.addItems(["", "elevenlabs", "edgetts"])
         self.elevenlabs_voice_input = QComboBox()
@@ -649,6 +775,10 @@ class SceneEditorWindow(QMainWindow):
         self.z_model_input = QComboBox()
         for model_key, label in IMAGE_MODEL_OPTIONS:
             self.z_model_input.addItem(label, model_key)
+        self.z_gemini_model_input = QComboBox()
+        self.z_gemini_model_ids = list_gemini_image_models()
+        for model_id in self.z_gemini_model_ids:
+            self.z_gemini_model_input.addItem(model_id, model_id)
         self.z_negative_input = QTextEdit()
         self.z_size_input = QComboBox()
         for label, width, height in Z_IMAGE_SIZES:
@@ -687,6 +817,31 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_cfg_input.setSingleStep(0.1)
         self.s2v_cfg_input.setDecimals(1)
         self.s2v_cfg_input.setValue(float(DEFAULT_WAN22_S2V_PROMPT.get("cfg", 2.0)))
+        self.web_url_input = QLineEdit()
+        self.web_size_input = QComboBox()
+        for label, width, height in Z_IMAGE_SIZES:
+            self.web_size_input.addItem(label, (width, height))
+        self.web_duration_input = QDoubleSpinBox()
+        self.web_duration_input.setRange(0.0, 20.0)
+        self.web_duration_input.setSingleStep(0.1)
+        self.web_duration_input.setDecimals(1)
+        self.web_duration_input.setValue(float(DEFAULT_WEB_SCROLL_PROMPT.get("duration_seconds", 5.0)))
+        self.web_speed_input = QSpinBox()
+        self.web_speed_input.setRange(1, 5)
+        self.web_speed_input.setValue(int(DEFAULT_WEB_SCROLL_PROMPT.get("speed", 1)))
+        self.web_capture_mode_input = QComboBox()
+        self.web_capture_mode_input.addItem("Live Capture (Default)", "live_capture")
+        self.web_capture_mode_input.addItem("Stable Pan", "stable_pan")
+        self.image_pan_size_input = QComboBox()
+        for label, width, height in Z_IMAGE_SIZES:
+            if int(height) > int(width):
+                self.image_pan_size_input.addItem(label, (width, height))
+        self.image_pan_direction_input = QComboBox()
+        self.image_pan_direction_input.addItem("Dari Kanan", "from_right")
+        self.image_pan_direction_input.addItem("Dari Kiri", "from_left")
+        self.image_pan_capture_mode_input = QComboBox()
+        self.image_pan_capture_mode_input.addItem("Live Capture (Default)", "live_capture")
+        self.image_pan_capture_mode_input.addItem("Stable Pan", "stable_pan")
 
         self.status_label = QPlainTextEdit()
         self.status_label.setReadOnly(True)
@@ -732,6 +887,7 @@ class SceneEditorWindow(QMainWindow):
         self.update_wan_lora_fields_enabled()
         self.update_scene_type_tabs()
         self.update_scene_type_specific_fields()
+        self.update_run_action_buttons_state()
         self.reload_scene_list()
         self.refresh_project_state()
 
@@ -742,8 +898,14 @@ class SceneEditorWindow(QMainWindow):
             self.elevenlabs_voice_input.currentTextChanged, self.elevenlabs_model_input.currentTextChanged,
             self.edgetts_voice_input.currentTextChanged,
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
+            self.z_gemini_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_step_combo.currentIndexChanged, self.wan_size_input.currentTextChanged,
-            self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged,
+            self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
+            self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
+            self.web_capture_mode_input.currentIndexChanged,
+            self.image_pan_size_input.currentTextChanged,
+            self.image_pan_direction_input.currentIndexChanged,
+            self.image_pan_capture_mode_input.currentIndexChanged,
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
             self.generate_caption_input.checkStateChanged,
             self.wan_use_lora_input.checkStateChanged,
@@ -764,6 +926,7 @@ class SceneEditorWindow(QMainWindow):
         self.wan_use_lora_input.toggled.connect(self.update_wan_lora_fields_enabled)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
+        self.scene_type_combo.currentTextChanged.connect(self.update_run_action_buttons_state)
 
     def build_ui(self):
         self.toolbar = QToolBar("Aksi")
@@ -824,6 +987,7 @@ class SceneEditorWindow(QMainWindow):
         self.z_tab = QWidget()
         z_layout = QFormLayout(self.z_tab)
         z_layout.addRow("Model", self.z_model_input)
+        z_layout.addRow("Model Gemini", self.z_gemini_model_input)
         z_layout.addRow("Ukuran", self.z_size_input)
         z_layout.addRow("", self.z_use_random_seed_input)
         z_layout.addRow("Seed Statik", self.z_seed_input)
@@ -865,6 +1029,22 @@ class SceneEditorWindow(QMainWindow):
         s2v_layout.addRow(self.s2v_negative_label, self.s2v_negative_input)
         tabs.addTab(self.s2v_tab, "WAN22 S2V")
 
+        self.web_tab = QWidget()
+        web_layout = QFormLayout(self.web_tab)
+        web_layout.addRow("URL Website", self.web_url_input)
+        web_layout.addRow("Ukuran", self.web_size_input)
+        web_layout.addRow("Durasi (detik)", self.web_duration_input)
+        web_layout.addRow("Speed", self.web_speed_input)
+        web_layout.addRow("Mode", self.web_capture_mode_input)
+        tabs.addTab(self.web_tab, "Web Scroll")
+
+        self.image_pan_tab = QWidget()
+        image_pan_layout = QFormLayout(self.image_pan_tab)
+        image_pan_layout.addRow("Ukuran (Portrait)", self.image_pan_size_input)
+        image_pan_layout.addRow("Arah", self.image_pan_direction_input)
+        image_pan_layout.addRow("Mode", self.image_pan_capture_mode_input)
+        tabs.addTab(self.image_pan_tab, "Image Pan")
+
         self.assets_tab = QWidget()
         assets_layout = QVBoxLayout(self.assets_tab)
         assets_layout.addWidget(QLabel("Aset media dalam adegan. Klik ganda untuk membuka tampilan."))
@@ -879,9 +1059,11 @@ class SceneEditorWindow(QMainWindow):
         scene_type = self.scene_type_combo.currentText().strip()
         visible_map = {
             self.meta_tab: True,
-            self.z_tab: True,
+            self.z_tab: scene_type != "web_scroll",
             self.wan_tab: scene_type in {"default", "wan22", "wan22_i2v"},
             self.s2v_tab: scene_type == "wan22_s2v",
+            self.web_tab: scene_type == "web_scroll",
+            self.image_pan_tab: scene_type == "image_pan",
             self.assets_tab: True,
         }
         current_widget = self.editor_tabs.currentWidget()
@@ -896,12 +1078,13 @@ class SceneEditorWindow(QMainWindow):
 
     def update_scene_type_specific_fields(self):
         scene_type = self.scene_type_combo.currentText().strip()
-        is_wan22_s2v = scene_type == "wan22_s2v"
-        self.duration_input.setEnabled(not is_wan22_s2v)
+        hide_meta_duration = scene_type in {"wan22_s2v", "web_scroll"}
+        self.duration_input.setEnabled(not hide_meta_duration)
         if self.duration_label is not None:
-            self.duration_label.setEnabled(not is_wan22_s2v)
-            self.duration_label.setVisible(not is_wan22_s2v)
-        self.duration_input.setVisible(not is_wan22_s2v)
+            self.duration_label.setEnabled(not hide_meta_duration)
+            self.duration_label.setVisible(not hide_meta_duration)
+        self.duration_input.setVisible(not hide_meta_duration)
+        is_wan22_s2v = scene_type == "wan22_s2v"
         if self.s2v_negative_label is not None:
             self.s2v_negative_label.setVisible(is_wan22_s2v)
         self.s2v_negative_input.setVisible(is_wan22_s2v)
@@ -988,6 +1171,7 @@ class SceneEditorWindow(QMainWindow):
             self.scene_list.clear()
             self.status_label.setPlainText("Belum ada project yang dibuka.")
             self.viewer_info_label.setText("Buka project terlebih dahulu.")
+        self.update_run_action_buttons_state()
 
     def ensure_project_selected(self, notify=True):
         if self.project_dir() is not None:
@@ -1017,8 +1201,8 @@ class SceneEditorWindow(QMainWindow):
         pdir.mkdir(parents=True, exist_ok=False)
         write_json(pdir / "cover_prompt.json", copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT))
         default_scene = pdir / scene_dir_name(1)
-        meta, z_prompt, wan_prompt, s2v_prompt = build_scene_templates("", "default", 10)
-        create_scene_files(default_scene, meta, z_prompt, wan_prompt, s2v_prompt)
+        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates("", "default", 10)
+        create_scene_files(default_scene, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
         self.current_project_name = project_name
         self.reload_scene_list()
         self.select_scene_by_name(default_scene.name)
@@ -1067,11 +1251,23 @@ class SceneEditorWindow(QMainWindow):
             button.setStatusTip(tooltip)
             button.clicked.connect(handler)
             layout.addWidget(button)
+            return button
 
-        add_button("Buat Gambar Awal", "Buat gambar awal untuk adegan yang dipilih.", QStyle.SP_ComputerIcon, self.generate_initial_image_only)
+        self.generate_initial_image_button = add_button(
+            "Buat Gambar Awal",
+            "Buat gambar awal untuk adegan yang dipilih.",
+            QStyle.SP_ComputerIcon,
+            self.generate_initial_image_only,
+        )
         add_button("Jalankan Adegan", "Jalankan alur untuk adegan yang dipilih.", QStyle.SP_MediaPlay, self.run_current_scene)
         add_button("Jalankan Semua", "Jalankan semua adegan secara berurutan.", QStyle.SP_MediaSkipForward, self.run_all_scenes)
         return frame
+
+    def update_run_action_buttons_state(self):
+        if self.generate_initial_image_button is None:
+            return
+        scene_type = self.scene_type_combo.currentText().strip()
+        self.generate_initial_image_button.setEnabled(scene_type != "web_scroll")
 
     def build_audio_action_group(self):
         frame = QFrame(self)
@@ -1235,8 +1431,15 @@ class SceneEditorWindow(QMainWindow):
 
     def update_image_model_fields_enabled(self):
         model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO)
-        is_gemini = model_key == MODEL_GEMINI_FLASH_05K
+        is_gemini = model_key == MODEL_GEMINI_IMAGE
         can_use_negative = z_image_supports_negative_prompt({"image_model": model_key})
+        self.z_gemini_model_input.setVisible(is_gemini)
+        if self.z_tab is not None:
+            layout = self.z_tab.layout()
+            if isinstance(layout, QFormLayout):
+                label = layout.labelForField(self.z_gemini_model_input)
+                if label is not None:
+                    label.setVisible(is_gemini)
         self.z_negative_input.setEnabled(can_use_negative)
         if not can_use_negative:
             self.z_negative_input.setPlainText("")
@@ -1322,7 +1525,9 @@ class SceneEditorWindow(QMainWindow):
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
             wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
-            issues = validate_scene_data(meta, z_prompt, wan_prompt if meta.get("scene_type") != "wan22_s2v" else s2v_prompt, scene_dir)
+            web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
+            image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
+            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, scene_dir)
             label = scene_dir.name if not issues else f"{scene_dir.name} ({len(issues)} masalah)"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, str(scene_dir))
@@ -1385,6 +1590,8 @@ class SceneEditorWindow(QMainWindow):
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
             wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
+            web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
+            image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
             self.scene_title_input.setText(str(meta.get("scene_title", "")))
             duration_value = str(meta.get("duration_seconds", ""))
             index = self.duration_input.findData(int(float(duration_value))) if duration_value else -1
@@ -1421,6 +1628,12 @@ class SceneEditorWindow(QMainWindow):
             model_key = get_z_image_model_key(z_prompt)
             index = self.z_model_input.findData(model_key)
             self.z_model_input.setCurrentIndex(max(index, 0))
+            selected_gemini_model = str(z_prompt.get("gemini_model_id", MODEL_GEMINI_FLASH_05K)).strip()
+            index = self.z_gemini_model_input.findData(selected_gemini_model)
+            if index < 0 and selected_gemini_model:
+                self.z_gemini_model_input.addItem(selected_gemini_model, selected_gemini_model)
+                index = self.z_gemini_model_input.findData(selected_gemini_model)
+            self.z_gemini_model_input.setCurrentIndex(max(index, 0))
             index = -1
             for i in range(self.z_size_input.count()):
                 size_value = self.z_size_input.itemData(i)
@@ -1469,6 +1682,57 @@ class SceneEditorWindow(QMainWindow):
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
             self.s2v_positive_input.setPlainText(str(s2v_prompt.get("positive_prompt", DEFAULT_WAN22_S2V_PROMPT["positive_prompt"])))
             self.s2v_negative_input.setPlainText(str(s2v_prompt.get("negative_prompt", DEFAULT_WAN22_S2V_PROMPT["negative_prompt"])))
+            self.web_url_input.setText(str(web_prompt.get("url", DEFAULT_WEB_SCROLL_PROMPT["url"])))
+            try:
+                web_width = int(web_prompt.get("width", DEFAULT_WEB_SCROLL_PROMPT["width"]))
+            except (TypeError, ValueError):
+                web_width = int(DEFAULT_WEB_SCROLL_PROMPT["width"])
+            try:
+                web_height = int(web_prompt.get("height", DEFAULT_WEB_SCROLL_PROMPT["height"]))
+            except (TypeError, ValueError):
+                web_height = int(DEFAULT_WEB_SCROLL_PROMPT["height"])
+            index = -1
+            for i in range(self.web_size_input.count()):
+                size_value = self.web_size_input.itemData(i)
+                if isinstance(size_value, tuple) and size_value == (web_width, web_height):
+                    index = i
+                    break
+            self.web_size_input.setCurrentIndex(max(index, 0))
+            try:
+                web_duration = float(web_prompt.get("duration_seconds", DEFAULT_WEB_SCROLL_PROMPT["duration_seconds"]))
+            except (TypeError, ValueError):
+                web_duration = float(DEFAULT_WEB_SCROLL_PROMPT["duration_seconds"])
+            try:
+                web_speed = int(web_prompt.get("speed", DEFAULT_WEB_SCROLL_PROMPT["speed"]))
+            except (TypeError, ValueError):
+                web_speed = int(DEFAULT_WEB_SCROLL_PROMPT["speed"])
+            web_duration = round(max(0.0, min(20.0, web_duration)), 1)
+            self.web_duration_input.setValue(web_duration)
+            self.web_speed_input.setValue(max(1, min(5, web_speed)))
+            capture_mode = str(web_prompt.get("capture_mode", DEFAULT_WEB_SCROLL_PROMPT["capture_mode"])).strip()
+            index = self.web_capture_mode_input.findData(capture_mode)
+            self.web_capture_mode_input.setCurrentIndex(max(index, 0))
+            try:
+                pan_width = int(image_pan_prompt.get("width", DEFAULT_IMAGE_PAN_PROMPT["width"]))
+            except (TypeError, ValueError):
+                pan_width = int(DEFAULT_IMAGE_PAN_PROMPT["width"])
+            try:
+                pan_height = int(image_pan_prompt.get("height", DEFAULT_IMAGE_PAN_PROMPT["height"]))
+            except (TypeError, ValueError):
+                pan_height = int(DEFAULT_IMAGE_PAN_PROMPT["height"])
+            index = -1
+            for i in range(self.image_pan_size_input.count()):
+                size_value = self.image_pan_size_input.itemData(i)
+                if isinstance(size_value, tuple) and size_value == (pan_width, pan_height):
+                    index = i
+                    break
+            self.image_pan_size_input.setCurrentIndex(max(index, 0))
+            pan_direction = str(image_pan_prompt.get("direction", DEFAULT_IMAGE_PAN_PROMPT["direction"])).strip()
+            index = self.image_pan_direction_input.findData(pan_direction)
+            self.image_pan_direction_input.setCurrentIndex(max(index, 0))
+            pan_mode = str(image_pan_prompt.get("capture_mode", DEFAULT_IMAGE_PAN_PROMPT["capture_mode"])).strip()
+            index = self.image_pan_capture_mode_input.findData(pan_mode)
+            self.image_pan_capture_mode_input.setCurrentIndex(max(index, 0))
         finally:
             self.loading_scene = False
         self.refresh_scene_status()
@@ -1490,6 +1754,11 @@ class SceneEditorWindow(QMainWindow):
         }
         z_prompt = {
             "image_model": str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO),
+            "gemini_model_id": (
+                str(self.z_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
+                if str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO) == MODEL_GEMINI_IMAGE
+                else ""
+            ),
             "positive_prompt": self.z_positive_input.toPlainText().strip(),
             "negative_prompt": (
                 self.z_negative_input.toPlainText().strip()
@@ -1528,7 +1797,21 @@ class SceneEditorWindow(QMainWindow):
             "cfg": float(self.s2v_cfg_input.value()),
             "json_api": "auto_by_speech_duration",
         }
-        return meta, z_prompt, wan_prompt, s2v_prompt
+        web_prompt = {
+            "url": self.web_url_input.text().strip(),
+            "width": int((self.web_size_input.currentData() or (368, 640))[0]),
+            "height": int((self.web_size_input.currentData() or (368, 640))[1]),
+            "duration_seconds": round(float(self.web_duration_input.value()), 1),
+            "speed": int(self.web_speed_input.value()),
+            "capture_mode": str(self.web_capture_mode_input.currentData() or "live_capture").strip(),
+        }
+        image_pan_prompt = {
+            "width": int((self.image_pan_size_input.currentData() or (480, 848))[0]),
+            "height": int((self.image_pan_size_input.currentData() or (480, 848))[1]),
+            "direction": str(self.image_pan_direction_input.currentData() or "from_right").strip(),
+            "capture_mode": str(self.image_pan_capture_mode_input.currentData() or "live_capture").strip(),
+        }
+        return meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt
 
     def parse_duration_value(self):
         value = self.duration_input.currentText().strip()
@@ -1587,9 +1870,8 @@ class SceneEditorWindow(QMainWindow):
             self.status_label.setPlainText("Belum ada adegan yang dipilih.")
             return
         try:
-            meta, z_prompt, wan_prompt, s2v_prompt = self.gather_scene_data()
-            active_prompt = s2v_prompt if meta.get("scene_type") == "wan22_s2v" else wan_prompt
-            issues = validate_scene_data(meta, z_prompt, active_prompt, self.current_scene_dir)
+            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = self.gather_scene_data()
+            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, self.current_scene_dir)
         except ValueError as e:
             issues = [str(e)]
         if issues:
@@ -1604,8 +1886,9 @@ class SceneEditorWindow(QMainWindow):
         z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
         wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
         s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
-        active_prompt = s2v_prompt if meta.get("scene_type") == "wan22_s2v" else wan_prompt
-        return validate_scene_data(meta, z_prompt, active_prompt, scene_dir)
+        web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
+        image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
+        return validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, scene_dir)
 
     def ensure_scene_is_runnable(self, scene_dir: Path):
         issues = self.get_scene_issues(scene_dir)
@@ -1657,13 +1940,12 @@ class SceneEditorWindow(QMainWindow):
         if not self.current_scene_dir:
             return False
         try:
-            meta, z_prompt, wan_prompt, s2v_prompt = self.gather_scene_data()
+            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = self.gather_scene_data()
         except ValueError as e:
             if not silent:
                 QMessageBox.warning(self, "Data Tidak Valid", str(e))
             return False
-        active_prompt = s2v_prompt if meta.get("scene_type") == "wan22_s2v" else wan_prompt
-        issues = validate_scene_data(meta, z_prompt, active_prompt, self.current_scene_dir)
+        issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, self.current_scene_dir)
         if issues and not silent:
             reply = QMessageBox.question(
                 self, "Masalah Validasi",
@@ -1680,6 +1962,8 @@ class SceneEditorWindow(QMainWindow):
             z_prompt=z_prompt,
             wan_prompt=wan_prompt,
             s2v_prompt=s2v_prompt,
+            web_prompt=web_prompt,
+            image_pan_prompt=image_pan_prompt,
         )
         self.refresh_scene_status()
         if reload_list:
@@ -1706,8 +1990,8 @@ class SceneEditorWindow(QMainWindow):
             QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
             return
         new_dir = project_dir / scene_dir_name(len(self.list_scene_dirs_current()) + 1)
-        meta, z_prompt, wan_prompt, s2v_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
-        create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt)
+        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
+        create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
         self.reload_scene_list()
         self.select_scene_by_name(new_dir.name)
 
@@ -1736,8 +2020,8 @@ class SceneEditorWindow(QMainWindow):
             target_index = int(scene.name.split("_", 1)[1])
             name = scene_dir_name(target_index + 1) if target_index >= insert_index else scene.name
             duplicate_directory(scene, temp_root / name)
-        meta, z_prompt, wan_prompt, s2v_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
-        create_scene_files(temp_root / scene_dir_name(insert_index), meta, z_prompt, wan_prompt, s2v_prompt)
+        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
+        create_scene_files(temp_root / scene_dir_name(insert_index), meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
         for scene in scenes:
             shutil.rmtree(scene)
         for child in sorted(temp_root.iterdir(), key=lambda p: p.name):
