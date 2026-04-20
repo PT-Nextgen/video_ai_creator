@@ -33,6 +33,7 @@ Folder scene berada di `api_production/<project_name>/scene_<n>/`.
 File utama:
 - `scene_meta.json`
 - `z_image_prompt.json`
+- `image_edit_prompt.json`
 - `wan22_s2v_prompt.json`
 - `wan22_i2v_prompt.json` (hanya untuk `default` / `wan22_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
@@ -100,6 +101,12 @@ Nilai `image_model` yang didukung:
   - `height` (portrait only)
   - `direction` (`from_right` / `from_left`)
   - `capture_mode` (`live_capture` / `stable_pan`)
+- `image_edit_prompt.json`
+  - `image_model` (`flux.2` / `gemini`)
+  - `gemini_model_id` (khusus saat `image_model=gemini`)
+  - `groups` (3 grup edit)
+    - `source_image`
+    - `prompt`
 
 Kebutuhan prompt per `scene_type`:
 - `default`
@@ -188,7 +195,7 @@ Struktur:
 
 Pemakaian:
 - `comfyui`
-  - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_voice.py`, dan `scene_manager_ui.py`
+  - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, dan `scene_manager_ui.py`
 - `audio`
   - dipakai oleh `scripts/generate_sound.py`
 
@@ -274,6 +281,7 @@ Fungsi utama:
 - edit prompt image
 - edit prompt WAN
 - edit prompt WAN22 S2V
+- tab `Image Edit` untuk edit gambar berbasis prompt
 - pilih model ElevenLabs:
   - `Eleven v3`
   - `Eleven Multilingual v2`
@@ -290,6 +298,9 @@ Fungsi utama:
   - `Z-Image Turbo`
   - `Flux.2`
   - `Flux.2 Klein 9B`
+  - `Gemini`
+- pilih model image edit:
+  - `Flux.2`
   - `Gemini`
 - menampilkan aset media per scene
 - buka aset ke viewer dengan klik ganda
@@ -331,6 +342,17 @@ Perilaku UI:
   - `CFG`
   - `Prompt Positif`
   - `Prompt Negatif`
+- untuk `image_edit` (tab `Image Edit`):
+  - field `Model`: `Flux.2` / `Gemini`
+  - field `Model Gemini` ditampilkan saat model `Gemini` dipilih
+  - tersedia 3 group edit:
+    - dropdown `Gambar Awal` (diisi dari file gambar di root scene aktif)
+    - input `Prompt`
+    - tombol `Edit Gambar`
+  - saat tombol `Edit Gambar` ditekan:
+    - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
+    - model `Gemini`: edit via Gemini API, ukuran output mengikuti orientasi/ukuran gambar input (portrait/landscape tetap), lalu hasil disimpan ke root scene
+  - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
 - setelah proses selesai dari UI, akan muncul popup:
   - informasi keberhasilan beserta file output yang terdeteksi
   - atau ringkasan error jika proses gagal
@@ -371,10 +393,17 @@ Model yang tersedia:
   - template normal: `api_template/flux2_k9_api.json`
   - template Lora: `api_template/flux2_k9_lora_api.json`
   - memakai positive dan negative prompt
+- `Flux.2 (Image Edit)`
+  - template edit: `api_template/flux2_edit_api.json`
+  - input gambar sumber di node `46`
+  - prompt positif dikirim dari group edit yang dipilih
+  - ukuran output mengikuti ukuran gambar input
+  - seed selalu random
 - `Gemini`
   - generate image via Gemini API (tanpa ComfyUI workflow)
   - model Gemini spesifik dipilih dari `gemini_model_id`
-  - ukuran asli generate `0.5K`, lalu diproses ke ukuran scene dengan metode `scale + center crop` (tanpa stretching)
+  - request image size memakai mode strict `1K`
+  - hasil diproses ke ukuran target scene/image dengan metode `scale + center crop` (tanpa stretching)
   - `json_api` disimpan sebagai `gemini_flash_05k`
   - tidak memakai negative prompt
   - tidak memakai seed statik dan Lora image
@@ -472,6 +501,32 @@ Script khusus Gemini (opsional): `scripts/generate_initial_image_gemini.py`
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_initial_image_gemini.py --project demo_project --scene scene_1
+```
+
+## Generate Image Edit
+
+Script: `scripts/generate_image_edit.py`
+
+Fungsi:
+- membaca konfigurasi model edit dari UI (`Flux.2` atau `Gemini`)
+- mengambil gambar sumber dari root folder scene sesuai pilihan dropdown
+- jika model `Flux.2`:
+  - upload gambar sumber ke ComfyUI
+  - membangun workflow dari `api_template/flux2_edit_api.json`
+  - set input gambar di node `46`
+  - set prompt dari group edit yang dipilih
+  - set ukuran output sama seperti ukuran gambar sumber
+  - set seed random
+  - download hasil edit ke root folder scene
+- jika model `Gemini`:
+  - kirim gambar sumber + prompt ke Gemini API
+  - request image size `1K`
+  - simpan hasil akhir ke root folder scene dengan ukuran mengikuti orientasi/ukuran gambar sumber
+
+Contoh:
+```powershell
+.\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --model flux.2 --source-image input.png --prompt "Tambahkan nuansa cinematic malam"
+.\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --model gemini --gemini-model-id gemini-3.1-flash-image-preview --source-image input.png --prompt "Ubah menjadi gaya watercolor"
 ```
 
 ## Generate Cover Project
