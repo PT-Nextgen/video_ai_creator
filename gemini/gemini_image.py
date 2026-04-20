@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import mimetypes
 import os
 import time
 from typing import Optional
@@ -140,6 +141,58 @@ def _call_gemini_generate_image(prompt: str, api_key: str, model_name: str, aspe
     raise RuntimeError(f"Gemini response has no image data: {json.dumps(result)[:500]}")
 
 
+def _call_gemini_edit_image(
+    prompt: str,
+    source_image_path: str,
+    api_key: str,
+    model_name: str,
+    aspect_ratio: str,
+) -> bytes:
+    with open(source_image_path, "rb") as f:
+        source_bytes = f.read()
+
+    mime_type, _ = mimetypes.guess_type(source_image_path)
+    if not mime_type or not mime_type.startswith("image/"):
+        mime_type = "image/png"
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(source_bytes).decode("ascii"),
+                    }
+                },
+            ]
+        }],
+        "generationConfig": {
+            "responseModalities": ["IMAGE", "TEXT"],
+            "imageConfig": {
+                "imageSize": GEMINI_IMAGE_SIZE,
+                "aspectRatio": aspect_ratio,
+            },
+        },
+    }
+
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=180)
+    if resp.status_code >= 400:
+        body = resp.text[:1200]
+        raise requests.HTTPError(
+            f"{resp.status_code} Client Error for model {model_name}: {body}",
+            response=resp,
+        )
+
+    result = resp.json()
+    image_bytes = _extract_image_bytes(result)
+    if image_bytes:
+        return image_bytes
+    raise RuntimeError(f"Gemini response has no image data: {json.dumps(result)[:500]}")
+
+
 def _list_available_model_ids(api_key: str) -> list[str]:
     """Read model catalog from Gemini API and return model ids without 'models/' prefix."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
@@ -189,9 +242,7 @@ def _build_gemini_image_candidates(api_key: str) -> list[str]:
         )
 
     def is_halfk_image_model(name: str) -> bool:
-        # Practical heuristic requested by user:
-        # show only "0.5K-style" image preview models.
-        # These are typically published with "image-preview" naming.
+        # Keep UI model list focused on image-preview capable models.
         n = name.lower()
         return "image-preview" in n
 
@@ -296,5 +347,100 @@ def generate_scene_image(scene_dir: str, z_prompt: dict) -> str:
     write_log(
         f"Gemini image saved to {final_path} (model={used_model}, request_size={GEMINI_IMAGE_SIZE}, "
         f"target={target_width}x{target_height}, mode=scale+crop, raw={raw_path})"
+    )
+    return final_path
+
+
+def generate_scene_image_edit(
+    scene_dir: str,
+    source_image_path: str,
+    prompt: str,
+    target_width: int,
+    target_height: int,
+    gemini_model_id: str = "",
+) -> str:
+    api_key = find_gemini_key()
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API key tidak ditemukan. Tambahkan GEMINIKEY / GEMINI_API_KEY / GOOGLE_API_KEY di keys.cfg."
+        )
+    if not os.path.exists(source_image_path):
+        raise RuntimeError(f"Gambar input tidak ditemukan: {source_image_path}")
+
+    prompt_text = str(prompt or "").strip()
+    if not prompt_text:
+        raise RuntimeError("Prompt edit Gemini wajib diisi.")
+
+    try:
+        out_width = int(target_width)
+    except (TypeError, ValueError):
+        out_width = 480
+    try:
+        out_height = int(target_height)
+    except (TypeError, ValueError):
+        out_height = 848
+    if out_width <= 0 or out_height <= 0:
+        raise RuntimeError("Ukuran target edit Gemini tidak valid.")
+
+    aspect_ratio = _aspect_ratio(out_width, out_height)
+    last_error = None
+    errors = []
+    image_bytes = None
+    used_model = MODEL_GEMINI_FLASH_05K
+    requested_model = str(gemini_model_id or "").strip()
+    candidate_models = _build_gemini_image_candidates(api_key)
+    if requested_model:
+        candidate_models = [requested_model] + [m for m in candidate_models if m != requested_model]
+
+    for model_name in candidate_models:
+        try:
+            image_bytes = _call_gemini_edit_image(
+                prompt_text,
+                source_image_path=source_image_path,
+                api_key=api_key,
+                model_name=model_name,
+                aspect_ratio=aspect_ratio,
+            )
+            used_model = model_name
+            break
+        except Exception as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code == 429:
+                raise RuntimeError(
+                    "Gemini API quota/rate limit tercapai (429). "
+                    "Tunggu beberapa saat atau gunakan API key/project lain."
+                ) from e
+            if status_code == 400:
+                msg = str(e).lower()
+                if "invalid argument" in msg:
+                    raise RuntimeError(
+                        f"Mode strict {GEMINI_IMAGE_SIZE} tidak didukung oleh model Gemini yang tersedia di API key ini. "
+                        "Gunakan model/key lain yang mendukung ukuran ini."
+                    ) from e
+            last_error = e
+            errors.append(f"{model_name}: {e}")
+
+    if not image_bytes:
+        short_errors = "; ".join(errors[-4:]) if errors else str(last_error)
+        raise RuntimeError(
+            "Gagal generate Gemini image edit. Model image mungkin berubah/tidak aktif untuk API key ini. "
+            f"Percobaan terakhir: {short_errors}"
+        )
+
+    timestamp = int(time.time())
+    raw_name = f"GeminiEdit_raw_{timestamp}.png"
+    final_name = f"GeminiEdit_{timestamp}.png"
+    raw_dir = os.path.join(scene_dir, "gemini")
+    os.makedirs(raw_dir, exist_ok=True)
+    raw_path = os.path.join(raw_dir, raw_name)
+    final_path = os.path.join(scene_dir, final_name)
+
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        img.convert("RGB").save(raw_path, format="PNG")
+
+    _center_cover_resize(raw_path, final_path, out_width, out_height)
+    write_log(
+        f"Gemini edit image saved to {final_path} (model={used_model}, request_size={GEMINI_IMAGE_SIZE}, "
+        f"target={out_width}x{out_height}, mode=scale+crop, source={source_image_path}, raw={raw_path})"
     )
     return final_path

@@ -9,6 +9,7 @@ TEMPLATE_DEFAULT = "flux2_api.json"
 TEMPLATE_LORA = "flux2_lora_api.json"
 TEMPLATE_K9 = "flux2_k9_api.json"
 TEMPLATE_K9_LORA = "flux2_k9_lora_api.json"
+TEMPLATE_EDIT = "flux2_edit_api.json"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
@@ -141,3 +142,40 @@ def build_workflow(z_prompt: dict) -> dict:
 
 def build_flux2_workflow(z_prompt: dict) -> dict:
     return build_workflow(z_prompt)
+
+
+def build_edit_workflow(source_image_name: str, prompt: str, width: int, height: int) -> dict:
+    workflow = copy.deepcopy(_load_template(TEMPLATE_EDIT))
+    _traverse_and_replace(workflow, {"positive_prompt": str(prompt or "")})
+
+    if "46" in workflow and isinstance(workflow["46"], dict):
+        inputs = workflow["46"].get("inputs")
+        if isinstance(inputs, dict):
+            inputs["image"] = str(source_image_name or "")
+
+    try:
+        parsed_width = int(width)
+    except (TypeError, ValueError):
+        parsed_width = 368
+    try:
+        parsed_height = int(height)
+    except (TypeError, ValueError):
+        parsed_height = 640
+
+    for node_id in ("47", "48"):
+        if node_id in workflow and isinstance(workflow[node_id], dict):
+            inputs = workflow[node_id].get("inputs")
+            if isinstance(inputs, dict):
+                inputs["width"] = parsed_width
+                inputs["height"] = parsed_height
+
+    if "25" not in workflow or not isinstance(workflow["25"], dict):
+        workflow["25"] = {"inputs": {}}
+    if "inputs" not in workflow["25"] or not isinstance(workflow["25"]["inputs"], dict):
+        workflow["25"]["inputs"] = {}
+    workflow["25"]["inputs"]["noise_seed"] = random.randint(10**15, 10**16 - 1)
+    return workflow
+
+
+def build_flux2_edit_workflow(source_image_name: str, prompt: str, width: int, height: int) -> dict:
+    return build_edit_workflow(source_image_name, prompt, width, height)

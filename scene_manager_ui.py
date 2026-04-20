@@ -28,6 +28,7 @@ from wan22_s2v.wan22_s2v import DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT
 from wan22_s2v.wan22_s2v import MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION
 from wan22_s2v.wan22_s2v import SIZE_OPTIONS as WAN22_S2V_SIZE_OPTIONS
 from wan22_s2v.wan22_s2v import get_audio_duration as get_wan22_s2v_audio_duration
+from flux2.flux2 import MODEL_FLUX2
 from z_image.z_image import IMAGE_MODEL_OPTIONS, MODEL_Z_IMAGE_TURBO
 from z_image.z_image import DEFAULT_PROMPT as DEFAULT_Z_IMAGE_PROMPT
 from z_image.z_image import SIZE_OPTIONS as Z_IMAGE_SIZES
@@ -41,6 +42,7 @@ API_PRODUCTION = ROOT / "api_production"
 MUSIC_DIR = ROOT / "music"
 MAIN_SCRIPT = ROOT / "main.py"
 INITIAL_IMAGE_SCRIPT = ROOT / "scripts" / "generate_initial_image.py"
+IMAGE_EDIT_SCRIPT = ROOT / "scripts" / "generate_image_edit.py"
 COVER_IMAGE_SCRIPT = ROOT / "scripts" / "generate_cover_image.py"
 VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
 SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
@@ -91,6 +93,15 @@ DEFAULT_IMAGE_PAN_PROMPT = {
     "height": 848,
     "direction": "from_right",
     "capture_mode": "live_capture",
+}
+DEFAULT_IMAGE_EDIT_PROMPT = {
+    "image_model": MODEL_FLUX2,
+    "gemini_model_id": MODEL_GEMINI_FLASH_05K,
+    "groups": [
+        {"source_image": "", "prompt": ""},
+        {"source_image": "", "prompt": ""},
+        {"source_image": "", "prompt": ""},
+    ],
 }
 
 
@@ -165,6 +176,7 @@ def create_scene_files(
     wan22_s2v_prompt=None,
     web_scroll_prompt=None,
     image_pan_prompt=None,
+    image_edit_prompt=None,
 ):
     scene_dir.mkdir(parents=True, exist_ok=True)
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
@@ -180,6 +192,7 @@ def create_scene_files(
         s2v_prompt=wan22_s2v_prompt or DEFAULT_WAN22_S2V_PROMPT,
         web_prompt=web_scroll_prompt or DEFAULT_WEB_SCROLL_PROMPT,
         image_pan_prompt=image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT,
+        image_edit_prompt=image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT,
     )
 
 
@@ -191,6 +204,7 @@ def sync_scene_prompt_files(
     s2v_prompt: dict,
     web_prompt: dict,
     image_pan_prompt: dict,
+    image_edit_prompt: dict | None = None,
 ):
     """Ensure prompt JSON files exist according to selected scene type.
 
@@ -203,6 +217,7 @@ def sync_scene_prompt_files(
     write_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
     write_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
     write_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
+    write_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
 
     wan_required_types = {"default", "wan22", "wan22_i2v"}
     wan_path = scene_dir / "wan22_i2v_prompt.json"
@@ -737,6 +752,7 @@ class SceneEditorWindow(QMainWindow):
         self.wan_tab = None
         self.s2v_tab = None
         self.web_tab = None
+        self.image_edit_tab = None
         self.assets_tab = None
         self.generate_initial_image_button = None
         self.duration_label = None
@@ -842,6 +858,24 @@ class SceneEditorWindow(QMainWindow):
         self.image_pan_capture_mode_input = QComboBox()
         self.image_pan_capture_mode_input.addItem("Live Capture (Default)", "live_capture")
         self.image_pan_capture_mode_input.addItem("Stable Pan", "stable_pan")
+        self.image_edit_model_input = QComboBox()
+        self.image_edit_model_input.addItem("Flux.2", MODEL_FLUX2)
+        self.image_edit_model_input.addItem("Gemini", MODEL_GEMINI_IMAGE)
+        self.image_edit_gemini_model_input = QComboBox()
+        for model_id in self.z_gemini_model_ids:
+            self.image_edit_gemini_model_input.addItem(model_id, model_id)
+        self.image_edit_image_inputs = []
+        self.image_edit_prompt_inputs = []
+        self.image_edit_buttons = []
+        for slot_index in range(3):
+            image_input = QComboBox()
+            prompt_input = QTextEdit()
+            button = QToolButton()
+            button.setText("Edit Gambar")
+            button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_image_edit_slot(idx))
+            self.image_edit_image_inputs.append(image_input)
+            self.image_edit_prompt_inputs.append(prompt_input)
+            self.image_edit_buttons.append(button)
 
         self.status_label = QPlainTextEdit()
         self.status_label.setReadOnly(True)
@@ -885,6 +919,7 @@ class SceneEditorWindow(QMainWindow):
         self.update_seed_fields_enabled()
         self.update_lora_fields_enabled()
         self.update_wan_lora_fields_enabled()
+        self.update_image_edit_model_fields_enabled()
         self.update_scene_type_tabs()
         self.update_scene_type_specific_fields()
         self.update_run_action_buttons_state()
@@ -906,6 +941,8 @@ class SceneEditorWindow(QMainWindow):
             self.image_pan_size_input.currentTextChanged,
             self.image_pan_direction_input.currentIndexChanged,
             self.image_pan_capture_mode_input.currentIndexChanged,
+            self.image_edit_model_input.currentIndexChanged,
+            self.image_edit_gemini_model_input.currentIndexChanged,
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
             self.generate_caption_input.checkStateChanged,
             self.wan_use_lora_input.checkStateChanged,
@@ -923,6 +960,7 @@ class SceneEditorWindow(QMainWindow):
         self.z_use_lora_input.toggled.connect(self.update_lora_fields_enabled)
         self.z_use_random_seed_input.toggled.connect(self.update_seed_fields_enabled)
         self.z_model_input.currentIndexChanged.connect(self.update_image_model_fields_enabled)
+        self.image_edit_model_input.currentIndexChanged.connect(self.update_image_edit_model_fields_enabled)
         self.wan_use_lora_input.toggled.connect(self.update_wan_lora_fields_enabled)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
@@ -1045,6 +1083,22 @@ class SceneEditorWindow(QMainWindow):
         image_pan_layout.addRow("Mode", self.image_pan_capture_mode_input)
         tabs.addTab(self.image_pan_tab, "Image Pan")
 
+        self.image_edit_tab = QWidget()
+        image_edit_layout = QVBoxLayout(self.image_edit_tab)
+        image_edit_form = QFormLayout()
+        image_edit_form.addRow("Model", self.image_edit_model_input)
+        image_edit_form.addRow("Model Gemini", self.image_edit_gemini_model_input)
+        image_edit_layout.addLayout(image_edit_form)
+        for idx in range(3):
+            group = QGroupBox(f"Edit Gambar {idx + 1}")
+            group_layout = QFormLayout(group)
+            group_layout.addRow("Gambar Awal", self.image_edit_image_inputs[idx])
+            group_layout.addRow("Prompt", self.image_edit_prompt_inputs[idx])
+            group_layout.addRow("", self.image_edit_buttons[idx])
+            image_edit_layout.addWidget(group)
+        image_edit_layout.addStretch(1)
+        tabs.addTab(self.image_edit_tab, "Image Edit")
+
         self.assets_tab = QWidget()
         assets_layout = QVBoxLayout(self.assets_tab)
         assets_layout.addWidget(QLabel("Aset media dalam adegan. Klik ganda untuk membuka tampilan."))
@@ -1064,6 +1118,7 @@ class SceneEditorWindow(QMainWindow):
             self.s2v_tab: scene_type == "wan22_s2v",
             self.web_tab: scene_type == "web_scroll",
             self.image_pan_tab: scene_type == "image_pan",
+            self.image_edit_tab: True,
             self.assets_tab: True,
         }
         current_widget = self.editor_tabs.currentWidget()
@@ -1169,6 +1224,7 @@ class SceneEditorWindow(QMainWindow):
         if not self.current_project_name:
             self.current_scene_dir = None
             self.scene_list.clear()
+            self.refresh_image_edit_source_options()
             self.status_label.setPlainText("Belum ada project yang dibuka.")
             self.viewer_info_label.setText("Buka project terlebih dahulu.")
         self.update_run_action_buttons_state()
@@ -1460,6 +1516,20 @@ class SceneEditorWindow(QMainWindow):
         self.wan_lora_low_name_input.setEnabled(enabled)
         self.wan_lora_low_strength_input.setEnabled(enabled)
 
+    def update_image_edit_model_fields_enabled(self):
+        model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2)
+        is_gemini = model_key == MODEL_GEMINI_IMAGE
+        self.image_edit_gemini_model_input.setVisible(is_gemini)
+        if self.image_edit_tab is not None:
+            layout = self.image_edit_tab.layout()
+            if isinstance(layout, QVBoxLayout) and layout.count() > 0:
+                form_item = layout.itemAt(0)
+                form_layout = form_item.layout() if form_item else None
+                if isinstance(form_layout, QFormLayout):
+                    label = form_layout.labelForField(self.image_edit_gemini_model_input)
+                    if label is not None:
+                        label.setVisible(is_gemini)
+
     def open_asset_in_viewer(self, asset_path: Path):
         suffix = asset_path.suffix.lower()
         if suffix in IMAGE_EXTS:
@@ -1542,6 +1612,8 @@ class SceneEditorWindow(QMainWindow):
         self.current_scene_dir = selected
         if selected and not self.loading_scene:
             self.load_scene(selected)
+        elif not selected:
+            self.refresh_image_edit_source_options()
 
     def current_scene_path_from_ui(self):
         item = self.scene_list.currentItem()
@@ -1733,6 +1805,7 @@ class SceneEditorWindow(QMainWindow):
             pan_mode = str(image_pan_prompt.get("capture_mode", DEFAULT_IMAGE_PAN_PROMPT["capture_mode"])).strip()
             index = self.image_pan_capture_mode_input.findData(pan_mode)
             self.image_pan_capture_mode_input.setCurrentIndex(max(index, 0))
+            self.load_image_edit_into_ui(scene_dir)
         finally:
             self.loading_scene = False
         self.refresh_scene_status()
@@ -1865,6 +1938,84 @@ class SceneEditorWindow(QMainWindow):
             raise ValueError(f"Kekuatan Lora {label} WAN harus berupa bilangan desimal positif.")
         return parsed
 
+    def load_image_edit_prompt(self, scene_dir: Path):
+        data = load_json(scene_dir / "image_edit_prompt.json", DEFAULT_IMAGE_EDIT_PROMPT)
+        model_key = str(data.get("image_model", MODEL_FLUX2)).strip().lower()
+        if model_key not in {MODEL_FLUX2, MODEL_GEMINI_IMAGE}:
+            model_key = MODEL_FLUX2
+        gemini_model_id = str(data.get("gemini_model_id", MODEL_GEMINI_FLASH_05K)).strip()
+        groups = data.get("groups")
+        if not isinstance(groups, list):
+            groups = []
+        normalized_groups = []
+        for index in range(3):
+            item = groups[index] if index < len(groups) and isinstance(groups[index], dict) else {}
+            normalized_groups.append(
+                {
+                    "source_image": str(item.get("source_image", "")).strip(),
+                    "prompt": str(item.get("prompt", "")).strip(),
+                }
+            )
+        return {"image_model": model_key, "gemini_model_id": gemini_model_id, "groups": normalized_groups}
+
+    def gather_image_edit_prompt(self):
+        groups = []
+        for image_input, prompt_input in zip(self.image_edit_image_inputs, self.image_edit_prompt_inputs):
+            groups.append(
+                {
+                    "source_image": str(image_input.currentData() or "").strip(),
+                    "prompt": prompt_input.toPlainText().strip(),
+                }
+            )
+        return {
+            "image_model": str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip(),
+            "gemini_model_id": str(self.image_edit_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip(),
+            "groups": groups,
+        }
+
+    def refresh_image_edit_source_options(self, preferred_images=None):
+        preferred_images = preferred_images or ["", "", ""]
+        image_names = []
+        if self.current_scene_dir and self.current_scene_dir.exists():
+            image_names = sorted(
+                [
+                    p.name for p in self.current_scene_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+                ],
+                key=lambda name: name.lower(),
+            )
+
+        for index, combo in enumerate(self.image_edit_image_inputs):
+            preferred = str(preferred_images[index] if index < len(preferred_images) else "").strip()
+            current_value = str(combo.currentData() or "").strip()
+            wanted = preferred or current_value
+            combo.blockSignals(True)
+            combo.clear()
+            for image_name in image_names:
+                combo.addItem(image_name, image_name)
+            if image_names:
+                selected_index = combo.findData(wanted)
+                combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+            combo.blockSignals(False)
+
+    def load_image_edit_into_ui(self, scene_dir: Path):
+        data = self.load_image_edit_prompt(scene_dir)
+        model_index = self.image_edit_model_input.findData(str(data.get("image_model", MODEL_FLUX2)))
+        self.image_edit_model_input.setCurrentIndex(model_index if model_index >= 0 else 0)
+        selected_gemini_model = str(data.get("gemini_model_id", MODEL_GEMINI_FLASH_05K)).strip()
+        gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
+        if gemini_index < 0 and selected_gemini_model:
+            self.image_edit_gemini_model_input.addItem(selected_gemini_model, selected_gemini_model)
+            gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
+        self.image_edit_gemini_model_input.setCurrentIndex(gemini_index if gemini_index >= 0 else 0)
+        self.update_image_edit_model_fields_enabled()
+        groups = data.get("groups", [])
+        preferred_images = [str(group.get("source_image", "")).strip() for group in groups[:3]]
+        self.refresh_image_edit_source_options(preferred_images=preferred_images)
+        for index, prompt_input in enumerate(self.image_edit_prompt_inputs):
+            group_data = groups[index] if index < len(groups) else {}
+            prompt_input.setPlainText(str(group_data.get("prompt", "")))
+
     def refresh_scene_status(self):
         if not self.current_scene_dir:
             self.status_label.setPlainText("Belum ada adegan yang dipilih.")
@@ -1918,6 +2069,7 @@ class SceneEditorWindow(QMainWindow):
 
     def refresh_assets_and_previews(self):
         if not self.current_scene_dir:
+            self.refresh_image_edit_source_options()
             return
         self.clear_viewer()
         assets = sorted(
@@ -1933,6 +2085,7 @@ class SceneEditorWindow(QMainWindow):
             item = QListWidgetItem(asset.name)
             item.setData(Qt.UserRole, str(asset))
             self.asset_list.addItem(item)
+        self.refresh_image_edit_source_options()
         if not assets:
             self.viewer_info_label.setText("Tidak ada file media di scene ini.")
 
@@ -1955,6 +2108,7 @@ class SceneEditorWindow(QMainWindow):
             if reply != QMessageBox.Yes:
                 return False
         scene_type = str(meta.get("scene_type", "default")).strip()
+        image_edit_prompt = self.gather_image_edit_prompt()
         write_json(self.current_scene_dir / "scene_meta.json", meta)
         sync_scene_prompt_files(
             self.current_scene_dir,
@@ -1964,6 +2118,7 @@ class SceneEditorWindow(QMainWindow):
             s2v_prompt=s2v_prompt,
             web_prompt=web_prompt,
             image_pan_prompt=image_pan_prompt,
+            image_edit_prompt=image_edit_prompt,
         )
         self.refresh_scene_status()
         if reload_list:
@@ -2199,6 +2354,48 @@ class SceneEditorWindow(QMainWindow):
             INITIAL_IMAGE_SCRIPT,
             ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--scene", self.current_scene_dir.name],
             f"Membuat gambar awal untuk {self.current_scene_dir.name}",
+            watch_dirs=[self.current_scene_dir],
+        )
+
+    def run_image_edit_slot(self, slot_index: int):
+        if slot_index < 0 or slot_index >= len(self.image_edit_image_inputs):
+            return
+        if not self.ensure_project_selected():
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        if not self.ensure_server_config_loaded():
+            return
+        if not self.save_current_scene():
+            return
+
+        source_image = str(self.image_edit_image_inputs[slot_index].currentData() or "").strip()
+        prompt = self.image_edit_prompt_inputs[slot_index].toPlainText().strip()
+        if not source_image:
+            QMessageBox.warning(self, "Data Tidak Valid", f"Pilih gambar awal pada Edit Gambar {slot_index + 1}.")
+            return
+        if not prompt:
+            QMessageBox.warning(self, "Data Tidak Valid", f"Prompt pada Edit Gambar {slot_index + 1} wajib diisi.")
+            return
+
+        model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip()
+        gemini_model_id = str(self.image_edit_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
+        args = [
+            "--server", self.comfyui_server_address(),
+            "--project", self.current_project_name,
+            "--scene", self.current_scene_dir.name,
+            "--model", model_key,
+            "--source-image", source_image,
+            "--prompt", prompt,
+        ]
+        if model_key == MODEL_GEMINI_IMAGE and gemini_model_id:
+            args.extend(["--gemini-model-id", gemini_model_id])
+
+        self.start_process(
+            IMAGE_EDIT_SCRIPT,
+            args,
+            f"Edit gambar {slot_index + 1} untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
 
