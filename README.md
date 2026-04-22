@@ -58,6 +58,9 @@ Field utama:
   - `voice_provider`
   - `elevenlabs_voice_id`
   - `elevenlabs_model_id`
+  - `gemini_tts_model_id`
+  - `gemini_tts_voice_name`
+  - `gemini_tts_gender`
   - `generate_caption`
   - `edgetts_voice_id`
   - `sound_prompt`
@@ -179,6 +182,11 @@ Catatan voice dan caption:
     - `eleven_v3`
     - `eleven_multilingual_v2`
     - `eleven_flash_v2_5`
+- `gemini_tts`
+  - model diisi dari katalog Gemini TTS yang tersedia melalui API Gemini
+  - voice yang tersedia mengikuti katalog suara resmi Gemini TTS
+  - gender suara hanya sebagai metadata UI, bukan filter daftar voice
+  - language dipaksa ke `id-ID`
 - `generate_caption`
   - boolean
   - default `true`
@@ -301,6 +309,14 @@ Fungsi utama:
   - `Eleven v3`
   - `Eleven Multilingual v2`
   - `Eleven Flash v2.5`
+- pilih provider voice:
+  - `elevenlabs`
+  - `edgetts`
+  - `gemini_tts`
+- untuk `gemini_tts`, tersedia field:
+  - `Model Gemini TTS`
+  - `Suara Gemini TTS`
+  - `Gender Suara Gemini TTS`
 - aktif/nonaktif caption otomatis per scene lewat checkbox `Generate Caption`
 - edit ukuran image dan WAN
 - edit ukuran WAN22 S2V
@@ -345,6 +361,11 @@ Perilaku UI:
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_provider` dipilih
+- saat provider voice `gemini_tts` dipilih:
+  - dropdown model diisi dari katalog model Gemini TTS melalui API Gemini
+  - dropdown suara menampilkan seluruh voice Gemini TTS yang tersedia
+  - dropdown gender hanya sebagai metadata UI dan tidak memfilter daftar suara
+  - language TTS runtime dipaksa ke `id-ID`
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
 - saat model image `Gemini` dipilih:
@@ -605,7 +626,11 @@ Fungsi:
 - memilih engine voice otomatis dari `voice_provider`
 - `edgetts` memakai ComfyUI
 - `elevenlabs` memakai API ElevenLabs
+- `gemini_tts` memakai Gemini API native TTS
 - model ElevenLabs dibaca dari `elevenlabs_model_id`
+- model Gemini TTS dibaca dari `gemini_tts_model_id`
+- voice Gemini TTS dibaca dari `gemini_tts_voice_name`
+- gender Gemini TTS dibaca dari `gemini_tts_gender`
 - file output voice selalu memakai awalan `speech_`
 
 Contoh:

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
     QInputDialog,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTextEdit, QToolButton,
+    QPlainTextEdit, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTextEdit, QToolButton,
     QToolBar, QVBoxLayout, QWidget, QStyle, QSizePolicy,
 )
 from scripts.server_config import load_server_config, save_server_config
@@ -37,6 +37,12 @@ from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
+from gemini.gemini_tts import (
+    GEMINI_TTS_FALLBACK_MODELS,
+    GEMINI_TTS_GENDER_OPTIONS,
+    list_gemini_tts_voices,
+    list_gemini_tts_models,
+)
 from prompt_localization import convert_prompt_payload_for_ui, prepare_prompt_payload_for_save, read_json_for_runtime
 
 ROOT = Path(__file__).resolve().parent
@@ -78,6 +84,9 @@ DEFAULT_SCENE_META = {
     "scene_title": "", "duration_seconds": 10, "voice_text": "",
     "voice_provider": "elevenlabs", "elevenlabs_voice_id": "",
     "elevenlabs_model_id": ELEVENLABS_MODEL_ID,
+    "gemini_tts_model_id": GEMINI_TTS_FALLBACK_MODELS[0][1],
+    "gemini_tts_voice_name": "",
+    "gemini_tts_gender": "pria",
     "generate_caption": True,
     "edgetts_voice_id": "", "sound_prompt": "", "sound_volume": "",
     "scene_type": "default",
@@ -432,6 +441,13 @@ def validate_scene_data(
             issues.append("Teks suara wajib diisi untuk EdgeTTS.")
         if not str(meta.get("edgetts_voice_id", "")).strip():
             issues.append("ID suara EdgeTTS wajib diisi.")
+    if provider == "gemini_tts":
+        if not str(meta.get("voice_text", "")).strip():
+            issues.append("Teks suara wajib diisi untuk Gemini TTS.")
+        if not str(meta.get("gemini_tts_model_id", "")).strip():
+            issues.append("Model Gemini TTS wajib dipilih.")
+        if not str(meta.get("gemini_tts_voice_name", "")).strip():
+            issues.append("Suara Gemini TTS wajib dipilih.")
     return issues
 
 
@@ -783,11 +799,11 @@ class MediaPreviewLabel(QLabel):
 
     def sizeHint(self):
         from PySide6.QtCore import QSize
-        return QSize(360, 240)
+        return QSize(240, 160)
 
     def minimumSizeHint(self):
         from PySide6.QtCore import QSize
-        return QSize(360, 240)
+        return QSize(160, 120)
 
     def _refresh_scaled_pixmap(self):
         if self._source_pixmap.isNull():
@@ -833,7 +849,7 @@ class SceneEditorWindow(QMainWindow):
         self.scene_type_combo = QComboBox()
         self.scene_type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan"])
         self.voice_provider_combo = QComboBox()
-        self.voice_provider_combo.addItems(["", "elevenlabs", "edgetts"])
+        self.voice_provider_combo.addItems(["", "elevenlabs", "edgetts", "gemini_tts"])
         self.elevenlabs_voice_input = QComboBox()
         self.elevenlabs_voice_input.addItem("", "")
         for voice_name, voice_id in ELEVENLABS_VOICES:
@@ -845,6 +861,13 @@ class SceneEditorWindow(QMainWindow):
         self.edgetts_voice_input.addItem("", "")
         for voice_name, voice_id in EDGETTS_VOICES:
             self.edgetts_voice_input.addItem(voice_name, voice_id)
+        self.gemini_tts_model_input = QComboBox()
+        for model_label, model_id in list_gemini_tts_models():
+            self.gemini_tts_model_input.addItem(model_label, model_id)
+        self.gemini_tts_voice_input = QComboBox()
+        self.gemini_tts_gender_input = QComboBox()
+        for gender_label, gender_id in GEMINI_TTS_GENDER_OPTIONS:
+            self.gemini_tts_gender_input.addItem(gender_label, gender_id)
         self.generate_caption_input = QCheckBox("Generate Caption")
         self.generate_caption_input.setChecked(True)
         self.voice_text_input = QTextEdit()
@@ -985,6 +1008,7 @@ class SceneEditorWindow(QMainWindow):
         self.audio_preview.activated.connect(lambda: self.open_preview_in_default_app(self.audio_preview))
         self.viewer_stack = QStackedWidget()
         self.viewer_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.viewer_stack.setMinimumSize(0, 0)
         self.viewer_stack.addWidget(self.image_preview)
         self.viewer_stack.addWidget(self.video_preview)
         self.viewer_stack.addWidget(self.audio_preview)
@@ -1017,19 +1041,22 @@ class SceneEditorWindow(QMainWindow):
         self.update_seed_fields_enabled()
         self.update_lora_fields_enabled()
         self.update_wan_lora_fields_enabled()
+        self.update_voice_provider_fields_enabled()
         self.update_image_edit_model_fields_enabled()
         self.update_scene_type_tabs()
         self.update_scene_type_specific_fields()
         self.update_run_action_buttons_state()
         self.reload_scene_list()
         self.refresh_project_state()
+        self.setMinimumSize(0, 0)
 
     def install_field_watchers(self):
         for signal in [
             self.scene_title_input.textChanged, self.duration_input.currentTextChanged,
             self.scene_type_combo.currentTextChanged, self.voice_provider_combo.currentTextChanged,
             self.elevenlabs_voice_input.currentTextChanged, self.elevenlabs_model_input.currentTextChanged,
-            self.edgetts_voice_input.currentTextChanged,
+            self.edgetts_voice_input.currentTextChanged, self.gemini_tts_model_input.currentTextChanged,
+            self.gemini_tts_voice_input.currentTextChanged, self.gemini_tts_gender_input.currentTextChanged,
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_step_combo.currentIndexChanged, self.wan_size_input.currentTextChanged,
@@ -1062,6 +1089,7 @@ class SceneEditorWindow(QMainWindow):
         self.z_model_input.currentIndexChanged.connect(self.update_image_model_fields_enabled)
         self.image_edit_model_input.currentIndexChanged.connect(self.update_image_edit_model_fields_enabled)
         self.wan_use_lora_input.toggled.connect(self.update_wan_lora_fields_enabled)
+        self.voice_provider_combo.currentTextChanged.connect(self.update_voice_provider_fields_enabled)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
         self.scene_type_combo.currentTextChanged.connect(self.update_run_action_buttons_state)
@@ -1076,7 +1104,9 @@ class SceneEditorWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(True)
         root_layout.addWidget(splitter)
 
         left = QWidget()
@@ -1087,7 +1117,14 @@ class SceneEditorWindow(QMainWindow):
 
         center = QWidget()
         center_layout = QVBoxLayout(center)
-        center_layout.addWidget(self.build_editor_tabs())
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_scroll = QScrollArea()
+        center_scroll.setWidgetResizable(True)
+        center_scroll.setFrameShape(QFrame.NoFrame)
+        editor_tabs = self.build_editor_tabs()
+        editor_tabs.setMinimumSize(0, 0)
+        center_scroll.setWidget(editor_tabs)
+        center_layout.addWidget(center_scroll)
         splitter.addWidget(center)
 
         right = QWidget()
@@ -1116,6 +1153,8 @@ class SceneEditorWindow(QMainWindow):
             ("Tipe Adegan", self.scene_type_combo), ("Penyedia Suara", self.voice_provider_combo),
             ("Suara ElevenLabs", self.elevenlabs_voice_input), ("Model ElevenLabs", self.elevenlabs_model_input),
             ("ID Suara EdgeTTS", self.edgetts_voice_input), ("Generate Caption", self.generate_caption_input),
+            ("Model Gemini TTS", self.gemini_tts_model_input), ("Suara Gemini TTS", self.gemini_tts_voice_input),
+            ("Gender Suara Gemini TTS", self.gemini_tts_gender_input),
             ("Teks Suara", self.voice_text_input), ("Prompt Suara Latar", self.sound_prompt_input),
             ("Volume Suara Latar", self.sound_volume_input),
         ]:
@@ -1346,6 +1385,27 @@ class SceneEditorWindow(QMainWindow):
             self.viewer_info_label.setText("Buka project terlebih dahulu.")
         self.update_run_action_buttons_state()
 
+    def snapshot_window_state(self):
+        return {
+            "geometry": self.geometry(),
+            "state": self.windowState(),
+        }
+
+    def restore_window_state(self, snapshot):
+        if not snapshot:
+            return
+        state = snapshot.get("state")
+        geometry = snapshot.get("geometry")
+        if state is not None and state & Qt.WindowFullScreen:
+            self.showFullScreen()
+            return
+        if state is not None and state & Qt.WindowMaximized:
+            self.showMaximized()
+            return
+        if geometry is not None:
+            self.showNormal()
+            self.setGeometry(geometry)
+
     def ensure_project_selected(self, notify=True):
         if self.project_dir() is not None:
             return True
@@ -1354,6 +1414,7 @@ class SceneEditorWindow(QMainWindow):
         return False
 
     def new_project(self):
+        window_snapshot = self.snapshot_window_state()
         if self.current_scene_dir:
             self.save_current_scene(silent=True, reload_list=False)
         name, ok = QInputDialog.getText(self, "Project Baru", "Masukkan nama project:")
@@ -1380,9 +1441,11 @@ class SceneEditorWindow(QMainWindow):
         self.reload_scene_list()
         self.select_scene_by_name(default_scene.name)
         self.refresh_project_state()
+        QTimer.singleShot(0, lambda snap=window_snapshot: self.restore_window_state(snap))
         self.statusBar().showMessage(f"Project {project_name} dibuat.", 3000)
 
     def open_project(self):
+        window_snapshot = self.snapshot_window_state()
         if self.current_scene_dir:
             self.save_current_scene(silent=True, reload_list=False)
         projects = self.list_projects()
@@ -1395,15 +1458,18 @@ class SceneEditorWindow(QMainWindow):
         self.current_project_name = str(selected).strip()
         self.reload_scene_list()
         self.refresh_project_state()
+        QTimer.singleShot(0, lambda snap=window_snapshot: self.restore_window_state(snap))
         self.statusBar().showMessage(f"Project {self.current_project_name} dibuka.", 3000)
 
     def close_project(self):
+        window_snapshot = self.snapshot_window_state()
         if self.current_scene_dir:
             self.save_current_scene(silent=True, reload_list=False)
         self.release_media_locks()
         self.current_project_name = ""
         self.current_scene_dir = None
         self.refresh_project_state()
+        QTimer.singleShot(0, lambda snap=window_snapshot: self.restore_window_state(snap))
 
     def build_run_action_group(self):
         frame = QFrame(self)
@@ -1688,6 +1754,44 @@ class SceneEditorWindow(QMainWindow):
         self.wan_lora_low_name_input.setEnabled(enabled)
         self.wan_lora_low_strength_input.setEnabled(enabled)
 
+    def _set_form_field_visible(self, form_layout, widget, visible: bool):
+        widget.setVisible(visible)
+        if isinstance(form_layout, QFormLayout):
+            label = form_layout.labelForField(widget)
+            if label is not None:
+                label.setVisible(visible)
+
+    def refresh_gemini_tts_voice_options(self):
+        selected_voice = str(self.gemini_tts_voice_input.currentData() or "").strip()
+        voices = list_gemini_tts_voices()
+        self.gemini_tts_voice_input.blockSignals(True)
+        self.gemini_tts_voice_input.clear()
+        for voice_label, voice_name in voices:
+            self.gemini_tts_voice_input.addItem(voice_label, voice_name)
+        if selected_voice:
+            index = self.gemini_tts_voice_input.findData(selected_voice)
+            if index >= 0:
+                self.gemini_tts_voice_input.setCurrentIndex(index)
+        if self.gemini_tts_voice_input.currentIndex() < 0 and self.gemini_tts_voice_input.count() > 0:
+            self.gemini_tts_voice_input.setCurrentIndex(0)
+        self.gemini_tts_voice_input.blockSignals(False)
+
+    def update_voice_provider_fields_enabled(self):
+        provider = str(self.voice_provider_combo.currentText().strip()).lower()
+        meta_layout = self.meta_tab.layout() if self.meta_tab is not None else None
+        is_elevenlabs = provider == "elevenlabs"
+        is_edgetts = provider == "edgetts"
+        is_gemini_tts = provider == "gemini_tts"
+
+        for widget in [self.elevenlabs_voice_input, self.elevenlabs_model_input]:
+            self._set_form_field_visible(meta_layout, widget, is_elevenlabs)
+        self._set_form_field_visible(meta_layout, self.edgetts_voice_input, is_edgetts)
+        self._set_form_field_visible(meta_layout, self.gemini_tts_model_input, is_gemini_tts)
+        self._set_form_field_visible(meta_layout, self.gemini_tts_voice_input, is_gemini_tts)
+        self._set_form_field_visible(meta_layout, self.gemini_tts_gender_input, is_gemini_tts)
+        if is_gemini_tts:
+            self.refresh_gemini_tts_voice_options()
+
     def update_image_edit_model_fields_enabled(self):
         model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2)
         is_gemini = model_key == MODEL_GEMINI_IMAGE
@@ -1857,6 +1961,19 @@ class SceneEditorWindow(QMainWindow):
                 self.edgetts_voice_input.addItem(label, edgetts_voice_id)
                 index = self.edgetts_voice_input.findData(edgetts_voice_id)
             self.edgetts_voice_input.setCurrentIndex(max(index, 0))
+            gemini_tts_model_id = str(meta.get("gemini_tts_model_id", GEMINI_TTS_FALLBACK_MODELS[0][1]))
+            index = self.gemini_tts_model_input.findData(gemini_tts_model_id)
+            self.gemini_tts_model_input.setCurrentIndex(max(index, 0))
+            gemini_tts_gender = str(meta.get("gemini_tts_gender", "pria")).strip().lower()
+            index = self.gemini_tts_gender_input.findData(gemini_tts_gender)
+            self.gemini_tts_gender_input.setCurrentIndex(max(index, 0))
+            self.refresh_gemini_tts_voice_options()
+            gemini_tts_voice_name = str(meta.get("gemini_tts_voice_name", "")).strip()
+            index = self.gemini_tts_voice_input.findData(gemini_tts_voice_name)
+            if index < 0 and gemini_tts_voice_name:
+                self.gemini_tts_voice_input.addItem(f"Suara Khusus ({gemini_tts_voice_name})", gemini_tts_voice_name)
+                index = self.gemini_tts_voice_input.findData(gemini_tts_voice_name)
+            self.gemini_tts_voice_input.setCurrentIndex(max(index, 0))
             self.generate_caption_input.setChecked(bool(meta.get("generate_caption", True)))
             self.voice_text_input.setPlainText(str(meta.get("voice_text", "")))
             self.sound_prompt_input.setPlainText(str(meta.get("sound_prompt", "")))
@@ -1976,6 +2093,7 @@ class SceneEditorWindow(QMainWindow):
             self.image_pan_capture_mode_input.setCurrentIndex(max(index, 0))
             self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_image_edit_into_ui(scene_dir)
+            self.update_voice_provider_fields_enabled()
         finally:
             self.loading_scene = False
         self.refresh_scene_status()
@@ -1989,6 +2107,9 @@ class SceneEditorWindow(QMainWindow):
             "voice_provider": self.voice_provider_combo.currentText().strip(),
             "elevenlabs_voice_id": str(self.elevenlabs_voice_input.currentData() or "").strip(),
             "elevenlabs_model_id": str(self.elevenlabs_model_input.currentData() or ELEVENLABS_MODEL_ID).strip(),
+            "gemini_tts_model_id": str(self.gemini_tts_model_input.currentData() or GEMINI_TTS_FALLBACK_MODELS[0][1]).strip(),
+            "gemini_tts_voice_name": str(self.gemini_tts_voice_input.currentData() or "").strip(),
+            "gemini_tts_gender": str(self.gemini_tts_gender_input.currentData() or "pria").strip(),
             "generate_caption": self.generate_caption_input.isChecked(),
             "edgetts_voice_id": str(self.edgetts_voice_input.currentData() or "").strip(),
             "sound_prompt": self.sound_prompt_input.toPlainText().strip(),

@@ -13,6 +13,7 @@ from logging_config import setup_logging, get_logger, write_log
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from edgetts.edgetts import build_edgetts_workflow
+from gemini.gemini_tts import process_scene as process_gemini_tts_scene
 
 
 def _load_local_elevenlabs_tts():
@@ -185,6 +186,11 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
             processed_count += 1
             if not process_edgetts_scene(scene_dir, comfyui_server):
                 write_log(f"Gagal membuat voice EdgeTTS untuk {scene}.")
+                had_error = True
+        elif provider == "gemini_tts":
+            processed_count += 1
+            if not process_gemini_tts_scene(scene_dir, logger=logger, write_log=write_log):
+                write_log(f"Gagal membuat voice Gemini TTS untuk {scene}.")
                 had_error = True
         elif provider == "elevenlabs":
             processed_count += 1
