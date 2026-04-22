@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QProcess, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -721,9 +721,17 @@ class CoverPromptDialog(QDialog):
 
 
 class MediaPreviewLabel(QLabel):
+    activated = Signal()
+
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self._source_pixmap = QPixmap()
+        self._source_path = None
+        self._suppress_release = False
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(220)
+        self._click_timer.timeout.connect(self.activated.emit)
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(0, 0)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -735,9 +743,39 @@ class MediaPreviewLabel(QLabel):
 
     def clear_preview(self, text=""):
         self._source_pixmap = QPixmap()
+        self._source_path = None
+        self._suppress_release = False
+        self._click_timer.stop()
         self.clear()
         if text:
             self.setText(text)
+
+    def set_source_path(self, path):
+        self._source_path = Path(path) if path else None
+
+    def source_path(self):
+        return self._source_path
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._suppress_release:
+                self._suppress_release = False
+                event.accept()
+                return
+            self._click_timer.start()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._click_timer.isActive():
+                self._click_timer.stop()
+            self._suppress_release = True
+            self.activated.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -821,8 +859,12 @@ class SceneEditorWindow(QMainWindow):
         for model_id in self.z_gemini_model_ids:
             self.z_gemini_model_input.addItem(model_id, model_id)
         self.z_negative_input = QTextEdit()
+        self.z_clipboard_button = QToolButton()
+        self.z_clipboard_button.setText("Image Gen Prompt")
+        self.z_clipboard_button.clicked.connect(self.copy_z_image_skill_prompt_to_clipboard)
         self.z_extra_positive_inputs = []
         self.z_extra_negative_inputs = []
+        self.z_extra_clipboard_buttons = []
         self.z_extra_buttons = []
         self.z_size_input = QComboBox()
         for label, width, height in Z_IMAGE_SIZES:
@@ -836,11 +878,17 @@ class SceneEditorWindow(QMainWindow):
         for slot_index in range(3):
             positive_input = QTextEdit()
             negative_input = QTextEdit()
+            clipboard_button = QToolButton()
+            clipboard_button.setText("Image Gen Prompt")
+            clipboard_button.clicked.connect(
+                lambda _checked=False, idx=slot_index: self.copy_extra_image_skill_prompt_to_clipboard(idx)
+            )
             button = QToolButton()
             button.setText("Buat Image")
             button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_extra_image_slot(idx))
             self.z_extra_positive_inputs.append(positive_input)
             self.z_extra_negative_inputs.append(negative_input)
+            self.z_extra_clipboard_buttons.append(clipboard_button)
             self.z_extra_buttons.append(button)
         self.wan_step_combo = QComboBox()
         for label, template_name in WAN_STEP_OPTIONS:
@@ -905,15 +953,22 @@ class SceneEditorWindow(QMainWindow):
             self.image_edit_gemini_model_input.addItem(model_id, model_id)
         self.image_edit_image_inputs = []
         self.image_edit_prompt_inputs = []
+        self.image_edit_clipboard_buttons = []
         self.image_edit_buttons = []
         for slot_index in range(3):
             image_input = QComboBox()
             prompt_input = QTextEdit()
+            clipboard_button = QToolButton()
+            clipboard_button.setText("Image Gen Prompt")
+            clipboard_button.clicked.connect(
+                lambda _checked=False, idx=slot_index: self.copy_image_edit_prompt_to_clipboard(idx)
+            )
             button = QToolButton()
             button.setText("Edit Gambar")
             button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_image_edit_slot(idx))
             self.image_edit_image_inputs.append(image_input)
             self.image_edit_prompt_inputs.append(prompt_input)
+            self.image_edit_clipboard_buttons.append(clipboard_button)
             self.image_edit_buttons.append(button)
 
         self.status_label = QPlainTextEdit()
@@ -925,6 +980,9 @@ class SceneEditorWindow(QMainWindow):
         self.audio_preview = MediaPreviewLabel()
         speaker_icon = self.style().standardIcon(QStyle.SP_MediaVolume)
         self.audio_preview.set_preview_pixmap(speaker_icon.pixmap(128, 128))
+        self.image_preview.activated.connect(lambda: self.open_preview_in_default_app(self.image_preview))
+        self.video_preview.activated.connect(lambda: self.open_preview_in_default_app(self.video_preview))
+        self.audio_preview.activated.connect(lambda: self.open_preview_in_default_app(self.audio_preview))
         self.viewer_stack = QStackedWidget()
         self.viewer_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.viewer_stack.addWidget(self.image_preview)
@@ -936,6 +994,7 @@ class SceneEditorWindow(QMainWindow):
         self.asset_list = QListWidget()
         self.asset_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.asset_list.currentItemChanged.connect(self.on_asset_selected)
+        self.asset_list.itemClicked.connect(self.on_asset_clicked)
         self.asset_list.itemDoubleClicked.connect(self.on_asset_double_clicked)
         self.asset_list.customContextMenuRequested.connect(self.open_asset_context_menu)
         self.asset_info_label = QLabel("Belum ada aset yang dipilih.")
@@ -1074,6 +1133,7 @@ class SceneEditorWindow(QMainWindow):
         z_layout.addRow("Nama Lora", self.z_lora_name_input)
         z_layout.addRow("Kekuatan Lora", self.z_lora_strength_input)
         z_layout.addRow("Prompt Positif", self.z_positive_input)
+        z_layout.addRow("", self.z_clipboard_button)
         z_layout.addRow("Prompt Negatif", self.z_negative_input)
         tabs.addTab(self.z_tab, "Gambar Awal")
 
@@ -1083,6 +1143,7 @@ class SceneEditorWindow(QMainWindow):
             group = QGroupBox(f"Prompt Tambahan {idx + 1}")
             group_layout = QFormLayout(group)
             group_layout.addRow("Prompt Positif", self.z_extra_positive_inputs[idx])
+            group_layout.addRow("", self.z_extra_clipboard_buttons[idx])
             group_layout.addRow("Prompt Negatif", self.z_extra_negative_inputs[idx])
             group_layout.addRow("", self.z_extra_buttons[idx])
             z_extra_layout.addWidget(group)
@@ -1149,6 +1210,7 @@ class SceneEditorWindow(QMainWindow):
             group_layout = QFormLayout(group)
             group_layout.addRow("Gambar Awal", self.image_edit_image_inputs[idx])
             group_layout.addRow("Prompt", self.image_edit_prompt_inputs[idx])
+            group_layout.addRow("", self.image_edit_clipboard_buttons[idx])
             group_layout.addRow("", self.image_edit_buttons[idx])
             image_edit_layout.addWidget(group)
         image_edit_layout.addStretch(1)
@@ -1529,8 +1591,59 @@ class SceneEditorWindow(QMainWindow):
         self.viewer_stack.setCurrentWidget(self.image_preview)
         self.image_preview.clear_preview("Klik ganda file pada tab Aset untuk melihat media.")
         self.video_preview.clear_preview("Klik ganda file video pada tab Aset untuk melihat media.")
+        self.audio_preview.clear_preview()
         self.viewer_title_label.setText("Tampilan")
         self.viewer_info_label.setText("Klik ganda file pada tab Aset untuk melihat media.")
+
+    def open_preview_in_default_app(self, preview_widget):
+        asset_path = getattr(preview_widget, "source_path", lambda: None)()
+        if not asset_path:
+            return
+        asset_path = Path(asset_path)
+        if not asset_path.exists():
+            QMessageBox.information(self, "File Tidak Ditemukan", f"File tidak ditemukan:\n{asset_path}")
+            return
+        if asset_path.suffix.lower() not in (IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS):
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(asset_path)))
+
+    def open_asset_preview_only(self, asset_path: Path):
+        suffix = asset_path.suffix.lower()
+        if suffix in IMAGE_EXTS:
+            pixmap = QPixmap(str(asset_path))
+            if pixmap.isNull():
+                self.clear_viewer()
+                self.viewer_info_label.setText(f"Gagal memuat gambar: {asset_path.name}")
+                return
+            self.release_media_locks()
+            self.image_preview.clear_preview()
+            self.image_preview.set_source_path(asset_path)
+            self.image_preview.set_preview_pixmap(pixmap)
+            self.viewer_stack.setCurrentWidget(self.image_preview)
+            self.viewer_title_label.setText("Tampilan")
+            self.viewer_info_label.setText(asset_path.name)
+            return
+        if suffix in VIDEO_EXTS:
+            self.release_media_locks()
+            self.video_preview.clear_preview("Memuat video...")
+            self.video_preview.set_source_path(asset_path)
+            self.video_player.setSource(QUrl.fromLocalFile(str(asset_path)))
+            self.viewer_stack.setCurrentWidget(self.video_preview)
+            self.viewer_title_label.setText("Tampilan")
+            self.viewer_info_label.setText(asset_path.name)
+            self.video_player.play()
+            QTimer.singleShot(0, self.video_player.pause)
+            return
+        if suffix in AUDIO_EXTS:
+            self.release_media_locks()
+            self.audio_preview.clear_preview()
+            self.audio_preview.set_source_path(asset_path)
+            self.audio_preview.set_preview_pixmap(self.style().standardIcon(QStyle.SP_MediaVolume).pixmap(128, 128))
+            self.viewer_stack.setCurrentWidget(self.audio_preview)
+            self.viewer_title_label.setText("Tampilan")
+            self.viewer_info_label.setText(asset_path.name)
+            return
+        self.clear_viewer()
 
     def update_lora_fields_enabled(self):
         enabled = self.z_use_lora_input.isChecked()
@@ -1592,21 +1705,12 @@ class SceneEditorWindow(QMainWindow):
     def open_asset_in_viewer(self, asset_path: Path):
         suffix = asset_path.suffix.lower()
         if suffix in IMAGE_EXTS:
-            pixmap = QPixmap(str(asset_path))
-            if pixmap.isNull():
-                self.clear_viewer()
-                self.viewer_info_label.setText(f"Gagal memuat gambar: {asset_path.name}")
-                return
-            self.release_media_locks()
-            self.image_preview.setText("")
-            self.image_preview.set_preview_pixmap(pixmap)
-            self.viewer_stack.setCurrentWidget(self.image_preview)
-            self.viewer_title_label.setText("Tampilan")
-            self.viewer_info_label.setText(asset_path.name)
+            self.open_asset_preview_only(asset_path)
             return
         if suffix in VIDEO_EXTS:
             self.release_media_locks()
             self.video_preview.clear_preview("Memuat video...")
+            self.video_preview.set_source_path(asset_path)
             self.video_player.setSource(QUrl.fromLocalFile(str(asset_path)))
             self.viewer_stack.setCurrentWidget(self.video_preview)
             self.viewer_title_label.setText("Tampilan")
@@ -1615,6 +1719,9 @@ class SceneEditorWindow(QMainWindow):
             return
         if suffix in AUDIO_EXTS:
             self.release_media_locks()
+            self.audio_preview.clear_preview()
+            self.audio_preview.set_source_path(asset_path)
+            self.audio_preview.set_preview_pixmap(self.style().standardIcon(QStyle.SP_MediaVolume).pixmap(128, 128))
             self.viewer_stack.setCurrentWidget(self.audio_preview)
             self.viewer_title_label.setText("Tampilan")
             self.viewer_info_label.setText(asset_path.name)
@@ -2361,6 +2468,76 @@ class SceneEditorWindow(QMainWindow):
             lines.append(str(rel_path))
         return "File output:\n- " + "\n- ".join(lines)
 
+    def build_z_image_skill_clipboard_text(self, positive_prompt: str, image_path: str | None = None):
+        if not self.current_project_name:
+            return None, "Belum ada project yang dibuka."
+        if not self.current_scene_dir:
+            return None, "Belum ada scene yang dipilih."
+
+        size_label = self.z_size_input.currentText().strip()
+        project_dir = self.project_dir()
+        if project_dir is None:
+            return None, "Belum ada project yang dibuka."
+
+        if image_path:
+            prompt_text = (
+                f"Gunakan skill Image Gen untuk mengedit gambar {image_path} dengan prompt :\n"
+                f"{positive_prompt}. Ukuran gambar {size_label}.\n\n"
+                f"Kemudian kopikan hasil image yang dibuat direktori project {project_dir.resolve()} "
+                f"dalam scene {self.current_scene_dir.name}. Jangan lupa scale ke ukuran diminta tanpa strecth."
+            )
+        else:
+            prompt_text = (
+                f"[$imagegen](C:\\Users\\brainer94\\.codex\\skills\\.system\\imagegen\\SKILL.md) {positive_prompt}. "
+                f"Ukuran gambar {size_label}.\n\n"
+                f"Kemudian kopikan hasil image yang dibuat direktori project {project_dir.resolve()} "
+                f"dalam scene {self.current_scene_dir.name}. Jangan lupa scale ke ukuran diminta tanpa strecth."
+            )
+        return prompt_text, None
+
+    def copy_z_image_skill_prompt_to_clipboard(self):
+        prompt_text, error = self.build_z_image_skill_clipboard_text(self.z_positive_input.toPlainText().strip())
+        if error:
+            QMessageBox.information(self, "Belum Siap", error)
+            return
+        QApplication.clipboard().setText(prompt_text)
+        self.statusBar().showMessage("Teks Image Gen disalin ke clipboard.", 3000)
+
+    def copy_extra_image_skill_prompt_to_clipboard(self, slot_index: int):
+        if slot_index < 0 or slot_index >= len(self.z_extra_positive_inputs):
+            QMessageBox.information(self, "Belum Siap", "Slot prompt tambahan tidak valid.")
+            return
+        prompt_text, error = self.build_z_image_skill_clipboard_text(
+            self.z_extra_positive_inputs[slot_index].toPlainText().strip()
+        )
+        if error:
+            QMessageBox.information(self, "Belum Siap", error)
+            return
+        QApplication.clipboard().setText(prompt_text)
+        self.statusBar().showMessage(f"Teks Image Gen slot {slot_index + 1} disalin ke clipboard.", 3000)
+
+    def copy_image_edit_prompt_to_clipboard(self, slot_index: int):
+        if slot_index < 0 or slot_index >= len(self.image_edit_image_inputs):
+            QMessageBox.information(self, "Belum Siap", "Slot edit gambar tidak valid.")
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Siap", "Belum ada scene yang dipilih.")
+            return
+        image_name = str(self.image_edit_image_inputs[slot_index].currentData() or "").strip()
+        if not image_name:
+            QMessageBox.information(self, "Belum Siap", f"Pilih gambar awal pada Edit Gambar {slot_index + 1}.")
+            return
+        image_path = str((self.current_scene_dir / image_name).resolve())
+        prompt_text, error = self.build_z_image_skill_clipboard_text(
+            self.image_edit_prompt_inputs[slot_index].toPlainText().strip(),
+            image_path=image_path,
+        )
+        if error:
+            QMessageBox.information(self, "Belum Siap", error)
+            return
+        QApplication.clipboard().setText(prompt_text)
+        self.statusBar().showMessage(f"Teks Image Gen edit slot {slot_index + 1} disalin ke clipboard.", 3000)
+
     def tail_process_log(self, max_lines=12):
         text = self.log_output.toPlainText().strip()
         if not text:
@@ -2725,6 +2902,11 @@ class SceneEditorWindow(QMainWindow):
             return
         asset_path = Path(current.data(Qt.UserRole))
         self.asset_info_label.setText(asset_path.name)
+
+    def on_asset_clicked(self, item):
+        if not item:
+            return
+        self.open_asset_preview_only(Path(item.data(Qt.UserRole)))
 
     def on_asset_double_clicked(self, item):
         if not item:

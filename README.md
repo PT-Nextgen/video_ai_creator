@@ -319,7 +319,16 @@ Fungsi utama:
   - `Flux.2`
   - `Gemini`
 - menampilkan aset media per scene
-- buka aset ke viewer dengan klik ganda
+- klik sekali pada aset membuka preview:
+  - `Image` langsung tampil sebagai preview
+  - `Video` tampil sebagai thumbnail preview dulu
+  - `Suara` tampil sebagai ikon speaker
+- klik ganda pada aset menjalankan media:
+  - `Image` tetap hanya preview
+  - `Video` langsung diputar
+  - `Suara` langsung diputar
+- klik pada preview membuka file dengan aplikasi default sistem operasi
+- klik ganda pada preview memiliki perilaku yang sama
 - hapus aset dari menu klik kanan
 - group `Cover` untuk generate `cover.png` per project
 - jalankan proses image, scene, voice, sound, dan compose
@@ -371,12 +380,14 @@ Perilaku UI:
   - tersedia 3 group edit:
     - dropdown `Gambar Awal` (diisi dari file gambar di root scene aktif)
     - input `Prompt`
+    - tombol `Image Gen Prompt` untuk menyalin template clipboard edit gambar
     - tombol `Edit Gambar`
   - input `Prompt` di UI selalu menampilkan `id_new`
   - saat tombol `Edit Gambar` ditekan:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
     - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini `gemini-2.5-flash`, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
+- tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - setelah proses selesai dari UI, akan muncul popup:
   - informasi keberhasilan beserta file output yang terdeteksi
   - atau ringkasan error jika proses gagal
