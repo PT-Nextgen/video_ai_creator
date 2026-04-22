@@ -39,6 +39,16 @@ File utama:
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
 
+Catatan format prompt:
+- prompt yang tampil di UI selalu memakai nilai `id_new`
+- di JSON, field prompt disimpan sebagai object bilingual:
+  - `id_old`
+  - `id_new`
+  - `en`
+- `id_old` dipakai sebagai pembanding versi lama, `id_new` adalah versi terbaru dari UI, dan `en` adalah versi runtime yang dikirim ke API/ComfyUI
+- translasi ke bahasa Inggris memakai Gemini `gemini-2.5-flash` hanya saat runtime jika `id_old != id_new` atau `en` masih kosong
+- saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
+
 Field utama:
 - `scene_meta.json`
   - `scene_title`
@@ -72,8 +82,9 @@ Nilai `image_model` yang didukung:
 - `flux.2 klein 9b`
 - `gemini`
 - `wan22_i2v_prompt.json`
-  - `positive_prompt_one` sampai `positive_prompt_five`
-  - `negative_prompt_one` sampai `negative_prompt_five`
+  - `duration_seconds` (`5` / `10` / `15`)
+  - `positive_prompt_one` sampai `positive_prompt_three`
+  - `negative_prompt_one` sampai `negative_prompt_three`
   - `width`
   - `height`
   - `use_lora`
@@ -106,7 +117,8 @@ Nilai `image_model` yang didukung:
   - `gemini_model_id` (khusus saat `image_model=gemini`)
   - `groups` (3 grup edit)
     - `source_image`
-    - `prompt`
+    - `prompt`  
+      disimpan sebagai object bilingual `id_old` / `id_new` / `en`
 
 Kebutuhan prompt per `scene_type`:
 - `default`
@@ -135,6 +147,7 @@ Catatan sumber image:
   - image dibuat dari `z_image_prompt.json`, lalu hasilnya dipakai untuk WAN
 - `wan22_i2v`
   - memakai satu gambar terbaru dari root folder scene
+  - durasi gerak WAN mengikuti `wan22_i2v_prompt.json.duration_seconds` (`5` / `10` / `15`)
 - `wan22_s2v`
   - memakai satu gambar terbaru dan satu file audio speech terbaru dari root folder scene
   - file speech harus berawalan `speech_`
@@ -159,6 +172,7 @@ Catatan voice dan caption:
 - `voice_text`
   - dipakai sebagai sumber TTS
   - dipakai juga sebagai sumber caption
+- prompt lain seperti `sound_prompt`, `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
 - `elevenlabs_model_id`
   - model ElevenLabs per scene
   - nilai yang didukung:
@@ -279,6 +293,7 @@ Fungsi utama:
 - tambah, sisipkan, dan hapus scene
 - edit metadata scene
 - edit prompt image
+- tab `Prompt Tambahan` untuk 3 prompt image tambahan berbasis aturan `Gambar Awal`
 - edit prompt WAN
 - edit prompt WAN22 S2V
 - tab `Image Edit` untuk edit gambar berbasis prompt
@@ -294,6 +309,7 @@ Fungsi utama:
 - edit Lora image
 - edit Lora WAN High dan Low
 - pilih langkah WAN `4 langkah` atau `20 langkah`
+- pilih durasi WAN `5 detik`, `10 detik`, atau `15 detik`
 - pilih model image:
   - `Z-Image Turbo`
   - `Flux.2`
@@ -320,11 +336,18 @@ Perilaku UI:
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_provider` dipilih
+- semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
+- `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
   - negative prompt dinonaktifkan
   - pengaturan seed statik dinonaktifkan
   - pengaturan Lora image dinonaktifkan
+- tab `Prompt Tambahan` menyediakan 3 grup:
+  - `Prompt Positif`
+  - `Prompt Negatif`
+  - tombol `Buat Image`
+  - semua grup memakai aturan model/ukuran/seed/Lora/Gemini yang sama seperti tab `Gambar Awal`
 - `sound_prompt` tidak wajib
 - `Generate Caption` default aktif untuk scene baru
 - caption tidak lagi dibuat lewat tombol terpisah; caption berjalan otomatis setelah video selesai dibentuk jika `Generate Caption` aktif
@@ -349,9 +372,10 @@ Perilaku UI:
     - dropdown `Gambar Awal` (diisi dari file gambar di root scene aktif)
     - input `Prompt`
     - tombol `Edit Gambar`
+  - input `Prompt` di UI selalu menampilkan `id_new`
   - saat tombol `Edit Gambar` ditekan:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
-    - model `Gemini`: edit via Gemini API, ukuran output mengikuti orientasi/ukuran gambar input (portrait/landscape tetap), lalu hasil disimpan ke root scene
+    - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini `gemini-2.5-flash`, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
 - setelah proses selesai dari UI, akan muncul popup:
   - informasi keberhasilan beserta file output yang terdeteksi
@@ -446,6 +470,18 @@ Lora WAN:
 - `Lora Low`
   - nama file dan kekuatan bisa diatur dari UI
 
+Durasi WAN:
+- diatur per scene melalui `wan22_i2v_prompt.json.duration_seconds`
+- nilai yang didukung:
+  - `5`
+  - `10`
+  - `15`
+- UI `WAN22_I2V` menyediakan dropdown `Durasi WAN`
+- prompt WAN yang dipakai hanya 3 pasang:
+  - `positive_prompt_one` / `negative_prompt_one`
+  - `positive_prompt_two` / `negative_prompt_two`
+  - `positive_prompt_three` / `negative_prompt_three`
+
 ## WAN22 S2V Workflow
 
 Implementasi domain WAN22 S2V:
@@ -483,6 +519,8 @@ Script: `scripts/generate_initial_image.py`
 
 Fungsi:
 - membaca `z_image_prompt.json`
+- prompt UI yang disimpan di JSON menggunakan `id_new`, lalu runtime akan memakai `en` jika tersedia atau akan menerjemahkan `id_new` ke Inggris saat diperlukan
+- bisa juga membaca file prompt tambahan berbasis group untuk generate image alternatif dengan aturan model scene yang sama
 - jika model ComfyUI:
   - membangun workflow image sesuai model yang dipilih
   - mengirim workflow ke ComfyUI
@@ -519,7 +557,8 @@ Fungsi:
   - set seed random
   - download hasil edit ke root folder scene
 - jika model `Gemini`:
-  - kirim gambar sumber + prompt ke Gemini API
+  - kirim gambar sumber + prompt runtime ke Gemini API
+  - prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai Gemini `gemini-2.5-flash`
   - request image size `1K`
   - simpan hasil akhir ke root folder scene dengan ukuran mengikuti orientasi/ukuran gambar sumber
 
@@ -535,6 +574,7 @@ Script: `scripts/generate_cover_image.py`
 
 Fungsi:
 - membaca `cover_prompt.json` pada root project
+- prompt cover mengikuti aturan bilingual yang sama: UI menulis `id_new`, runtime memakai `en` atau menerjemahkan `id_new` saat perlu
 - generate image cover sesuai model image (`ComfyUI` atau `Gemini`)
 - menyimpan hasil final sebagai `api_production/<project_name>/cover/cover.png`
 
@@ -584,6 +624,7 @@ Script: `scripts/generate_sound.py`
 
 Fungsi:
 - membaca `sound_prompt` dan `duration_seconds` dari `scene_meta.json`
+- `sound_prompt` juga mengikuti format bilingual `id_old` / `id_new` / `en`, dan runtime memakai `en` bila tersedia
 - request audio ke audio server
 - menyimpan hasil WAV ke folder scene
 

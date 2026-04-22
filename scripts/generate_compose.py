@@ -20,6 +20,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from logging_config import setup_logging, get_logger
+from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 setup_logging()
 logger = get_logger(__name__)
@@ -33,6 +34,27 @@ IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
 
 # Background music volume for final merged video (0.0 to 1.0)
 BACKGROUND_MUSIC_VOLUME = 0.3
+
+
+def _load_scene_meta_runtime(scene_dir: str) -> dict:
+    meta_path = os.path.join(scene_dir, "scene_meta.json")
+    if not os.path.exists(meta_path):
+        return {}
+    try:
+        return read_json_for_runtime(meta_path, required=True, log_fn=lambda msg: logger.info(msg))
+    except Exception as e:
+        logger.warning("Prompt localization fallback for %s: %s", meta_path, e)
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                raw_meta = json.load(f)
+            resolved_meta, _, _ = resolve_prompt_payload_for_runtime(
+                "scene_meta.json",
+                raw_meta,
+                translate_fn=lambda text: text,
+            )
+            return resolved_meta
+        except Exception:
+            return {}
 
 
 def _safe_filename_segment(text: str) -> str:
@@ -432,11 +454,7 @@ def compose_scene(
         videos = [os.path.abspath(v) for v in video_files if os.path.isfile(v)]
     all_audios = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(AUDIO_EXTS)]
 
-    meta_path = os.path.join(scene_dir, 'scene_meta.json')
-    try:
-        meta = json.load(open(meta_path, 'r', encoding='utf-8')) if os.path.exists(meta_path) else {}
-    except Exception:
-        meta = {}
+    meta = _load_scene_meta_runtime(scene_dir)
 
     # Select only intended audio sources:
     # - latest speech_* file
@@ -561,11 +579,8 @@ def compose_scene(
     scene_name = os.path.basename(scene_dir)
     num = scene_name.split('_')[-1]
     scene_title = ''
-    try:
-        meta = json.load(open(os.path.join(scene_dir, 'scene_meta.json'), 'r', encoding='utf-8'))
-        scene_title = meta.get('scene_title', '')
-    except Exception:
-        pass
+    meta_for_title = _load_scene_meta_runtime(scene_dir)
+    scene_title = meta_for_title.get('scene_title', '')
     if out_path_override:
         out_path = str(out_path_override)
     else:
@@ -615,11 +630,8 @@ def export_scene_video_to_combined(scene_dir):
     scene_name = os.path.basename(scene_dir)
     num = scene_name.split('_')[-1]
     scene_title = ''
-    try:
-        meta = json.load(open(os.path.join(scene_dir, 'scene_meta.json'), 'r', encoding='utf-8'))
-        scene_title = meta.get('scene_title', '')
-    except Exception:
-        pass
+    meta = _load_scene_meta_runtime(scene_dir)
+    scene_title = meta.get('scene_title', '')
 
     safe_title = _safe_filename_segment(scene_title)
     out_name = f"Scene_{num}_{safe_title}.mp4"
@@ -833,9 +845,8 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             scene_type = ''
             try:
                 if os.path.exists(scene_meta_path):
-                    with open(scene_meta_path, 'r', encoding='utf-8') as f:
-                        scene_meta = json.load(f)
-                        scene_type = str(scene_meta.get('scene_type', '') or '').strip().lower()
+                    scene_meta = _load_scene_meta_runtime(scene_dir)
+                    scene_type = str(scene_meta.get('scene_type', '') or '').strip().lower()
             except Exception:
                 scene_type = ''
 

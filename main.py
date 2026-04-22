@@ -39,6 +39,7 @@ from scripts.generate_caption import apply_caption_to_video
 from scripts.generate_compose import compose_scene
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
+from prompt_localization import prepare_prompt_payload_for_save, read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
@@ -79,11 +80,34 @@ def _scene_sort_key(name: str):
 
 def _read_scene_json(scene_dir, filename, required=False):
     path = os.path.join(scene_dir, filename)
-    if not os.path.exists(path):
+    try:
+        return read_json_for_runtime(path, required=required, log_fn=write_log)
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        write_log(f"Prompt localization runtime fallback untuk {path}: {e}", level="warning")
         if required:
-            raise FileNotFoundError(f"Missing required file: {path}")
-        return {}
-    return load_json(path)
+            # fallback to non-translated prompt text so runtime can still continue
+            if not os.path.exists(path):
+                raise
+            raw_data = load_json(path)
+            resolved, _, _ = resolve_prompt_payload_for_runtime(
+                filename,
+                raw_data,
+                translate_fn=lambda text: text,
+                log_fn=write_log,
+            )
+            return resolved
+        if not os.path.exists(path):
+            return {}
+        raw_data = load_json(path)
+        resolved, _, _ = resolve_prompt_payload_for_runtime(
+            filename,
+            raw_data,
+            translate_fn=lambda text: text,
+            log_fn=write_log,
+        )
+        return resolved
 
 
 def _ensure_scene_json(scene_dir, filename, default_data):
@@ -91,8 +115,9 @@ def _ensure_scene_json(scene_dir, filename, default_data):
     if os.path.exists(path):
         return
     try:
+        payload = prepare_prompt_payload_for_save(filename, default_data, existing_data=None)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
         write_log(f"{filename} tidak ditemukan di {scene_dir}; dibuat otomatis dari default.")
     except Exception as e:
         write_log(f"Gagal membuat default {filename} di {scene_dir}: {e}", level="error")

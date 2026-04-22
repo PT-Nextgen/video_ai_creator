@@ -25,17 +25,19 @@ STEP_OPTIONS = [
     ("4 langkah", TEMPLATE_4),
     ("20 langkah", TEMPLATE_20),
 ]
+WAN_DURATION_OPTIONS = [
+    ("5 detik", 5),
+    ("10 detik", 10),
+    ("15 detik", 15),
+]
 DEFAULT_PROMPT = {
+    "duration_seconds": 10,
     "positive_prompt_one": "",
     "positive_prompt_two": "",
     "positive_prompt_three": "",
-    "positive_prompt_four": "",
-    "positive_prompt_five": "",
     "negative_prompt_one": "",
     "negative_prompt_two": "",
     "negative_prompt_three": "",
-    "negative_prompt_four": "",
-    "negative_prompt_five": "",
     "width": 368,
     "height": 640,
     "use_lora": False,
@@ -108,7 +110,7 @@ def get_step_template_name(wan_prompt: dict | None = None) -> str:
 def build_workflow(wan_prompt, scene_meta, uploaded_name=None):
     workflow = copy.deepcopy(_load_template(get_template_name(wan_prompt)))
     replace_map = {}
-    for suffix in ["one", "two", "three", "four", "five"]:
+    for suffix in ["one", "two", "three"]:
         pos_key = f"positive_prompt_{suffix}"
         neg_key = f"negative_prompt_{suffix}"
         replace_map[pos_key] = wan_prompt.get(pos_key, "")
@@ -116,8 +118,8 @@ def build_workflow(wan_prompt, scene_meta, uploaded_name=None):
 
     _traverse_and_replace(workflow, replace_map)
 
-    duration_seconds = None
-    if isinstance(scene_meta, dict):
+    duration_seconds = wan_prompt.get("duration_seconds")
+    if duration_seconds is None and isinstance(scene_meta, dict):
         duration_seconds = scene_meta.get("duration_seconds")
     if isinstance(duration_seconds, (int, float)):
         _set_wan_loop_total(workflow, int(duration_seconds / 5))

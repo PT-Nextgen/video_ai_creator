@@ -22,6 +22,7 @@ from scripts.server_config import load_server_config, save_server_config
 from wan22_i2v.wan22_i2v import DEFAULT_PROMPT as DEFAULT_WAN_PROMPT
 from wan22_i2v.wan22_i2v import SIZE_OPTIONS as WAN_SIZE_OPTIONS
 from wan22_i2v.wan22_i2v import STEP_OPTIONS as WAN_STEP_OPTIONS
+from wan22_i2v.wan22_i2v import WAN_DURATION_OPTIONS
 from wan22_i2v.wan22_i2v import get_step_template_name as get_wan_step_template_name
 from wan22_i2v.wan22_i2v import get_template_name as get_wan_template_name
 from wan22_s2v.wan22_s2v import DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT
@@ -36,6 +37,7 @@ from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
+from prompt_localization import convert_prompt_payload_for_ui, prepare_prompt_payload_for_save, read_json_for_runtime
 
 ROOT = Path(__file__).resolve().parent
 API_PRODUCTION = ROOT / "api_production"
@@ -103,6 +105,13 @@ DEFAULT_IMAGE_EDIT_PROMPT = {
         {"source_image": "", "prompt": ""},
     ],
 }
+DEFAULT_Z_IMAGE_EXTRA_PROMPTS = {
+    "groups": [
+        {"positive_prompt": "", "negative_prompt": ""},
+        {"positive_prompt": "", "negative_prompt": ""},
+        {"positive_prompt": "", "negative_prompt": ""},
+    ],
+}
 
 
 def load_json(path: Path, default: dict):
@@ -112,12 +121,24 @@ def load_json(path: Path, default: dict):
         data = json.load(f)
     merged = copy.deepcopy(default)
     merged.update(data)
-    return merged
+    return convert_prompt_payload_for_ui(path.name, merged)
 
 
 def write_json(path: Path, data: dict):
     with path.open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def write_prompt_json(path: Path, data: dict):
+    existing_data = None
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+        except Exception:
+            existing_data = None
+    payload = prepare_prompt_payload_for_save(path.name, data, existing_data=existing_data)
+    write_json(path, payload)
 
 
 def scene_dir_name(index: int) -> str:
@@ -177,13 +198,14 @@ def create_scene_files(
     web_scroll_prompt=None,
     image_pan_prompt=None,
     image_edit_prompt=None,
+    z_image_extra_prompts=None,
 ):
     scene_dir.mkdir(parents=True, exist_ok=True)
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
     if isinstance(meta, dict):
         resolved_meta.update(meta)
     scene_type = str(resolved_meta.get("scene_type", "default")).strip()
-    write_json(scene_dir / "scene_meta.json", resolved_meta)
+    write_prompt_json(scene_dir / "scene_meta.json", resolved_meta)
     sync_scene_prompt_files(
         scene_dir,
         scene_type=scene_type,
@@ -193,6 +215,7 @@ def create_scene_files(
         web_prompt=web_scroll_prompt or DEFAULT_WEB_SCROLL_PROMPT,
         image_pan_prompt=image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT,
         image_edit_prompt=image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT,
+        z_image_extra_prompts=z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS,
     )
 
 
@@ -205,6 +228,7 @@ def sync_scene_prompt_files(
     web_prompt: dict,
     image_pan_prompt: dict,
     image_edit_prompt: dict | None = None,
+    z_image_extra_prompts: dict | None = None,
 ):
     """Ensure prompt JSON files exist according to selected scene type.
 
@@ -213,16 +237,17 @@ def sync_scene_prompt_files(
     - wan22_i2v_prompt.json: only for default/wan22/wan22_i2v
     - wan22_s2v_prompt.json: always present (used when switching to s2v later)
     """
-    write_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
-    write_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
-    write_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
-    write_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
-    write_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
+    write_prompt_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
+    write_prompt_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
+    write_prompt_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
+    write_prompt_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
+    write_prompt_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
+    write_prompt_json(scene_dir / "z_image_extra_prompts.json", z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
 
     wan_required_types = {"default", "wan22", "wan22_i2v"}
     wan_path = scene_dir / "wan22_i2v_prompt.json"
     if scene_type in wan_required_types:
-        write_json(wan_path, wan_prompt or DEFAULT_WAN_PROMPT)
+        write_prompt_json(wan_path, wan_prompt or DEFAULT_WAN_PROMPT)
     elif wan_path.exists():
         wan_path.unlink()
 
@@ -796,6 +821,9 @@ class SceneEditorWindow(QMainWindow):
         for model_id in self.z_gemini_model_ids:
             self.z_gemini_model_input.addItem(model_id, model_id)
         self.z_negative_input = QTextEdit()
+        self.z_extra_positive_inputs = []
+        self.z_extra_negative_inputs = []
+        self.z_extra_buttons = []
         self.z_size_input = QComboBox()
         for label, width, height in Z_IMAGE_SIZES:
             self.z_size_input.addItem(label, (width, height))
@@ -805,9 +833,21 @@ class SceneEditorWindow(QMainWindow):
         self.z_use_lora_input = QCheckBox("Pakai Lora")
         self.z_lora_name_input = QLineEdit()
         self.z_lora_strength_input = QLineEdit()
+        for slot_index in range(3):
+            positive_input = QTextEdit()
+            negative_input = QTextEdit()
+            button = QToolButton()
+            button.setText("Buat Image")
+            button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_extra_image_slot(idx))
+            self.z_extra_positive_inputs.append(positive_input)
+            self.z_extra_negative_inputs.append(negative_input)
+            self.z_extra_buttons.append(button)
         self.wan_step_combo = QComboBox()
         for label, template_name in WAN_STEP_OPTIONS:
             self.wan_step_combo.addItem(label, template_name)
+        self.wan_duration_input = QComboBox()
+        for label, duration_value in WAN_DURATION_OPTIONS:
+            self.wan_duration_input.addItem(label, duration_value)
         self.wan_size_input = QComboBox()
         for label, width, height in WAN_SIZE_OPTIONS:
             self.wan_size_input.addItem(label, (width, height))
@@ -819,8 +859,7 @@ class SceneEditorWindow(QMainWindow):
         self.wan_prompt_inputs = {}
         for key in [
             "positive_prompt_one", "negative_prompt_one", "positive_prompt_two", "negative_prompt_two",
-            "positive_prompt_three", "negative_prompt_three", "positive_prompt_four", "negative_prompt_four",
-            "positive_prompt_five", "negative_prompt_five",
+            "positive_prompt_three", "negative_prompt_three",
         ]:
             self.wan_prompt_inputs[key] = QTextEdit()
         self.s2v_positive_input = QTextEdit()
@@ -935,6 +974,7 @@ class SceneEditorWindow(QMainWindow):
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_step_combo.currentIndexChanged, self.wan_size_input.currentTextChanged,
+            self.wan_duration_input.currentTextChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.web_capture_mode_input.currentIndexChanged,
@@ -955,6 +995,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_lora_low_name_input, self.wan_lora_low_strength_input,
             self.s2v_positive_input, self.s2v_negative_input,
             *self.wan_prompt_inputs.values(),
+            *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
         ]:
             widget.textChanged.connect(self.refresh_scene_status)
         self.z_use_lora_input.toggled.connect(self.update_lora_fields_enabled)
@@ -1036,22 +1077,36 @@ class SceneEditorWindow(QMainWindow):
         z_layout.addRow("Prompt Negatif", self.z_negative_input)
         tabs.addTab(self.z_tab, "Gambar Awal")
 
+        self.z_extra_tab = QWidget()
+        z_extra_layout = QVBoxLayout(self.z_extra_tab)
+        for idx in range(3):
+            group = QGroupBox(f"Prompt Tambahan {idx + 1}")
+            group_layout = QFormLayout(group)
+            group_layout.addRow("Prompt Positif", self.z_extra_positive_inputs[idx])
+            group_layout.addRow("Prompt Negatif", self.z_extra_negative_inputs[idx])
+            group_layout.addRow("", self.z_extra_buttons[idx])
+            z_extra_layout.addWidget(group)
+        z_extra_layout.addStretch(1)
+        tabs.addTab(self.z_extra_tab, "Prompt Tambahan")
+
         self.wan_tab = QWidget()
         wan_layout = QGridLayout(self.wan_tab)
         wan_layout.addWidget(QLabel("Langkah WAN"), 0, 0)
         wan_layout.addWidget(self.wan_step_combo, 0, 1)
-        wan_layout.addWidget(QLabel("Ukuran"), 1, 0)
-        wan_layout.addWidget(self.wan_size_input, 1, 1)
-        wan_layout.addWidget(self.wan_use_lora_input, 2, 0, 1, 2)
-        wan_layout.addWidget(QLabel("Nama Lora High"), 3, 0)
-        wan_layout.addWidget(self.wan_lora_high_name_input, 3, 1)
-        wan_layout.addWidget(QLabel("Kekuatan Lora High"), 4, 0)
-        wan_layout.addWidget(self.wan_lora_high_strength_input, 4, 1)
-        wan_layout.addWidget(QLabel("Nama Lora Low"), 5, 0)
-        wan_layout.addWidget(self.wan_lora_low_name_input, 5, 1)
-        wan_layout.addWidget(QLabel("Kekuatan Lora Low"), 6, 0)
-        wan_layout.addWidget(self.wan_lora_low_strength_input, 6, 1)
-        row = 7
+        wan_layout.addWidget(QLabel("Durasi WAN"), 1, 0)
+        wan_layout.addWidget(self.wan_duration_input, 1, 1)
+        wan_layout.addWidget(QLabel("Ukuran"), 2, 0)
+        wan_layout.addWidget(self.wan_size_input, 2, 1)
+        wan_layout.addWidget(self.wan_use_lora_input, 3, 0, 1, 2)
+        wan_layout.addWidget(QLabel("Nama Lora High"), 4, 0)
+        wan_layout.addWidget(self.wan_lora_high_name_input, 4, 1)
+        wan_layout.addWidget(QLabel("Kekuatan Lora High"), 5, 0)
+        wan_layout.addWidget(self.wan_lora_high_strength_input, 5, 1)
+        wan_layout.addWidget(QLabel("Nama Lora Low"), 6, 0)
+        wan_layout.addWidget(self.wan_lora_low_name_input, 6, 1)
+        wan_layout.addWidget(QLabel("Kekuatan Lora Low"), 7, 0)
+        wan_layout.addWidget(self.wan_lora_low_strength_input, 7, 1)
+        row = 8
         for key, widget in self.wan_prompt_inputs.items():
             wan_layout.addWidget(QLabel(key.replace("_", " ").title()), row, 0)
             wan_layout.addWidget(widget, row, 1)
@@ -1255,7 +1310,7 @@ class SceneEditorWindow(QMainWindow):
             QMessageBox.warning(self, "Project Sudah Ada", f"Project `{project_name}` sudah ada.")
             return
         pdir.mkdir(parents=True, exist_ok=False)
-        write_json(pdir / "cover_prompt.json", copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT))
+        write_prompt_json(pdir / "cover_prompt.json", copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT))
         default_scene = pdir / scene_dir_name(1)
         meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates("", "default", 10)
         create_scene_files(default_scene, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
@@ -1499,6 +1554,10 @@ class SceneEditorWindow(QMainWindow):
         self.z_negative_input.setEnabled(can_use_negative)
         if not can_use_negative:
             self.z_negative_input.setPlainText("")
+        for negative_input in self.z_extra_negative_inputs:
+            negative_input.setEnabled(can_use_negative)
+            if not can_use_negative:
+                negative_input.setPlainText("")
         self.z_use_lora_input.setEnabled(not is_gemini)
         if is_gemini and self.z_use_lora_input.isChecked():
             self.z_use_lora_input.setChecked(False)
@@ -1728,6 +1787,9 @@ class SceneEditorWindow(QMainWindow):
             self.wan_use_lora_input.setChecked(bool(wan_prompt.get("use_lora", False)))
             wan_width = int(wan_prompt.get("width", DEFAULT_WAN_PROMPT["width"]))
             wan_height = int(wan_prompt.get("height", DEFAULT_WAN_PROMPT["height"]))
+            wan_duration = int(wan_prompt.get("duration_seconds", DEFAULT_WAN_PROMPT["duration_seconds"]))
+            index = self.wan_duration_input.findData(wan_duration)
+            self.wan_duration_input.setCurrentIndex(max(index, 0))
             index = -1
             for i in range(self.wan_size_input.count()):
                 size_value = self.wan_size_input.itemData(i)
@@ -1805,6 +1867,7 @@ class SceneEditorWindow(QMainWindow):
             pan_mode = str(image_pan_prompt.get("capture_mode", DEFAULT_IMAGE_PAN_PROMPT["capture_mode"])).strip()
             index = self.image_pan_capture_mode_input.findData(pan_mode)
             self.image_pan_capture_mode_input.setCurrentIndex(max(index, 0))
+            self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_image_edit_into_ui(scene_dir)
         finally:
             self.loading_scene = False
@@ -1848,6 +1911,7 @@ class SceneEditorWindow(QMainWindow):
         }
         z_prompt["json_api"] = get_z_image_template_name(z_prompt)
         wan_prompt = {
+            "duration_seconds": int(self.wan_duration_input.currentData() or DEFAULT_WAN_PROMPT["duration_seconds"]),
             "width": int((self.wan_size_input.currentData() or (368, 640))[0]),
             "height": int((self.wan_size_input.currentData() or (368, 640))[1]),
             "use_lora": self.wan_use_lora_input.isChecked(),
@@ -1958,6 +2022,35 @@ class SceneEditorWindow(QMainWindow):
             )
         return {"image_model": model_key, "gemini_model_id": gemini_model_id, "groups": normalized_groups}
 
+    def load_z_image_extra_prompts(self, scene_dir: Path):
+        data = load_json(scene_dir / "z_image_extra_prompts.json", DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
+        groups = data.get("groups")
+        if not isinstance(groups, list):
+            groups = []
+        normalized_groups = []
+        for index in range(3):
+            item = groups[index] if index < len(groups) and isinstance(groups[index], dict) else {}
+            normalized_groups.append(
+                {
+                    "positive_prompt": str(item.get("positive_prompt", "")).strip(),
+                    "negative_prompt": str(item.get("negative_prompt", "")).strip(),
+                }
+            )
+        return {"groups": normalized_groups}
+
+    def gather_z_image_extra_prompts(self):
+        groups = []
+        model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO)
+        supports_negative = z_image_supports_negative_prompt({"image_model": model_key})
+        for positive_input, negative_input in zip(self.z_extra_positive_inputs, self.z_extra_negative_inputs):
+            groups.append(
+                {
+                    "positive_prompt": positive_input.toPlainText().strip(),
+                    "negative_prompt": negative_input.toPlainText().strip() if supports_negative else "",
+                }
+            )
+        return {"groups": groups}
+
     def gather_image_edit_prompt(self):
         groups = []
         for image_input, prompt_input in zip(self.image_edit_image_inputs, self.image_edit_prompt_inputs):
@@ -2015,6 +2108,14 @@ class SceneEditorWindow(QMainWindow):
         for index, prompt_input in enumerate(self.image_edit_prompt_inputs):
             group_data = groups[index] if index < len(groups) else {}
             prompt_input.setPlainText(str(group_data.get("prompt", "")))
+
+    def load_z_image_extra_prompts_into_ui(self, scene_dir: Path):
+        data = self.load_z_image_extra_prompts(scene_dir)
+        groups = data.get("groups", [])
+        for index in range(3):
+            group_data = groups[index] if index < len(groups) else {}
+            self.z_extra_positive_inputs[index].setPlainText(str(group_data.get("positive_prompt", "")))
+            self.z_extra_negative_inputs[index].setPlainText(str(group_data.get("negative_prompt", "")))
 
     def refresh_scene_status(self):
         if not self.current_scene_dir:
@@ -2109,7 +2210,8 @@ class SceneEditorWindow(QMainWindow):
                 return False
         scene_type = str(meta.get("scene_type", "default")).strip()
         image_edit_prompt = self.gather_image_edit_prompt()
-        write_json(self.current_scene_dir / "scene_meta.json", meta)
+        z_image_extra_prompts = self.gather_z_image_extra_prompts()
+        write_prompt_json(self.current_scene_dir / "scene_meta.json", meta)
         sync_scene_prompt_files(
             self.current_scene_dir,
             scene_type=scene_type,
@@ -2119,6 +2221,7 @@ class SceneEditorWindow(QMainWindow):
             web_prompt=web_prompt,
             image_pan_prompt=image_pan_prompt,
             image_edit_prompt=image_edit_prompt,
+            z_image_extra_prompts=z_image_extra_prompts,
         )
         self.refresh_scene_status()
         if reload_list:
@@ -2357,6 +2460,37 @@ class SceneEditorWindow(QMainWindow):
             watch_dirs=[self.current_scene_dir],
         )
 
+    def run_extra_image_slot(self, slot_index: int):
+        if slot_index < 0 or slot_index >= len(self.z_extra_positive_inputs):
+            return
+        if not self.ensure_project_selected():
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        if not self.ensure_server_config_loaded():
+            return
+        if not self.save_current_scene():
+            return
+
+        positive_prompt = self.z_extra_positive_inputs[slot_index].toPlainText().strip()
+        if not positive_prompt:
+            QMessageBox.warning(self, "Data Tidak Valid", f"Prompt Positif pada Prompt Tambahan {slot_index + 1} wajib diisi.")
+            return
+
+        self.start_process(
+            INITIAL_IMAGE_SCRIPT,
+            [
+                "--server", self.comfyui_server_address(),
+                "--project", self.current_project_name,
+                "--scene", self.current_scene_dir.name,
+                "--prompt-file", "z_image_extra_prompts.json",
+                "--prompt-index", str(slot_index + 1),
+            ],
+            f"Membuat image tambahan {slot_index + 1} untuk {self.current_scene_dir.name}",
+            watch_dirs=[self.current_scene_dir],
+        )
+
     def run_image_edit_slot(self, slot_index: int):
         if slot_index < 0 or slot_index >= len(self.image_edit_image_inputs):
             return
@@ -2378,6 +2512,17 @@ class SceneEditorWindow(QMainWindow):
         if not prompt:
             QMessageBox.warning(self, "Data Tidak Valid", f"Prompt pada Edit Gambar {slot_index + 1} wajib diisi.")
             return
+
+        prompt_json_path = self.current_scene_dir / "image_edit_prompt.json"
+        try:
+            runtime_payload = read_json_for_runtime(str(prompt_json_path), required=True)
+            runtime_groups = runtime_payload.get("groups") if isinstance(runtime_payload, dict) else None
+            if isinstance(runtime_groups, list) and slot_index < len(runtime_groups) and isinstance(runtime_groups[slot_index], dict):
+                runtime_prompt = str(runtime_groups[slot_index].get("prompt", "")).strip()
+                if runtime_prompt:
+                    prompt = runtime_prompt
+        except Exception as e:
+            self.append_log(f"[warning] Gagal sinkronisasi prompt image edit runtime: {e}")
 
         model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip()
         gemini_model_id = str(self.image_edit_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
@@ -2545,7 +2690,7 @@ class SceneEditorWindow(QMainWindow):
         if cover_path is None:
             QMessageBox.warning(self, "Project Tidak Valid", "Project aktif tidak valid.")
             return
-        write_json(cover_path, cover_prompt)
+        write_prompt_json(cover_path, cover_prompt)
         if not self.ensure_server_config_loaded():
             return
         if not self.confirm_run_action("Generate Cover", f"Generate `cover.png` untuk project `{self.current_project_name}`?"):

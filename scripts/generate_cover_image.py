@@ -14,11 +14,7 @@ from scripts import comfyui_api
 from scripts.server_config import get_server_address
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
-
-
-def load_json(path: str):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 
 def _replace_or_copy(src: str, dst: str):
@@ -45,7 +41,18 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
         write_log(f"cover_prompt.json not found in {project_dir}", level="error")
         return False
 
-    prompts = load_json(cover_config_path)
+    try:
+        prompts = read_json_for_runtime(cover_config_path, required=True, log_fn=write_log)
+    except Exception as e:
+        write_log(f"Gagal sinkronisasi prompt runtime untuk {cover_config_path}: {e}", level="warning")
+        with open(cover_config_path, "r", encoding="utf-8") as f:
+            raw_prompts = json.load(f)
+        prompts, _, _ = resolve_prompt_payload_for_runtime(
+            "cover_prompt.json",
+            raw_prompts,
+            translate_fn=lambda text: text,
+            log_fn=write_log,
+        )
     model_name = get_model_display_name(prompts)
 
     cover_dir = os.path.join(project_dir, "cover")

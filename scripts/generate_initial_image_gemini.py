@@ -9,6 +9,7 @@ if PROJECT_ROOT not in os.sys.path:
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 from logging_config import setup_logging, write_log
 from scripts.workflow_builders import load_json
+from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 
 API_PRODUCTION = os.path.join(PROJECT_ROOT, "api_production")
@@ -28,7 +29,17 @@ def process_scene(scene_dir: str):
     if not os.path.exists(z_prompt_path):
         write_log(f"z_image_prompt.json not found in {scene_dir}", level="error")
         return False
-    z_prompt = load_json(z_prompt_path)
+    try:
+        z_prompt = read_json_for_runtime(z_prompt_path, required=True, log_fn=write_log)
+    except Exception as e:
+        write_log(f"Gagal sinkronisasi prompt runtime untuk {z_prompt_path}: {e}", level="warning")
+        raw_prompt = load_json(z_prompt_path)
+        z_prompt, _, _ = resolve_prompt_payload_for_runtime(
+            "z_image_prompt.json",
+            raw_prompt,
+            translate_fn=lambda text: text,
+            log_fn=write_log,
+        )
     if not is_gemini_prompt(z_prompt):
         write_log(f"Scene {scene_dir} bukan model Gemini; skip.")
         return True

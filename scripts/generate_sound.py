@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 
 from logging_config import setup_logging, get_logger
 from scripts.server_config import get_server_address
+from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 setup_logging()
 logger = get_logger(__name__)
@@ -109,10 +110,19 @@ def main(project_name, specific_scenes=None, server=None):
             logger.debug('no scene_meta.json in %s', scene_dir)
             continue
         try:
-            meta = load_json(meta_path)
+            meta = read_json_for_runtime(meta_path, required=True, log_fn=lambda msg: logger.info(msg))
         except Exception as e:
-            logger.error('Failed to load %s: %s', meta_path, e)
-            continue
+            logger.warning('Failed runtime localization for %s: %s', meta_path, e)
+            try:
+                raw_meta = load_json(meta_path)
+                meta, _, _ = resolve_prompt_payload_for_runtime(
+                    'scene_meta.json',
+                    raw_meta,
+                    translate_fn=lambda text: text,
+                )
+            except Exception as inner_e:
+                logger.error('Failed to load %s: %s', meta_path, inner_e)
+                continue
 
         sound_prompt = meta.get('sound_prompt')
         duration = meta.get('duration_seconds') or meta.get('duration')

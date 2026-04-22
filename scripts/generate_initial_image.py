@@ -13,6 +13,7 @@ from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
+from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 
 def _scene_sort_key(name: str):
@@ -25,15 +26,56 @@ def _scene_sort_key(name: str):
 
 
 def process_scene(scene_dir: str, server: str, timeout: int = 600, interval: float = 2.0):
+    return process_scene_prompt(scene_dir, server, "z_image_prompt.json", 1, timeout=timeout, interval=interval)
+
+
+def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_index: int = 1, timeout: int = 600, interval: float = 2.0):
     scene_dir = os.path.abspath(scene_dir)
     write_log(f"Processing scene {scene_dir}")
 
-    z_prompt_path = os.path.join(scene_dir, "z_image_prompt.json")
+    prompt_filename = str(prompt_file or "z_image_prompt.json").strip() or "z_image_prompt.json"
+    z_prompt_path = os.path.join(scene_dir, prompt_filename)
     if not os.path.exists(z_prompt_path):
-        write_log(f"z_image_prompt.json not found in {scene_dir}", level="error")
+        write_log(f"{prompt_filename} not found in {scene_dir}", level="error")
         return False
 
-    prompts = load_json(z_prompt_path)
+    try:
+        prompts = read_json_for_runtime(z_prompt_path, required=True, log_fn=write_log)
+    except Exception as e:
+        write_log(f"Gagal sinkronisasi prompt runtime untuk {z_prompt_path}: {e}", level="warning")
+        raw_prompts = load_json(z_prompt_path)
+        prompts, _, _ = resolve_prompt_payload_for_runtime(
+            prompt_filename,
+            raw_prompts,
+            translate_fn=lambda text: text,
+            log_fn=write_log,
+        )
+    prompt_index = max(1, int(prompt_index or 1))
+    if prompt_filename != "z_image_prompt.json":
+        groups = prompts.get("groups")
+        if not isinstance(groups, list) or prompt_index > len(groups):
+            write_log(f"Prompt group index {prompt_index} not found in {prompt_filename}", level="error")
+            return False
+        base_prompt_path = os.path.join(scene_dir, "z_image_prompt.json")
+        if not os.path.exists(base_prompt_path):
+            write_log(f"z_image_prompt.json not found in {scene_dir}", level="error")
+            return False
+        try:
+            base_prompts = read_json_for_runtime(base_prompt_path, required=True, log_fn=write_log)
+        except Exception as e:
+            write_log(f"Gagal sinkronisasi prompt runtime untuk {base_prompt_path}: {e}", level="warning")
+            raw_base_prompts = load_json(base_prompt_path)
+            base_prompts, _, _ = resolve_prompt_payload_for_runtime(
+                "z_image_prompt.json",
+                raw_base_prompts,
+                translate_fn=lambda text: text,
+                log_fn=write_log,
+            )
+        group = groups[prompt_index - 1] if isinstance(groups[prompt_index - 1], dict) else {}
+        prompts = dict(base_prompts)
+        prompts["positive_prompt"] = str(group.get("positive_prompt", "")).strip()
+        prompts["negative_prompt"] = str(group.get("negative_prompt", "")).strip()
+
     model_name = get_model_display_name(prompts)
 
     if is_gemini_prompt(prompts):
@@ -102,6 +144,8 @@ def main():
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", action="append", help="Scene name to process (e.g., scene_1). Repeatable")
+    parser.add_argument("--prompt-file", default="z_image_prompt.json", help="Nama file prompt di folder scene")
+    parser.add_argument("--prompt-index", type=int, default=1, help="Index group prompt (1-based) untuk file prompt bertipe groups")
     parser.add_argument("--loop", "-L", type=int, default=1, help="Number of times to process each selected scene")
     args = parser.parse_args()
 
@@ -133,7 +177,7 @@ def main():
         for scene in scenes:
             scene_dir = os.path.join(base, scene)
             print(f"Processing {scene_dir}")
-            ok = process_scene(scene_dir, args.server)
+            ok = process_scene_prompt(scene_dir, args.server, args.prompt_file, args.prompt_index)
             if not ok:
                 write_log(f"Failed processing {scene}; stopping further work", level="error")
                 print(f"Failed processing {scene}")
