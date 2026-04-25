@@ -9,15 +9,25 @@ from urllib.parse import urlparse
 
 import imageio
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 from PIL import Image as PILImage
 
 from logging_config import write_log
 
 
 API_PRODUCTION_ROOT = Path(__file__).resolve().parent.parent / "api_production"
-SUPERSAMPLE_FACTOR = 6
+SUPERSAMPLE_FACTOR = 2
 INTERNAL_SCROLL_FPS = 30
+MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT = 9000
+VERTICAL_MOTION_BLUR_KERNEL = ImageFilter.Kernel(
+    (3, 3),
+    [
+        0.0, 0.2, 0.0,
+        0.0, 0.6, 0.0,
+        0.0, 0.2, 0.0,
+    ],
+    scale=1.0,
+)
 SPEED_TO_PPS = {
     1: 90.0,
     2: 140.0,
@@ -92,6 +102,34 @@ def _speed_level_to_pps(speed: int):
     return float(SPEED_TO_PPS.get(level, SPEED_TO_PPS[1]))
 
 
+def _stable_pan_capture_height_css(page, duration_seconds: float, speed: int, device_scale_factor: float):
+    scroll_height = int(
+        page.evaluate(
+            "() => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"
+        )
+    )
+    viewport_height = int(page.evaluate("() => window.innerHeight"))
+    max_scroll = max(0, scroll_height - viewport_height)
+    total_scroll = min(float(max_scroll), _speed_level_to_pps(speed) * float(duration_seconds))
+    needed_css_height = int(np.ceil(float(viewport_height) + total_scroll + 2.0))
+    scale = max(0.1, float(device_scale_factor or 1.0))
+    max_css_height = max(1, int(MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT / scale))
+    capture_css_height = max(
+        1,
+        min(scroll_height, needed_css_height, max_css_height),
+    )
+    estimated_image_height = int(np.ceil(capture_css_height * scale))
+    return capture_css_height, estimated_image_height, scroll_height, viewport_height, scale
+
+
+def _capture_partial_top_screenshot(page, dst_path: Path, width: int, capture_css_height: int):
+    capture_css_height = max(1, int(capture_css_height))
+    page.set_viewport_size({"width": int(width), "height": capture_css_height})
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.wait_for_timeout(250)
+    page.screenshot(path=str(dst_path), full_page=False, type="png")
+
+
 def _resize_cover_rgb(src: Image.Image, target_w: int, target_h: int):
     src_w, src_h = src.size
     if src_w <= 0 or src_h <= 0:
@@ -155,12 +193,16 @@ def _render_pan_video_from_image(input_image: Path, out_video: Path, width: int,
     try:
         with Image.open(input_image) as im:
             src = im.convert("RGB")
-            src_arr = np.asarray(src, dtype=np.uint8)
             for y in y_positions:
-                y0 = int(round(y))
-                y0 = max(0, min(y0, max_y))
-                crop_arr = src_arr[y0:y0 + internal_h, 0:internal_w, :]
-                crop_img = Image.fromarray(crop_arr, mode="RGB")
+                y0 = max(0.0, min(float(y), float(max_y)))
+                crop_img = src.transform(
+                    (internal_w, internal_h),
+                    Image.AFFINE,
+                    (1.0, 0.0, 0.0, 0.0, 1.0, y0),
+                    resample=Image.BICUBIC,
+                    fillcolor=(0, 0, 0),
+                )
+                crop_img = crop_img.filter(VERTICAL_MOTION_BLUR_KERNEL)
                 frame = crop_img.resize((width, height), resample=Image.LANCZOS)
                 writer.append_data(np.asarray(frame, dtype=np.uint8))
     finally:
@@ -201,7 +243,7 @@ def _render_live_capture_video(page, out_video: Path, width: int, height: int, d
         writer.close()
 
 
-def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, speed, fps=16, capture_mode="live_capture"):
+def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, speed, fps=16, capture_mode="stable_pan"):
     scene_dir_path = Path(scene_dir)
     if not is_valid_http_url(str(url).strip()):
         raise ValueError("URL web_scroll tidak valid. Gunakan format http:// atau https://")
@@ -220,7 +262,7 @@ def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, s
         raise ValueError("Speed web_scroll harus di antara 1 sampai 5.")
     if fps <= 0:
         raise ValueError("FPS web_scroll harus lebih besar dari 0.")
-    capture_mode = str(capture_mode or "live_capture").strip()
+    capture_mode = str(capture_mode or "stable_pan").strip()
     if capture_mode not in {"stable_pan", "live_capture"}:
         raise ValueError("Mode capture web_scroll tidak valid. Gunakan `stable_pan` atau `live_capture`.")
 
@@ -295,7 +337,28 @@ def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, s
         page.evaluate("() => window.scrollTo(0, 0)")
         page.wait_for_timeout(250)
         if capture_mode == "stable_pan":
-            page.screenshot(path=str(fullpage_path), full_page=True, type="png")
+            capture_css_height, estimated_image_height, scroll_height, viewport_height, scale = _stable_pan_capture_height_css(
+                page=page,
+                duration_seconds=duration_seconds,
+                speed=speed,
+                device_scale_factor=mobile_device_scale if is_portrait_output else 1.0,
+            )
+            if scroll_height * scale <= MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT:
+                page.screenshot(path=str(fullpage_path), full_page=True, type="png")
+            else:
+                write_log(
+                    "Stable pan memakai partial screenshot: "
+                    f"capture_height={capture_css_height}px CSS, "
+                    f"estimated_image_height={estimated_image_height}px, "
+                    f"limit={MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT}px, "
+                    f"page_height={scroll_height}px CSS, viewport_height={viewport_height}px CSS"
+                )
+                _capture_partial_top_screenshot(
+                    page=page,
+                    dst_path=fullpage_path,
+                    width=width,
+                    capture_css_height=capture_css_height,
+                )
             try:
                 internal_w, internal_h, canvas_h = _prepare_pan_source_image(
                     src_path=fullpage_path,
@@ -374,7 +437,7 @@ def _main():
     parser.add_argument("--duration", type=float, default=5.0, help="Durasi detik (0.0-20.0, kelipatan 0.1)")
     parser.add_argument("--speed", type=int, default=1, help="Speed scroll (1-5)")
     parser.add_argument("--fps", type=int, default=16, help="FPS output")
-    parser.add_argument("--mode", default="live_capture", help="Mode capture: stable_pan atau live_capture")
+    parser.add_argument("--mode", default="stable_pan", help="Mode capture: stable_pan atau live_capture")
     args = parser.parse_args()
 
     scene_dir = API_PRODUCTION_ROOT / args.project / args.scene

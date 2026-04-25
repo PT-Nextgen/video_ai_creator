@@ -104,13 +104,13 @@ DEFAULT_WEB_SCROLL_PROMPT = {
     "height": 640,
     "duration_seconds": 5.0,
     "speed": 1,
-    "capture_mode": "live_capture",
+    "capture_mode": "stable_pan",
 }
 DEFAULT_IMAGE_PAN_PROMPT = {
     "width": 480,
     "height": 848,
     "direction": "from_right",
-    "capture_mode": "live_capture",
+    "capture_mode": "stable_pan",
 }
 DEFAULT_IMAGE_EDIT_PROMPT = {
     "image_model": MODEL_FLUX2,
@@ -413,7 +413,7 @@ def validate_scene_data(
         else:
             if speed_value < 1 or speed_value > 5:
                 issues.append("Speed web_scroll harus di antara 1 sampai 5.")
-        capture_mode = str(web_prompt.get("capture_mode", "live_capture")).strip()
+            capture_mode = str(web_prompt.get("capture_mode", "stable_pan")).strip()
         if capture_mode not in {"stable_pan", "live_capture"}:
             issues.append("Mode web_scroll tidak valid. Pilih `stable_pan` atau `live_capture`.")
     if scene_type == "image_pan":
@@ -432,7 +432,7 @@ def validate_scene_data(
         pan_direction = str(image_pan_prompt.get("direction", "from_right")).strip()
         if pan_direction not in {"from_right", "from_left"}:
             issues.append("Arah image_pan tidak valid. Pilih `from_right` atau `from_left`.")
-        pan_mode = str(image_pan_prompt.get("capture_mode", "live_capture")).strip()
+        pan_mode = str(image_pan_prompt.get("capture_mode", "stable_pan")).strip()
         if pan_mode not in {"stable_pan", "live_capture"}:
             issues.append("Mode image_pan tidak valid. Pilih `stable_pan` atau `live_capture`.")
     if scene_type == "i2v" and scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
@@ -1029,8 +1029,8 @@ class SceneEditorWindow(QMainWindow):
         self.web_speed_input.setRange(1, 5)
         self.web_speed_input.setValue(int(DEFAULT_WEB_SCROLL_PROMPT.get("speed", 1)))
         self.web_capture_mode_input = QComboBox()
-        self.web_capture_mode_input.addItem("Live Capture (Default)", "live_capture")
-        self.web_capture_mode_input.addItem("Stable Pan", "stable_pan")
+        self.web_capture_mode_input.addItem("Stable Pan (Default)", "stable_pan")
+        self.web_capture_mode_input.addItem("Live Capture", "live_capture")
         self.image_pan_size_input = QComboBox()
         for label, width, height in Z_IMAGE_SIZES:
             if int(height) > int(width):
@@ -1039,8 +1039,8 @@ class SceneEditorWindow(QMainWindow):
         self.image_pan_direction_input.addItem("Dari Kanan", "from_right")
         self.image_pan_direction_input.addItem("Dari Kiri", "from_left")
         self.image_pan_capture_mode_input = QComboBox()
-        self.image_pan_capture_mode_input.addItem("Live Capture (Default)", "live_capture")
-        self.image_pan_capture_mode_input.addItem("Stable Pan", "stable_pan")
+        self.image_pan_capture_mode_input.addItem("Stable Pan (Default)", "stable_pan")
+        self.image_pan_capture_mode_input.addItem("Live Capture", "live_capture")
         self.image_edit_model_input = QComboBox()
         self.image_edit_model_input.addItem("Flux.2", MODEL_FLUX2)
         self.image_edit_model_input.addItem("Gemini", MODEL_GEMINI_IMAGE)
@@ -2338,13 +2338,13 @@ class SceneEditorWindow(QMainWindow):
             "height": int((self.web_size_input.currentData() or (368, 640))[1]),
             "duration_seconds": round(float(self.web_duration_input.value()), 1),
             "speed": int(self.web_speed_input.value()),
-            "capture_mode": str(self.web_capture_mode_input.currentData() or "live_capture").strip(),
+            "capture_mode": str(self.web_capture_mode_input.currentData() or "stable_pan").strip(),
         }
         image_pan_prompt = {
             "width": int((self.image_pan_size_input.currentData() or (480, 848))[0]),
             "height": int((self.image_pan_size_input.currentData() or (480, 848))[1]),
             "direction": str(self.image_pan_direction_input.currentData() or "from_right").strip(),
-            "capture_mode": str(self.image_pan_capture_mode_input.currentData() or "live_capture").strip(),
+            "capture_mode": str(self.image_pan_capture_mode_input.currentData() or "stable_pan").strip(),
         }
         return meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt
 

@@ -55,13 +55,13 @@ DEFAULT_WEB_SCROLL_PROMPT = {
     "height": 640,
     "duration_seconds": 5.0,
     "speed": 1,
-    "capture_mode": "live_capture",
+    "capture_mode": "stable_pan",
 }
 DEFAULT_IMAGE_PAN_PROMPT = {
     "width": 480,
     "height": 848,
     "direction": "from_right",
-    "capture_mode": "live_capture",
+    "capture_mode": "stable_pan",
 }
 
 # initialize logging for the process (idempotent)
@@ -533,7 +533,7 @@ def process_scene(scene_dir, server):
         except (TypeError, ValueError):
             web_duration = 5.0
         web_speed = int(web_prompt.get('speed', 1))
-        web_capture_mode = str(web_prompt.get('capture_mode', 'live_capture')).strip() or 'live_capture'
+        web_capture_mode = str(web_prompt.get('capture_mode', 'stable_pan')).strip() or 'stable_pan'
         composed = None
         last_error = None
         for attempt in range(1, 4):
@@ -588,7 +588,7 @@ def process_scene(scene_dir, server):
             pan_height = int(pan_prompt.get('height', 848))
             pan_duration = float(scene_meta.get('duration_seconds', 5.0))
             pan_direction = str(pan_prompt.get('direction', 'from_right')).strip() or 'from_right'
-            pan_capture_mode = str(pan_prompt.get('capture_mode', 'live_capture')).strip() or 'live_capture'
+            pan_capture_mode = str(pan_prompt.get('capture_mode', 'stable_pan')).strip() or 'stable_pan'
         except Exception as e:
             write_log(f"Invalid image_pan prompt value for {scene_dir}: {e}")
             return False

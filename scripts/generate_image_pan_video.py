@@ -1,17 +1,31 @@
 import argparse
-import tempfile
-from datetime import datetime
+import sys
+import time
 from pathlib import Path
 
 import imageio
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from logging_config import write_log
 
 
-API_PRODUCTION_ROOT = Path(__file__).resolve().parent.parent / "api_production"
-SUPERSAMPLE_FACTOR = 6
+API_PRODUCTION_ROOT = REPO_ROOT / "api_production"
+LIVE_SUPERSAMPLE_FACTOR = 2
+STABLE_SUPERSAMPLE_FACTOR = 2
+HORIZONTAL_MOTION_BLUR_KERNEL = ImageFilter.Kernel(
+    (3, 3),
+    [
+        0.0, 0.0, 0.0,
+        0.2, 0.6, 0.2,
+        0.0, 0.0, 0.0,
+    ],
+    scale=1.0,
+)
 
 
 def _build_pan_positions_full_span(frames_total: int, max_x: int):
@@ -20,14 +34,12 @@ def _build_pan_positions_full_span(frames_total: int, max_x: int):
     return [(float(i) / float(frames_total - 1)) * float(max_x) for i in range(frames_total)]
 
 
-def _prepare_pan_source_image(
+def _prepare_pan_canvas(
     src_path: Path,
-    dst_path: Path,
-    width: int,
-    height: int,
+    internal_w: int,
+    internal_h: int,
+    resize_resample,
 ):
-    internal_w = max(1, width * SUPERSAMPLE_FACTOR)
-    internal_h = max(1, height * SUPERSAMPLE_FACTOR)
     with Image.open(src_path) as im:
         src = im.convert("RGB")
         src_w, src_h = src.size
@@ -38,13 +50,12 @@ def _prepare_pan_source_image(
         scale = internal_h / float(src_h)
         new_w = max(1, int(round(src_w * scale)))
         new_h = max(1, int(round(src_h * scale)))
-        resized = src.resize((new_w, new_h), resample=Image.LANCZOS)
+        resized = src.resize((new_w, new_h), resample=resize_resample)
 
         canvas_w = max(internal_w, new_w)
         canvas = Image.new("RGB", (canvas_w, internal_h), (0, 0, 0))
         canvas.paste(resized, (0, 0))
-        canvas.save(dst_path, format="PNG")
-    return internal_w, internal_h, canvas_w
+    return canvas
 
 
 def _render_image_pan_video_from_source(
@@ -60,31 +71,24 @@ def _render_image_pan_video_from_source(
     if capture_mode not in {"live_capture", "stable_pan"}:
         raise ValueError("Mode capture image_pan tidak valid. Gunakan `stable_pan` atau `live_capture`.")
 
-    if capture_mode == "stable_pan":
-        supersample = SUPERSAMPLE_FACTOR
-        resample = Image.LANCZOS
-    else:
-        supersample = 1
-        resample = Image.BILINEAR
+    # Render above output resolution and crop using float source coordinates. This avoids integer
+    # crop stepping (`1 px, 2 px, 1 px...`) that appears as vibration at low FPS.
+    supersample = STABLE_SUPERSAMPLE_FACTOR if capture_mode == "stable_pan" else LIVE_SUPERSAMPLE_FACTOR
+    resize_resample = Image.LANCZOS if capture_mode == "stable_pan" else Image.BICUBIC
+    transform_resample = Image.BICUBIC
 
     internal_w = max(1, width * supersample)
     internal_h = max(1, height * supersample)
     frames_total = max(1, int(round(duration_seconds * fps)))
 
-    with Image.open(input_image) as im:
-        src = im.convert("RGB")
-        src_w, src_h = src.size
-        if src_w <= 0 or src_h <= 0:
-            raise RuntimeError("Gambar sumber image_pan tidak valid (ukuran 0).")
+    canvas = _prepare_pan_canvas(
+        src_path=input_image,
+        internal_w=internal_w,
+        internal_h=internal_h,
+        resize_resample=resize_resample,
+    )
 
-        # Keep full source height visible in output by fitting to target height.
-        scale = internal_h / float(src_h)
-        new_w = max(1, int(round(src_w * scale)))
-        new_h = max(1, int(round(src_h * scale)))
-        resized = src.resize((new_w, new_h), resample=resample)
-        src_arr = np.asarray(resized, dtype=np.uint8)
-
-    max_x = max(0, new_w - internal_w)
+    max_x = max(0, canvas.width - internal_w)
     # Requirement: pan must always complete side-to-side within the given duration.
     x_positions = _build_pan_positions_full_span(frames_total, max_x)
     if direction == "from_right":
@@ -99,10 +103,15 @@ def _render_image_pan_video_from_source(
     )
     try:
         for x in x_positions:
-            x0 = int(round(x))
-            x0 = max(0, min(x0, max_x))
-            crop_arr = src_arr[0:internal_h, x0:x0 + internal_w, :]
-            crop_img = Image.fromarray(crop_arr)
+            x0 = max(0.0, min(float(x), float(max_x)))
+            crop_img = canvas.transform(
+                (internal_w, internal_h),
+                Image.AFFINE,
+                (1.0, 0.0, x0, 0.0, 1.0, 0.0),
+                resample=transform_resample,
+                fillcolor=(0, 0, 0),
+            )
+            crop_img = crop_img.filter(HORIZONTAL_MOTION_BLUR_KERNEL)
             frame = crop_img.resize((width, height), resample=Image.LANCZOS)
             writer.append_data(np.asarray(frame, dtype=np.uint8))
     finally:
@@ -117,7 +126,7 @@ def generate_image_pan_video(
     duration_seconds,
     direction="from_right",
     fps=16,
-    capture_mode="live_capture",
+    capture_mode="stable_pan",
 ):
     scene_dir_path = Path(scene_dir)
     image_path = Path(image_path)
@@ -126,7 +135,7 @@ def generate_image_pan_video(
     duration_seconds = float(duration_seconds)
     fps = int(fps)
     direction = str(direction or "from_right").strip()
-    capture_mode = str(capture_mode or "live_capture").strip()
+    capture_mode = str(capture_mode or "stable_pan").strip()
 
     if not image_path.exists() or not image_path.is_file():
         raise FileNotFoundError(f"Gambar image_pan tidak ditemukan: {image_path}")
@@ -143,41 +152,23 @@ def generate_image_pan_video(
     if capture_mode not in {"stable_pan", "live_capture"}:
         raise ValueError("Mode capture image_pan tidak valid. Gunakan `stable_pan` atau `live_capture`.")
 
-    output_name = f"image_pan_{int(datetime.utcnow().timestamp())}.mp4"
+    output_name = f"image_pan_{int(time.time())}.mp4"
     output_path = scene_dir_path / output_name
     write_log(
         f"Generating image_pan video: image={image_path.name}, size={width}x{height}, "
         f"duration={duration_seconds}s, direction={direction}, fps={fps}, mode={capture_mode}"
     )
 
-    tmpdir_obj = None
-    pan_source_path = None
-    try:
-        tmpdir_obj = tempfile.TemporaryDirectory(prefix="imagepan_")
-        pan_source_path = Path(tmpdir_obj.name) / "image_pan_source.png"
-        if capture_mode == "stable_pan":
-            _prepare_pan_source_image(
-                src_path=image_path,
-                dst_path=pan_source_path,
-                width=width,
-                height=height,
-            )
-            source_for_render = pan_source_path
-        else:
-            source_for_render = image_path
-        _render_image_pan_video_from_source(
-            input_image=source_for_render,
-            out_video=output_path,
-            width=width,
-            height=height,
-            duration_seconds=duration_seconds,
-            fps=fps,
-            direction=direction,
-            capture_mode=capture_mode,
-        )
-    finally:
-        if tmpdir_obj is not None:
-            tmpdir_obj.cleanup()
+    _render_image_pan_video_from_source(
+        input_image=image_path,
+        out_video=output_path,
+        width=width,
+        height=height,
+        duration_seconds=duration_seconds,
+        fps=fps,
+        direction=direction,
+        capture_mode=capture_mode,
+    )
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError(f"Gagal membuat video image_pan: {output_path}")
@@ -195,7 +186,7 @@ def _main():
     parser.add_argument("--duration", type=float, default=5.0, help="Durasi detik (0.0-20.0, kelipatan 0.1)")
     parser.add_argument("--direction", default="from_right", help="Arah pan: from_right atau from_left")
     parser.add_argument("--fps", type=int, default=16, help="FPS output")
-    parser.add_argument("--mode", default="live_capture", help="Mode capture: stable_pan atau live_capture")
+    parser.add_argument("--mode", default="stable_pan", help="Mode capture: stable_pan atau live_capture")
     args = parser.parse_args()
 
     scene_dir = API_PRODUCTION_ROOT / args.project / args.scene

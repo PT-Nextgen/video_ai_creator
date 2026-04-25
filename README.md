@@ -112,12 +112,12 @@ Nilai `image_model` yang didukung:
   - `height`
   - `duration_seconds`
   - `speed`
-  - `capture_mode` (`live_capture` / `stable_pan`)
+  - `capture_mode` (`stable_pan` default / `live_capture`)
 - `image_pan_prompt.json`
   - `width` (portrait only)
   - `height` (portrait only)
   - `direction` (`from_right` / `from_left`)
-  - `capture_mode` (`live_capture` / `stable_pan`)
+  - `capture_mode` (`stable_pan` default / `live_capture`)
 - `image_edit_prompt.json`
   - `image_model` (`flux.2` / `gemini`)
   - `gemini_model_id` (khusus saat `image_model=gemini`)
@@ -165,13 +165,16 @@ Catatan sumber image:
   - membuat video dengan membuka URL website lalu scroll dari atas ke bawah selama durasi
   - jika output portrait, browser dirender sebagai mobile browser (emulasi)
   - jika output landscape, browser dirender sebagai desktop browser (non-mobile)
-  - mode default `live_capture`; mode alternatif `stable_pan`
+  - mode default `stable_pan` direkomendasikan untuk hasil scroll yang lebih halus
+  - mode `live_capture` tersedia jika membutuhkan tangkapan halaman secara langsung per frame
+  - capture halaman panjang dibatasi otomatis agar proses tetap stabil
   - fps mengikuti scene type `i2v` (`16`)
 - `image_pan`
   - membuat video dari satu gambar awal dengan pan horizontal sesuai arah (`from_right` / `from_left`)
   - pan selalu menempuh penuh dari sisi ke sisi dalam durasi scene
   - frame selalu mengikuti tinggi penuh gambar sumber (full height), lalu bergerak ke samping
-  - mode default `live_capture`; mode alternatif `stable_pan`
+  - mode default `stable_pan` direkomendasikan untuk gerakan yang lebih halus
+  - mode `live_capture` tersedia sebagai alternatif
   - fps mengikuti scene type `i2v` (`16`)
 
 Catatan voice dan caption:
@@ -273,16 +276,17 @@ Fungsi:
   - output portrait memakai mobile emulation, output landscape memakai desktop context
   - kecepatan scroll disesuaikan dengan `speed`
   - mode capture:
-    - `live_capture` (default): screenshot frame-per-frame saat halaman di-scroll
-    - `stable_pan`: full-page screenshot lalu pan vertikal (fallback ke `live_capture` jika screenshot terlalu besar)
+    - `stable_pan` (default): screenshot halaman lalu pan vertikal dengan hasil gerak lebih halus
+    - `live_capture`: screenshot frame-per-frame saat halaman di-scroll
+  - capture halaman panjang dibatasi otomatis agar proses tetap stabil
   - jika `generate_caption=true`, burn caption ke video hasil
 - `scene_type=image_pan`
   - membaca `image_pan_prompt.json`
   - mengambil satu gambar terbaru dari root folder scene sebagai sumber pan horizontal
   - arah pan ditentukan oleh `direction` (`from_right` atau `from_left`)
   - mode capture:
-    - `live_capture` (default): pan langsung pada source image
-    - `stable_pan`: pan supersample untuk hasil gerak lebih halus
+    - `stable_pan` (default): pan gambar dengan hasil gerak lebih halus
+    - `live_capture`: pan langsung pada source image
   - jika `generate_caption=true`, burn caption ke video hasil
 
 Argumen:
