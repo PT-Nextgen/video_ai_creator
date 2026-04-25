@@ -1,11 +1,12 @@
 import copy
 import json
+import logging
 import shutil
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, Signal
+from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, QThread, QObject, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
@@ -44,6 +45,8 @@ from gemini.gemini_tts import (
     list_gemini_tts_models,
 )
 from prompt_localization import convert_prompt_payload_for_ui, prepare_prompt_payload_for_save, read_json_for_runtime
+from prompt_localization import get_prompt_translator, update_generated_prompt_entry
+from logging_config import RunIdFilter, setup_logging
 
 ROOT = Path(__file__).resolve().parent
 API_PRODUCTION = ROOT / "api_production"
@@ -74,6 +77,10 @@ ELEVENLABS_MODEL_OPTIONS = [
     ("Eleven v3", "eleven_v3"),
     ("Eleven Multilingual v2", "eleven_multilingual_v2"),
     ("Eleven Flash v2.5", "eleven_flash_v2_5"),
+]
+TRANSLATE_PROVIDER_OPTIONS = [
+    ("Gemini", "gemini"),
+    ("Ollama", "ollama"),
 ]
 EDGETTS_VOICES = [
     ("[Indonesian] id-ID Ardi", "[Indonesian] id-ID Ardi"),
@@ -546,6 +553,49 @@ class ProcessDialog(QDialog):
         layout.addWidget(log_widget)
 
 
+class UiLogEmitter(QObject):
+    message = Signal(str)
+
+
+class UiLogHandler(logging.Handler):
+    def __init__(self, emitter: UiLogEmitter):
+        super().__init__()
+        self._emitter = emitter
+
+    def emit(self, record):
+        try:
+            message = self.format(record)
+        except Exception:
+            message = record.getMessage()
+        self._emitter.message.emit(str(message))
+
+
+class PromptGenerationWorker(QObject):
+    progress = Signal(str)
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, provider: str, prompt_text: str, context_text: str):
+        super().__init__()
+        self.provider = provider
+        self.prompt_text = prompt_text
+        self.context_text = context_text
+
+    def run(self):
+        translator = None
+        try:
+            translator = get_prompt_translator(self.provider)
+            self.progress.emit(f"Membuat prompt via {self.provider}...")
+            english = translator.generate_prompt_to_english(self.prompt_text, context=self.context_text)
+            indonesian = translator.translate_to_indonesian(english, context=self.context_text)
+            self.finished.emit({
+                "en": english.strip(),
+                "id_new": indonesian.strip(),
+            })
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class ComposeMusicDialog(QDialog):
     def __init__(self, music_files: list[Path], parent=None):
         super().__init__(parent)
@@ -841,6 +891,10 @@ class SceneEditorWindow(QMainWindow):
         self.scene_list.orderChanged.connect(self.on_scene_reordered)
         self.server_config = load_server_config()
         self.toolbar = None
+        self.translate_provider_combo = None
+        self.prompt_generation_thread = None
+        self.prompt_generation_worker = None
+        self.prompt_generation_context = None
 
         self.scene_title_input = QLineEdit()
         self.duration_input = QComboBox()
@@ -885,9 +939,13 @@ class SceneEditorWindow(QMainWindow):
         self.z_clipboard_button = QToolButton()
         self.z_clipboard_button.setText("Image Gen Prompt")
         self.z_clipboard_button.clicked.connect(self.copy_z_image_skill_prompt_to_clipboard)
+        self.z_generate_prompt_button = QToolButton()
+        self.z_generate_prompt_button.setText("Buat Prompt")
+        self.z_generate_prompt_button.clicked.connect(self.generate_z_prompt_from_ui)
         self.z_extra_positive_inputs = []
         self.z_extra_negative_inputs = []
         self.z_extra_clipboard_buttons = []
+        self.z_extra_generate_prompt_buttons = []
         self.z_extra_buttons = []
         self.z_size_input = QComboBox()
         for label, width, height in Z_IMAGE_SIZES:
@@ -906,12 +964,16 @@ class SceneEditorWindow(QMainWindow):
             clipboard_button.clicked.connect(
                 lambda _checked=False, idx=slot_index: self.copy_extra_image_skill_prompt_to_clipboard(idx)
             )
+            generate_button = QToolButton()
+            generate_button.setText("Buat Prompt")
+            generate_button.clicked.connect(lambda _checked=False, idx=slot_index: self.generate_extra_prompt_from_ui(idx))
             button = QToolButton()
             button.setText("Buat Image")
             button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_extra_image_slot(idx))
             self.z_extra_positive_inputs.append(positive_input)
             self.z_extra_negative_inputs.append(negative_input)
             self.z_extra_clipboard_buttons.append(clipboard_button)
+            self.z_extra_generate_prompt_buttons.append(generate_button)
             self.z_extra_buttons.append(button)
         self.wan_step_combo = QComboBox()
         for label, template_name in WAN_STEP_OPTIONS:
@@ -928,13 +990,24 @@ class SceneEditorWindow(QMainWindow):
         self.wan_lora_low_name_input = QLineEdit()
         self.wan_lora_low_strength_input = QLineEdit()
         self.wan_prompt_inputs = {}
+        self.wan_generate_prompt_buttons = {}
         for key in [
             "positive_prompt_one", "negative_prompt_one", "positive_prompt_two", "negative_prompt_two",
             "positive_prompt_three", "negative_prompt_three",
         ]:
             self.wan_prompt_inputs[key] = QTextEdit()
+            if key.startswith("positive_"):
+                button = QToolButton()
+                button.setText("Buat Prompt")
+                button.clicked.connect(lambda _checked=False, prompt_key=key: self.generate_wan_prompt_from_ui(prompt_key))
+                self.wan_generate_prompt_buttons[key] = button
         self.s2v_positive_input = QTextEdit()
         self.s2v_negative_input = QTextEdit()
+        self.s2v_generate_positive_button = QToolButton()
+        self.s2v_generate_positive_button.setText("Buat Prompt")
+        self.s2v_generate_positive_button.clicked.connect(
+            lambda _checked=False: self.generate_s2v_prompt_from_ui("positive_prompt")
+        )
         self.s2v_size_input = QComboBox()
         for label, width, height in WAN22_S2V_SIZE_OPTIONS:
             self.s2v_size_input.addItem(label, (width, height))
@@ -977,6 +1050,7 @@ class SceneEditorWindow(QMainWindow):
         self.image_edit_image_inputs = []
         self.image_edit_prompt_inputs = []
         self.image_edit_clipboard_buttons = []
+        self.image_edit_generate_prompt_buttons = []
         self.image_edit_buttons = []
         for slot_index in range(3):
             image_input = QComboBox()
@@ -986,12 +1060,16 @@ class SceneEditorWindow(QMainWindow):
             clipboard_button.clicked.connect(
                 lambda _checked=False, idx=slot_index: self.copy_image_edit_prompt_to_clipboard(idx)
             )
+            generate_button = QToolButton()
+            generate_button.setText("Buat Prompt")
+            generate_button.clicked.connect(lambda _checked=False, idx=slot_index: self.generate_image_edit_prompt_from_ui(idx))
             button = QToolButton()
             button.setText("Edit Gambar")
             button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_image_edit_slot(idx))
             self.image_edit_image_inputs.append(image_input)
             self.image_edit_prompt_inputs.append(prompt_input)
             self.image_edit_clipboard_buttons.append(clipboard_button)
+            self.image_edit_generate_prompt_buttons.append(generate_button)
             self.image_edit_buttons.append(button)
 
         self.status_label = QPlainTextEdit()
@@ -1025,6 +1103,17 @@ class SceneEditorWindow(QMainWindow):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.process_dialog = None
+        self._ui_log_emitter = UiLogEmitter(self)
+        self._ui_log_emitter.message.connect(self.append_log)
+        self._ui_log_handler = UiLogHandler(self._ui_log_emitter)
+        self._ui_log_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(name)s [run_id=%(run_id)s] %(module)s:%(lineno)d %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S%z",
+            )
+        )
+        self._ui_log_handler.addFilter(RunIdFilter())
+        logging.getLogger().addHandler(self._ui_log_handler)
 
         self.video_player = QMediaPlayer(self)
         self.video_audio_output = QAudioOutput(self)
@@ -1144,6 +1233,17 @@ class SceneEditorWindow(QMainWindow):
     def build_editor_tabs(self):
         tabs = QTabWidget()
         self.editor_tabs = tabs
+
+        def button_row(*widgets):
+            row = QWidget(self)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+            for widget in widgets:
+                row_layout.addWidget(widget)
+            row_layout.addStretch(1)
+            return row
+
         self.meta_tab = QWidget()
         meta_layout = QFormLayout(self.meta_tab)
         self.duration_label = QLabel("Durasi (detik)")
@@ -1172,7 +1272,7 @@ class SceneEditorWindow(QMainWindow):
         z_layout.addRow("Nama Lora", self.z_lora_name_input)
         z_layout.addRow("Kekuatan Lora", self.z_lora_strength_input)
         z_layout.addRow("Prompt Positif", self.z_positive_input)
-        z_layout.addRow("", self.z_clipboard_button)
+        z_layout.addRow("", button_row(self.z_clipboard_button, self.z_generate_prompt_button))
         z_layout.addRow("Prompt Negatif", self.z_negative_input)
         tabs.addTab(self.z_tab, "Gambar Awal")
 
@@ -1182,7 +1282,10 @@ class SceneEditorWindow(QMainWindow):
             group = QGroupBox(f"Prompt Tambahan {idx + 1}")
             group_layout = QFormLayout(group)
             group_layout.addRow("Prompt Positif", self.z_extra_positive_inputs[idx])
-            group_layout.addRow("", self.z_extra_clipboard_buttons[idx])
+            group_layout.addRow(
+                "",
+                button_row(self.z_extra_clipboard_buttons[idx], self.z_extra_generate_prompt_buttons[idx]),
+            )
             group_layout.addRow("Prompt Negatif", self.z_extra_negative_inputs[idx])
             group_layout.addRow("", self.z_extra_buttons[idx])
             z_extra_layout.addWidget(group)
@@ -1207,9 +1310,16 @@ class SceneEditorWindow(QMainWindow):
         wan_layout.addWidget(QLabel("Kekuatan Lora Low"), 7, 0)
         wan_layout.addWidget(self.wan_lora_low_strength_input, 7, 1)
         row = 8
-        for key, widget in self.wan_prompt_inputs.items():
-            wan_layout.addWidget(QLabel(key.replace("_", " ").title()), row, 0)
-            wan_layout.addWidget(widget, row, 1)
+        for slot in ("one", "two", "three"):
+            positive_key = f"positive_prompt_{slot}"
+            negative_key = f"negative_prompt_{slot}"
+            wan_layout.addWidget(QLabel(positive_key.replace("_", " ").title()), row, 0)
+            wan_layout.addWidget(self.wan_prompt_inputs[positive_key], row, 1)
+            row += 1
+            wan_layout.addWidget(self.wan_generate_prompt_buttons[positive_key], row, 1, alignment=Qt.AlignLeft)
+            row += 1
+            wan_layout.addWidget(QLabel(negative_key.replace("_", " ").title()), row, 0)
+            wan_layout.addWidget(self.wan_prompt_inputs[negative_key], row, 1)
             row += 1
         tabs.addTab(self.wan_tab, "WAN22_I2V")
 
@@ -1218,6 +1328,7 @@ class SceneEditorWindow(QMainWindow):
         s2v_layout.addRow("Ukuran", self.s2v_size_input)
         s2v_layout.addRow("CFG", self.s2v_cfg_input)
         s2v_layout.addRow("Prompt Positif", self.s2v_positive_input)
+        s2v_layout.addRow("", self.s2v_generate_positive_button)
         self.s2v_negative_label = QLabel("Prompt Negatif")
         s2v_layout.addRow(self.s2v_negative_label, self.s2v_negative_input)
         tabs.addTab(self.s2v_tab, "WAN22 S2V")
@@ -1249,7 +1360,10 @@ class SceneEditorWindow(QMainWindow):
             group_layout = QFormLayout(group)
             group_layout.addRow("Gambar Awal", self.image_edit_image_inputs[idx])
             group_layout.addRow("Prompt", self.image_edit_prompt_inputs[idx])
-            group_layout.addRow("", self.image_edit_clipboard_buttons[idx])
+            group_layout.addRow(
+                "",
+                button_row(self.image_edit_clipboard_buttons[idx], self.image_edit_generate_prompt_buttons[idx]),
+            )
             group_layout.addRow("", self.image_edit_buttons[idx])
             image_edit_layout.addWidget(group)
         image_edit_layout.addStretch(1)
@@ -1341,6 +1455,7 @@ class SceneEditorWindow(QMainWindow):
         add_action("Simpan Adegan", "Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
         add_action("Tambah Aset", "Tambahkan file aset ke folder adegan yang sedang dipilih.", QStyle.SP_FileIcon, self.add_asset_to_scene)
         add_action("Konfigurasi Server", "Buka dialog konfigurasi host/IP dan port server.", QStyle.SP_DriveNetIcon, self.open_server_config_dialog)
+        self.toolbar.addWidget(self.build_translate_provider_widget())
         add_action("Proses", "Buka atau tutup dialog status dan log proses.", QStyle.SP_FileDialogDetailedView, self.toggle_process_dialog)
         add_action("Muat Ulang", "Muat ulang daftar adegan dan statusnya.", QStyle.SP_BrowserReload, self.reload_scene_list)
         self.toolbar.addSeparator()
@@ -1384,6 +1499,59 @@ class SceneEditorWindow(QMainWindow):
             self.status_label.setPlainText("Belum ada project yang dibuka.")
             self.viewer_info_label.setText("Buka project terlebih dahulu.")
         self.update_run_action_buttons_state()
+
+    def current_translate_provider(self) -> str:
+        config = self.server_config if isinstance(self.server_config, dict) else load_server_config()
+        translate_config = config.get("translate", {}) if isinstance(config, dict) else {}
+        if not isinstance(translate_config, dict):
+            return "gemini"
+        provider = str(translate_config.get("provider", "gemini")).strip().lower()
+        return provider if provider in {"gemini", "ollama"} else "gemini"
+
+    def save_translate_provider(self, provider: str):
+        provider = str(provider or "").strip().lower()
+        if provider not in {"gemini", "ollama"}:
+            provider = "gemini"
+        config = load_server_config()
+        translate_config = config.get("translate", {})
+        if not isinstance(translate_config, dict):
+            translate_config = {}
+        translate_config["provider"] = provider
+        config["translate"] = translate_config
+        self.server_config = save_server_config(config)
+        self.statusBar().showMessage(f"Translate API diubah ke {provider.title()}.", 3000)
+
+    def build_translate_provider_widget(self):
+        container = QWidget(self)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        label = QLabel("Translate", container)
+        label.setStyleSheet("font-weight: 600; color: #1d4ed8;")
+        layout.addWidget(label)
+
+        self.translate_provider_combo = QComboBox(container)
+        self.translate_provider_combo.setToolTip("Pilih provider translate prompt runtime.")
+        for display_name, provider_key in TRANSLATE_PROVIDER_OPTIONS:
+            self.translate_provider_combo.addItem(display_name, provider_key)
+        current_provider = self.current_translate_provider()
+        idx = self.translate_provider_combo.findData(current_provider)
+        self.translate_provider_combo.setCurrentIndex(max(idx, 0))
+        self.translate_provider_combo.currentIndexChanged.connect(self.on_translate_provider_changed)
+        layout.addWidget(self.translate_provider_combo)
+
+        return container
+
+    def on_translate_provider_changed(self, *_args):
+        if not self.translate_provider_combo:
+            return
+        provider = str(self.translate_provider_combo.currentData() or "gemini").strip().lower()
+        if provider not in {"gemini", "ollama"}:
+            provider = "gemini"
+        if provider == self.current_translate_provider():
+            return
+        self.save_translate_provider(provider)
 
     def snapshot_window_state(self):
         return {
@@ -1621,7 +1789,9 @@ class SceneEditorWindow(QMainWindow):
             if dialog.exec() != QDialog.Accepted:
                 return False
             try:
-                self.server_config = save_server_config(dialog.get_config())
+                merged_config = copy.deepcopy(self.server_config if isinstance(self.server_config, dict) else {})
+                merged_config.update(dialog.get_config())
+                self.server_config = save_server_config(merged_config)
             except ValueError as e:
                 QMessageBox.warning(self, "Konfigurasi Server Tidak Valid", str(e))
                 continue
@@ -2659,6 +2829,277 @@ class SceneEditorWindow(QMainWindow):
         QApplication.clipboard().setText(prompt_text)
         self.statusBar().showMessage(f"Teks Image Gen edit slot {slot_index + 1} disalin ke clipboard.", 3000)
 
+    def _prompt_generation_provider(self) -> str:
+        return self.current_translate_provider()
+
+    def _build_prompt_generation_context(
+        self,
+        prompt_kind: str,
+        slot_index: int | None = None,
+        prompt_key: str | None = None,
+    ) -> str:
+        scene_title = self.scene_title_input.text().strip() or "(tanpa judul)"
+        scene_type = self.scene_type_combo.currentText().strip() or "(unknown)"
+        lines = [
+            f"Scene title: {scene_title}",
+            f"Scene type: {scene_type}",
+        ]
+        if prompt_kind == "z_image":
+            image_model = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+            size_data = self.z_size_input.currentData() or (368, 640)
+            lines.extend([
+                "Target: initial image positive prompt",
+                f"Image model: {image_model}",
+                f"Image size: {int(size_data[0])}x{int(size_data[1])}",
+                f"Random seed: {'yes' if self.z_use_random_seed_input.isChecked() else 'no'}",
+                f"Lora enabled: {'yes' if self.z_use_lora_input.isChecked() else 'no'}",
+            ])
+        elif prompt_kind == "z_extra":
+            image_model = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+            size_data = self.z_size_input.currentData() or (368, 640)
+            lines.extend([
+                f"Target: extra image prompt slot {slot_index + 1 if slot_index is not None else 1}",
+                f"Image model: {image_model}",
+                f"Image size: {int(size_data[0])}x{int(size_data[1])}",
+            ])
+        elif prompt_kind == "image_edit":
+            edit_model = str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip()
+            source_name = ""
+            if slot_index is not None and 0 <= slot_index < len(self.image_edit_image_inputs):
+                source_name = str(self.image_edit_image_inputs[slot_index].currentData() or "").strip()
+            lines.extend([
+                f"Target: image edit prompt slot {slot_index + 1 if slot_index is not None else 1}",
+                f"Edit model: {edit_model}",
+                f"Source image: {source_name or '(none)'}",
+            ])
+        elif prompt_kind == "wan_i2v":
+            step_label = self.wan_step_combo.currentText().strip()
+            duration_label = self.wan_duration_input.currentText().strip()
+            size_data = self.wan_size_input.currentData() or (368, 640)
+            lines.extend([
+                f"Target: WAN I2V prompt field `{prompt_key or 'unknown'}`",
+                f"WAN step: {step_label}",
+                f"WAN duration: {duration_label}",
+                f"WAN size: {int(size_data[0])}x{int(size_data[1])}",
+            ])
+        elif prompt_kind == "wan_s2v":
+            size_data = self.s2v_size_input.currentData() or (480, 848)
+            lines.extend([
+                f"Target: WAN22 S2V prompt field `{prompt_key or 'unknown'}`",
+                f"WAN22 S2V size: {int(size_data[0])}x{int(size_data[1])}",
+                f"WAN22 S2V cfg: {float(self.s2v_cfg_input.value()):.1f}",
+            ])
+        return "\n".join(lines)
+
+    def _set_prompt_widget_text(
+        self,
+        prompt_kind: str,
+        slot_index: int | None,
+        text: str,
+        prompt_key: str | None = None,
+    ):
+        if prompt_kind == "z_image":
+            self.z_positive_input.setPlainText(text)
+            return
+        if prompt_kind == "z_extra" and slot_index is not None and 0 <= slot_index < len(self.z_extra_positive_inputs):
+            self.z_extra_positive_inputs[slot_index].setPlainText(text)
+            return
+        if prompt_kind == "image_edit" and slot_index is not None and 0 <= slot_index < len(self.image_edit_prompt_inputs):
+            self.image_edit_prompt_inputs[slot_index].setPlainText(text)
+            return
+        if prompt_kind == "wan_i2v" and prompt_key in self.wan_prompt_inputs:
+            self.wan_prompt_inputs[prompt_key].setPlainText(text)
+            return
+        if prompt_kind == "wan_s2v":
+            if prompt_key == "positive_prompt":
+                self.s2v_positive_input.setPlainText(text)
+                return
+            if prompt_key == "negative_prompt":
+                self.s2v_negative_input.setPlainText(text)
+
+    def _prompt_file_and_key(self, prompt_kind: str, prompt_key: str | None = None):
+        if prompt_kind == "z_image":
+            return self.current_scene_dir / "z_image_prompt.json", "positive_prompt", None
+        if prompt_kind == "z_extra":
+            return self.current_scene_dir / "z_image_extra_prompts.json", "positive_prompt", None
+        if prompt_kind == "image_edit":
+            return self.current_scene_dir / "image_edit_prompt.json", "prompt", None
+        if prompt_kind == "wan_i2v":
+            return self.current_scene_dir / "wan22_i2v_prompt.json", str(prompt_key or "").strip(), None
+        if prompt_kind == "wan_s2v":
+            return self.current_scene_dir / "wan22_s2v_prompt.json", str(prompt_key or "").strip(), None
+        raise ValueError(f"prompt_kind tidak dikenal: {prompt_kind}")
+
+    def _prompt_group_index(self, prompt_kind: str, slot_index: int | None):
+        if prompt_kind in {"z_extra", "image_edit"} and slot_index is not None:
+            return slot_index
+        return None
+
+    def _start_prompt_generation(
+        self,
+        prompt_kind: str,
+        slot_index: int | None,
+        prompt_text: str,
+        prompt_key: str | None = None,
+    ):
+        if not self.ensure_project_selected():
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        if not self.ensure_server_config_loaded():
+            return
+        if not self.save_current_scene(silent=True, reload_list=False):
+            return
+        prompt_text = str(prompt_text or "").strip()
+        if not prompt_text:
+            QMessageBox.warning(self, "Data Tidak Valid", "Prompt yang akan diproses tidak boleh kosong.")
+            return
+
+        provider = self._prompt_generation_provider()
+        context_text = self._build_prompt_generation_context(
+            prompt_kind,
+            slot_index=slot_index,
+            prompt_key=prompt_key,
+        )
+        scene_dir = Path(self.current_scene_dir)
+        prompt_label = {
+            "z_image": "Gambar Awal",
+            "z_extra": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
+            "image_edit": f"Edit Gambar {slot_index + 1 if slot_index is not None else 1}",
+            "wan_i2v": f"WAN I2V ({prompt_key or 'prompt'})",
+            "wan_s2v": f"WAN22 S2V ({prompt_key or 'prompt'})",
+        }.get(prompt_kind, prompt_kind)
+
+        self.ensure_process_dialog()
+        self.log_output.clear()
+        self.append_log(f"Membuat prompt {prompt_label} untuk {scene_dir.name}")
+        self.append_log(f"Provider translate: {provider}")
+        self.append_log("LLM diminta menyusun ulang prompt lalu menyimpan `en` dan `id_new`.")
+
+        if self.prompt_generation_thread is not None and self.prompt_generation_thread.isRunning():
+            self.append_log("[warning] Proses buat prompt sebelumnya masih berjalan. Tunggu selesai dulu.")
+            self.statusBar().showMessage("Proses buat prompt masih berjalan.", 4000)
+            return
+
+        self.prompt_generation_context = {
+            "prompt_kind": prompt_kind,
+            "slot_index": slot_index,
+            "scene_dir": scene_dir,
+            "prompt_key": str(prompt_key or "").strip(),
+        }
+
+        self.prompt_generation_thread = QThread(self)
+        self.prompt_generation_worker = PromptGenerationWorker(provider, prompt_text, context_text)
+        self.prompt_generation_worker.moveToThread(self.prompt_generation_thread)
+        self.prompt_generation_worker.progress.connect(self.append_log)
+        self.prompt_generation_thread.started.connect(self.prompt_generation_worker.run)
+        self.prompt_generation_worker.finished.connect(self._on_prompt_generation_finished)
+        self.prompt_generation_worker.failed.connect(self._on_prompt_generation_failed)
+        self.prompt_generation_worker.finished.connect(self.prompt_generation_thread.quit)
+        self.prompt_generation_worker.failed.connect(self.prompt_generation_thread.quit)
+        self.prompt_generation_thread.finished.connect(self._cleanup_prompt_generation_thread)
+        self.statusBar().showMessage("Membuat prompt dengan LLM...", 3000)
+        self.prompt_generation_thread.start()
+
+    def _cleanup_prompt_generation_thread(self):
+        if self.prompt_generation_worker is not None:
+            self.prompt_generation_worker.deleteLater()
+        if self.prompt_generation_thread is not None:
+            self.prompt_generation_thread.deleteLater()
+        self.prompt_generation_worker = None
+        self.prompt_generation_thread = None
+        self.prompt_generation_context = None
+
+    def _on_prompt_generation_failed(self, error: str):
+        ctx = self.prompt_generation_context or {}
+        prompt_kind = str(ctx.get("prompt_kind", "unknown"))
+        self.append_log(f"[gagal] Prompt generation {prompt_kind}: {error}")
+        self.statusBar().showMessage("Gagal membuat prompt.", 4000)
+
+    def _on_prompt_generation_finished(self, result: dict):
+        ctx = self.prompt_generation_context or {}
+        prompt_kind = str(ctx.get("prompt_kind", "unknown"))
+        slot_index = ctx.get("slot_index")
+        scene_dir = ctx.get("scene_dir")
+        prompt_key = str(ctx.get("prompt_key", "")).strip() or None
+        if not isinstance(scene_dir, Path):
+            scene_dir = Path(self.current_scene_dir) if self.current_scene_dir else Path(".")
+        if not isinstance(result, dict):
+            self.append_log("[gagal] Hasil LLM tidak valid.")
+            return
+        english = str(result.get("en", "")).strip()
+        indonesian = str(result.get("id_new", "")).strip()
+        if not english and not indonesian:
+            self.append_log("[gagal] LLM tidak mengembalikan prompt yang valid.")
+            return
+        if not indonesian:
+            indonesian = english
+
+        try:
+            prompt_path, field_key, _ = self._prompt_file_and_key(prompt_kind, prompt_key=prompt_key)
+            if not field_key:
+                raise ValueError(f"Key prompt tidak valid untuk {prompt_kind}.")
+            group_index = self._prompt_group_index(prompt_kind, slot_index)
+            if prompt_path.exists():
+                with prompt_path.open("r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            else:
+                payload = {}
+            updated = update_generated_prompt_entry(
+                prompt_path.name,
+                payload,
+                field_key,
+                indonesian,
+                english,
+                group_index=group_index,
+            )
+            write_json(prompt_path, updated)
+        except Exception as e:
+            self.append_log(f"[gagal] Gagal menyimpan hasil prompt ke {prompt_path.name}: {e}")
+            return
+
+        if self.current_scene_dir and self.current_scene_dir.resolve() == scene_dir.resolve():
+            self._set_prompt_widget_text(prompt_kind, slot_index, indonesian, prompt_key=prompt_key)
+            self.save_current_scene(silent=True, reload_list=False)
+            self.refresh_scene_status()
+        self.append_log(f"[sukses] Prompt disimpan ke {prompt_path.name}")
+        self.statusBar().showMessage("Prompt berhasil dibuat.", 4000)
+
+    def generate_z_prompt_from_ui(self):
+        self._start_prompt_generation("z_image", None, self.z_positive_input.toPlainText().strip())
+
+    def generate_extra_prompt_from_ui(self, slot_index: int):
+        if slot_index < 0 or slot_index >= len(self.z_extra_positive_inputs):
+            QMessageBox.information(self, "Belum Siap", "Slot prompt tambahan tidak valid.")
+            return
+        self._start_prompt_generation("z_extra", slot_index, self.z_extra_positive_inputs[slot_index].toPlainText().strip())
+
+    def generate_image_edit_prompt_from_ui(self, slot_index: int):
+        if slot_index < 0 or slot_index >= len(self.image_edit_prompt_inputs):
+            QMessageBox.information(self, "Belum Siap", "Slot edit gambar tidak valid.")
+            return
+        self._start_prompt_generation("image_edit", slot_index, self.image_edit_prompt_inputs[slot_index].toPlainText().strip())
+
+    def generate_wan_prompt_from_ui(self, prompt_key: str):
+        key = str(prompt_key or "").strip()
+        if not key.startswith("positive_prompt_"):
+            QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN.")
+            return
+        widget = self.wan_prompt_inputs.get(key)
+        if widget is None:
+            QMessageBox.information(self, "Belum Siap", "Field prompt WAN tidak valid.")
+            return
+        self._start_prompt_generation("wan_i2v", None, widget.toPlainText().strip(), prompt_key=key)
+
+    def generate_s2v_prompt_from_ui(self, prompt_key: str):
+        key = str(prompt_key or "").strip()
+        if key != "positive_prompt":
+            QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN22 S2V.")
+            return
+        prompt_text = self.s2v_positive_input.toPlainText().strip()
+        self._start_prompt_generation("wan_s2v", None, prompt_text, prompt_key=key)
+
     def tail_process_log(self, max_lines=12):
         text = self.log_output.toPlainText().strip()
         if not text:
@@ -2813,7 +3254,11 @@ class SceneEditorWindow(QMainWindow):
 
         prompt_json_path = self.current_scene_dir / "image_edit_prompt.json"
         try:
-            runtime_payload = read_json_for_runtime(str(prompt_json_path), required=True)
+            runtime_payload = read_json_for_runtime(
+                str(prompt_json_path),
+                required=True,
+                translate_provider=self.current_translate_provider(),
+            )
             runtime_groups = runtime_payload.get("groups") if isinstance(runtime_payload, dict) else None
             if isinstance(runtime_groups, list) and slot_index < len(runtime_groups) and isinstance(runtime_groups[slot_index], dict):
                 runtime_prompt = str(runtime_groups[slot_index].get("prompt", "")).strip()
@@ -3110,6 +3555,7 @@ class SceneEditorWindow(QMainWindow):
 
 
 def main():
+    setup_logging()
     app = QApplication(sys.argv)
     window = SceneEditorWindow()
     window.showMaximized()

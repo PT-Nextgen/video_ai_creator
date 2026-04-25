@@ -46,7 +46,10 @@ Catatan format prompt:
   - `id_new`
   - `en`
 - `id_old` dipakai sebagai pembanding versi lama, `id_new` adalah versi terbaru dari UI, dan `en` adalah versi runtime yang dikirim ke API/ComfyUI
-- translasi ke bahasa Inggris memakai Gemini `gemini-2.5-flash` hanya saat runtime jika `id_old != id_new` atau `en` masih kosong
+- translasi ke bahasa Inggris memakai provider yang dipilih di toolbar atas:
+  - `Gemini` memakai Gemini `gemini-2.5-flash` seperti sebelumnya
+  - `Ollama` memakai server `nextgenserver` dengan model default non-thinking yang terdeteksi otomatis
+- translasi berjalan saat runtime jika `id_old != id_new` atau `en` masih kosong
 - saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
 
 Field utama:
@@ -211,6 +214,14 @@ Struktur:
   "audio": {
     "host": "127.0.0.1",
     "port": 7777
+  },
+  "translate": {
+    "provider": "gemini",
+    "ollama": {
+      "host": "nextgenserver",
+      "port": 11434,
+      "model": ""
+    }
   }
 }
 ```
@@ -220,6 +231,11 @@ Pemakaian:
   - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, dan `scene_manager_ui.py`
 - `audio`
   - dipakai oleh `scripts/generate_sound.py`
+- `translate`
+  - dipakai oleh semua proses runtime yang menerjemahkan prompt bilingual ke bahasa Inggris
+  - provider bisa dipilih dari toolbar atas di UI
+  - `Gemini` memakai Gemini API seperti sebelumnya
+  - `Ollama` memakai `nextgenserver` dengan model default non-thinking
 
 Di UI, konfigurasi ini diubah melalui dialog `Konfigurasi Server`.
 
@@ -395,6 +411,7 @@ Perilaku UI:
   - `CFG`
   - `Prompt Positif`
   - `Prompt Negatif`
+  - tombol `Buat Prompt` pada field `Prompt Positif` dan `Prompt Negatif` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - untuk `image_edit` (tab `Image Edit`):
   - field `Model`: `Flux.2` / `Gemini`
   - field `Model Gemini` ditampilkan saat model `Gemini` dipilih
@@ -402,12 +419,14 @@ Perilaku UI:
     - dropdown `Gambar Awal` (diisi dari file gambar di root scene aktif)
     - input `Prompt`
     - tombol `Image Gen Prompt` untuk menyalin template clipboard edit gambar
+    - tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en` dan `id_new`
     - tombol `Edit Gambar`
   - input `Prompt` di UI selalu menampilkan `id_new`
   - saat tombol `Edit Gambar` ditekan:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
-    - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini `gemini-2.5-flash`, lalu hasilnya dipakai untuk edit
+    - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai provider translate yang dipilih di toolbar atas, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
+- tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - setelah proses selesai dari UI, akan muncul popup:
   - informasi keberhasilan beserta file output yang terdeteksi

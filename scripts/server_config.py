@@ -15,6 +15,14 @@ DEFAULT_SERVER_CONFIG = {
         "host": "127.0.0.1",
         "port": 7777,
     },
+    "translate": {
+        "provider": "gemini",
+        "ollama": {
+            "host": "nextgenserver",
+            "port": 11434,
+            "model": "",
+        },
+    },
 }
 
 
@@ -25,12 +33,36 @@ def _normalize_config(data: dict | None) -> dict:
             value = data.get(key)
             if isinstance(value, dict):
                 config[key].update(value)
+        translate_value = data.get("translate")
+        if isinstance(translate_value, dict):
+            config["translate"].update({k: v for k, v in translate_value.items() if k != "ollama"})
+            ollama_value = translate_value.get("ollama")
+            if isinstance(ollama_value, dict):
+                config["translate"]["ollama"].update(ollama_value)
     for key in ("comfyui", "audio"):
         config[key]["host"] = str(config[key].get("host", "")).strip() or "127.0.0.1"
         try:
             config[key]["port"] = int(config[key].get("port", DEFAULT_SERVER_CONFIG[key]["port"]))
         except (TypeError, ValueError):
             config[key]["port"] = DEFAULT_SERVER_CONFIG[key]["port"]
+    translate_config = config.get("translate", {})
+    if not isinstance(translate_config, dict):
+        translate_config = copy.deepcopy(DEFAULT_SERVER_CONFIG["translate"])
+    provider = str(translate_config.get("provider", "gemini")).strip().lower()
+    if provider not in {"gemini", "ollama"}:
+        provider = "gemini"
+    translate_config["provider"] = provider
+    ollama_config = translate_config.get("ollama", {})
+    if not isinstance(ollama_config, dict):
+        ollama_config = {}
+    ollama_config["host"] = str(ollama_config.get("host", "")).strip() or DEFAULT_SERVER_CONFIG["translate"]["ollama"]["host"]
+    try:
+        ollama_config["port"] = int(ollama_config.get("port", DEFAULT_SERVER_CONFIG["translate"]["ollama"]["port"]))
+    except (TypeError, ValueError):
+        ollama_config["port"] = DEFAULT_SERVER_CONFIG["translate"]["ollama"]["port"]
+    ollama_config["model"] = str(ollama_config.get("model", "")).strip()
+    translate_config["ollama"] = ollama_config
+    config["translate"] = translate_config
     return config
 
 

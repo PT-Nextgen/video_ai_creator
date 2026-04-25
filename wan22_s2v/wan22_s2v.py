@@ -27,24 +27,7 @@ SIZE_OPTIONS = [
 ]
 DEFAULT_PROMPT = {
     "positive_prompt": "This presenter is explaining an audio-related topic and stares into the camera.",
-    "negative_prompt": (
-        "unnatural body bending, torso twisting, shoulders shifting randomly, floating torso, body stretching or shrinking between frames, "
-        "neck elongation, missing neck, spine distortion, arms crossing through body, uneven shoulder height, body flicker, scale inconsistency, "
-        "posture warping, unnatural leaning, body vibrating, torso intersecting microphone or logo, jittering position. deformed hands, extra fingers, "
-        "missing fingers, finger fusion, bent backward fingers, floating or disconnected hands, hands merging with body or microphone, oversized or "
-        "undersized hands, inconsistent hand position between frames, hands appearing or disappearing suddenly, double hands, palm distortion, wrist "
-        "twisting unnaturally, jittery finger motion, fingernails flickering. face deformation, asymmetric expression, melted face, mouth jitter, lip "
-        "morphing, teeth distortion, lips fusing together, over-wide mouth opening, head wobble, unnatural blinking, flickering eyes, eyes misaligned, "
-        "double pupils, eyelids vanishing, mouth desync with emotion, nose distortion, nostril stretching, jaw popping, head turning unnaturally fast, "
-        "facial morph between frames, ghosting face, duplicated face overlay, stretched or shrinking head, hair flickering or detaching. flickering "
-        "brightness, inconsistent exposure, sudden lighting change, shadow popping, overexposed highlights, underexposed shadows, lighting shifting "
-        "direction, unrealistic glow, color banding, inconsistent white balance, color drift, glowing artifacts on skin, over-saturated tones, "
-        "inconsistent HDR lighting.frame flicker, motion jitter, ghosting, double exposure, temporal aliasing, inconsistent motion, frame skipping, "
-        "motion blur hiding facial features, lagging body parts, warped motion trails, interpolation ghost artifacts, unstable subject position, "
-        "camera shake, unintentional zoom or pan, inconsistent focus depth, frame-to-frame brightness variation. extra limbs, duplicated torso, mutated "
-        "anatomy, disproportionate body parts, merged geometry, invisible body sections, stretched polygons, low-resolution mesh artifacts, silhouette "
-        "flicker, melting texture, glitch noise, non-human facial shape, random artifacts near edges."
-    ),
+    "negative_prompt": "",
     "width": 480,
     "height": 848,
     "cfg": 2.0,
