@@ -112,6 +112,14 @@ DEFAULT_IMAGE_PAN_PROMPT = {
     "direction": "from_right",
     "capture_mode": "stable_pan",
 }
+DEFAULT_IMAGE_ZOOM_PROMPT = {
+    "width": 480,
+    "height": 848,
+    "zoom_direction": "in",
+    "focal_point": "center",
+    "zoom_strength": 1.3,
+    "capture_mode": "stable_pan",
+}
 DEFAULT_IMAGE_EDIT_PROMPT = {
     "image_model": MODEL_FLUX2,
     "gemini_model_id": MODEL_GEMINI_FLASH_05K,
@@ -202,6 +210,7 @@ def build_scene_templates(title: str, scene_type: str, duration: int):
         copy.deepcopy(DEFAULT_WAN22_S2V_PROMPT),
         copy.deepcopy(DEFAULT_WEB_SCROLL_PROMPT),
         copy.deepcopy(DEFAULT_IMAGE_PAN_PROMPT),
+        copy.deepcopy(DEFAULT_IMAGE_ZOOM_PROMPT),
     )
 
 
@@ -213,6 +222,7 @@ def create_scene_files(
     wan22_s2v_prompt=None,
     web_scroll_prompt=None,
     image_pan_prompt=None,
+    image_zoom_prompt=None,
     image_edit_prompt=None,
     z_image_extra_prompts=None,
 ):
@@ -230,6 +240,7 @@ def create_scene_files(
         s2v_prompt=wan22_s2v_prompt or DEFAULT_WAN22_S2V_PROMPT,
         web_prompt=web_scroll_prompt or DEFAULT_WEB_SCROLL_PROMPT,
         image_pan_prompt=image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT,
+        image_zoom_prompt=image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT,
         image_edit_prompt=image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT,
         z_image_extra_prompts=z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS,
     )
@@ -243,6 +254,7 @@ def sync_scene_prompt_files(
     s2v_prompt: dict,
     web_prompt: dict,
     image_pan_prompt: dict,
+    image_zoom_prompt: dict | None = None,
     image_edit_prompt: dict | None = None,
     z_image_extra_prompts: dict | None = None,
 ):
@@ -257,6 +269,7 @@ def sync_scene_prompt_files(
     write_prompt_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
     write_prompt_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
     write_prompt_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
+    write_prompt_json(scene_dir / "image_zoom_prompt.json", image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT)
     write_prompt_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
     write_prompt_json(scene_dir / "z_image_extra_prompts.json", z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
 
@@ -317,6 +330,7 @@ def validate_scene_data(
     s2v_prompt: dict | None = None,
     web_prompt: dict | None = None,
     image_pan_prompt: dict | None = None,
+    image_zoom_prompt: dict | None = None,
     scene_dir: Path | None = None,
 ):
     issues = []
@@ -324,6 +338,7 @@ def validate_scene_data(
     s2v_prompt = s2v_prompt or DEFAULT_WAN22_S2V_PROMPT
     web_prompt = web_prompt or DEFAULT_WEB_SCROLL_PROMPT
     image_pan_prompt = image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT
+    image_zoom_prompt = image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT
     image_model_key = get_z_image_model_key(z_prompt)
     is_gemini_image = image_model_key == MODEL_GEMINI_IMAGE
     if not str(meta.get("scene_title", "")).strip():
@@ -435,6 +450,36 @@ def validate_scene_data(
         pan_mode = str(image_pan_prompt.get("capture_mode", "stable_pan")).strip()
         if pan_mode not in {"stable_pan", "live_capture"}:
             issues.append("Mode image_pan tidak valid. Pilih `stable_pan` atau `live_capture`.")
+    if scene_type == "image_zoom":
+        if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
+            issues.append("Adegan image_zoom membutuhkan satu gambar awal di folder scene.")
+        try:
+            zoom_width = int(image_zoom_prompt.get("width", DEFAULT_IMAGE_ZOOM_PROMPT["width"]))
+            zoom_height = int(image_zoom_prompt.get("height", DEFAULT_IMAGE_ZOOM_PROMPT["height"]))
+        except Exception:
+            zoom_width = 0
+            zoom_height = 0
+        if zoom_width <= 0 or zoom_height <= 0:
+            issues.append("Ukuran image_zoom tidak valid.")
+        zoom_direction = str(image_zoom_prompt.get("zoom_direction", "in")).strip()
+        if zoom_direction not in {"in", "out"}:
+            issues.append("Arah zoom tidak valid. Pilih `in` (zoom in) atau `out` (zoom out).")
+        zoom_focal = str(image_zoom_prompt.get("focal_point", "center")).strip()
+        if zoom_focal not in {
+            "center", "top_left", "top_center", "top_right",
+            "center_left", "center_right",
+            "bottom_left", "bottom_center", "bottom_right",
+        }:
+            issues.append("Titik fokus image_zoom tidak valid.")
+        try:
+            zoom_strength = float(image_zoom_prompt.get("zoom_strength", 1.3))
+        except Exception:
+            zoom_strength = 0
+        if zoom_strength < 1.0 or zoom_strength > 1.5:
+            issues.append("Kekuatan zoom harus di antara 1.0 sampai 1.5.")
+        zoom_mode = str(image_zoom_prompt.get("capture_mode", "stable_pan")).strip()
+        if zoom_mode not in {"stable_pan", "live_capture"}:
+            issues.append("Mode image_zoom tidak valid. Pilih `stable_pan` atau `live_capture`.")
     if scene_type == "i2v" and scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
         issues.append("Adegan i2v membutuhkan minimal satu gambar lokal di folder scene.")
     provider = str(meta.get("voice_provider", "")).strip()
@@ -477,7 +522,7 @@ class SceneTemplateDialog(QDialog):
         self.setWindowTitle(title)
         self.title_input = QLineEdit()
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan"])
+        self.type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 3600)
         self.duration_spin.setValue(10)
@@ -901,7 +946,7 @@ class SceneEditorWindow(QMainWindow):
         for value in [5, 10, 15, 20, 25]:
             self.duration_input.addItem(str(value), value)
         self.scene_type_combo = QComboBox()
-        self.scene_type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan"])
+        self.scene_type_combo.addItems(["default", "wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
         self.voice_provider_combo = QComboBox()
         self.voice_provider_combo.addItems(["", "elevenlabs", "edgetts", "gemini_tts"])
         self.elevenlabs_voice_input = QComboBox()
@@ -1041,6 +1086,30 @@ class SceneEditorWindow(QMainWindow):
         self.image_pan_capture_mode_input = QComboBox()
         self.image_pan_capture_mode_input.addItem("Stable Pan (Default)", "stable_pan")
         self.image_pan_capture_mode_input.addItem("Live Capture", "live_capture")
+        self.image_zoom_size_input = QComboBox()
+        for label, width, height in Z_IMAGE_SIZES:
+            self.image_zoom_size_input.addItem(label, (width, height))
+        self.image_zoom_direction_input = QComboBox()
+        self.image_zoom_direction_input.addItem("Zoom In (Default)", "in")
+        self.image_zoom_direction_input.addItem("Zoom Out", "out")
+        self.image_zoom_focal_input = QComboBox()
+        self.image_zoom_focal_input.addItem("Tengah", "center")
+        self.image_zoom_focal_input.addItem("Atas Kiri", "top_left")
+        self.image_zoom_focal_input.addItem("Atas Tengah", "top_center")
+        self.image_zoom_focal_input.addItem("Atas Kanan", "top_right")
+        self.image_zoom_focal_input.addItem("Tengah Kiri", "center_left")
+        self.image_zoom_focal_input.addItem("Tengah Kanan", "center_right")
+        self.image_zoom_focal_input.addItem("Bawah Kiri", "bottom_left")
+        self.image_zoom_focal_input.addItem("Bawah Tengah", "bottom_center")
+        self.image_zoom_focal_input.addItem("Bawah Kanan", "bottom_right")
+        self.image_zoom_strength_input = QDoubleSpinBox()
+        self.image_zoom_strength_input.setRange(1.0, 1.5)
+        self.image_zoom_strength_input.setSingleStep(0.1)
+        self.image_zoom_strength_input.setDecimals(1)
+        self.image_zoom_strength_input.setValue(1.3)
+        self.image_zoom_capture_mode_input = QComboBox()
+        self.image_zoom_capture_mode_input.addItem("Stable Pan (Default)", "stable_pan")
+        self.image_zoom_capture_mode_input.addItem("Live Capture", "live_capture")
         self.image_edit_model_input = QComboBox()
         self.image_edit_model_input.addItem("Flux.2", MODEL_FLUX2)
         self.image_edit_model_input.addItem("Gemini", MODEL_GEMINI_IMAGE)
@@ -1156,6 +1225,11 @@ class SceneEditorWindow(QMainWindow):
             self.image_pan_size_input.currentTextChanged,
             self.image_pan_direction_input.currentIndexChanged,
             self.image_pan_capture_mode_input.currentIndexChanged,
+            self.image_zoom_size_input.currentTextChanged,
+            self.image_zoom_direction_input.currentIndexChanged,
+            self.image_zoom_focal_input.currentIndexChanged,
+            self.image_zoom_strength_input.valueChanged,
+            self.image_zoom_capture_mode_input.currentIndexChanged,
             self.image_edit_model_input.currentIndexChanged,
             self.image_edit_gemini_model_input.currentIndexChanged,
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
@@ -1349,6 +1423,15 @@ class SceneEditorWindow(QMainWindow):
         image_pan_layout.addRow("Mode", self.image_pan_capture_mode_input)
         tabs.addTab(self.image_pan_tab, "Image Pan")
 
+        self.image_zoom_tab = QWidget()
+        image_zoom_layout = QFormLayout(self.image_zoom_tab)
+        image_zoom_layout.addRow("Ukuran", self.image_zoom_size_input)
+        image_zoom_layout.addRow("Arah Zoom", self.image_zoom_direction_input)
+        image_zoom_layout.addRow("Titik Fokus", self.image_zoom_focal_input)
+        image_zoom_layout.addRow("Kekuatan Zoom", self.image_zoom_strength_input)
+        image_zoom_layout.addRow("Mode", self.image_zoom_capture_mode_input)
+        tabs.addTab(self.image_zoom_tab, "Image Zoom")
+
         self.image_edit_tab = QWidget()
         image_edit_layout = QVBoxLayout(self.image_edit_tab)
         image_edit_form = QFormLayout()
@@ -1388,6 +1471,7 @@ class SceneEditorWindow(QMainWindow):
             self.s2v_tab: scene_type == "wan22_s2v",
             self.web_tab: scene_type == "web_scroll",
             self.image_pan_tab: scene_type == "image_pan",
+            self.image_zoom_tab: scene_type == "image_zoom",
             self.image_edit_tab: True,
             self.assets_tab: True,
         }
@@ -1603,7 +1687,7 @@ class SceneEditorWindow(QMainWindow):
         pdir.mkdir(parents=True, exist_ok=False)
         write_prompt_json(pdir / "cover_prompt.json", copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT))
         default_scene = pdir / scene_dir_name(1)
-        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates("", "default", 10)
+        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = build_scene_templates("", "default", 10)
         create_scene_files(default_scene, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
         self.current_project_name = project_name
         self.reload_scene_list()
@@ -2037,7 +2121,8 @@ class SceneEditorWindow(QMainWindow):
             s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
             web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
             image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
-            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, scene_dir)
+            image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
+            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, scene_dir)
             label = scene_dir.name if not issues else f"{scene_dir.name} ({len(issues)} masalah)"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, str(scene_dir))
@@ -2104,6 +2189,7 @@ class SceneEditorWindow(QMainWindow):
             s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
             web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
             image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
+            image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
             self.scene_title_input.setText(str(meta.get("scene_title", "")))
             duration_value = str(meta.get("duration_seconds", ""))
             index = self.duration_input.findData(int(float(duration_value))) if duration_value else -1
@@ -2261,6 +2347,35 @@ class SceneEditorWindow(QMainWindow):
             pan_mode = str(image_pan_prompt.get("capture_mode", DEFAULT_IMAGE_PAN_PROMPT["capture_mode"])).strip()
             index = self.image_pan_capture_mode_input.findData(pan_mode)
             self.image_pan_capture_mode_input.setCurrentIndex(max(index, 0))
+            try:
+                zoom_width = int(image_zoom_prompt.get("width", DEFAULT_IMAGE_ZOOM_PROMPT["width"]))
+            except (TypeError, ValueError):
+                zoom_width = int(DEFAULT_IMAGE_ZOOM_PROMPT["width"])
+            try:
+                zoom_height = int(image_zoom_prompt.get("height", DEFAULT_IMAGE_ZOOM_PROMPT["height"]))
+            except (TypeError, ValueError):
+                zoom_height = int(DEFAULT_IMAGE_ZOOM_PROMPT["height"])
+            index = -1
+            for i in range(self.image_zoom_size_input.count()):
+                size_value = self.image_zoom_size_input.itemData(i)
+                if isinstance(size_value, tuple) and size_value == (zoom_width, zoom_height):
+                    index = i
+                    break
+            self.image_zoom_size_input.setCurrentIndex(max(index, 0))
+            zoom_direction = str(image_zoom_prompt.get("zoom_direction", DEFAULT_IMAGE_ZOOM_PROMPT["zoom_direction"])).strip()
+            index = self.image_zoom_direction_input.findData(zoom_direction)
+            self.image_zoom_direction_input.setCurrentIndex(max(index, 0))
+            zoom_focal = str(image_zoom_prompt.get("focal_point", DEFAULT_IMAGE_ZOOM_PROMPT["focal_point"])).strip()
+            index = self.image_zoom_focal_input.findData(zoom_focal)
+            self.image_zoom_focal_input.setCurrentIndex(max(index, 0))
+            try:
+                zoom_strength = float(image_zoom_prompt.get("zoom_strength", DEFAULT_IMAGE_ZOOM_PROMPT["zoom_strength"]))
+            except (TypeError, ValueError):
+                zoom_strength = float(DEFAULT_IMAGE_ZOOM_PROMPT["zoom_strength"])
+            self.image_zoom_strength_input.setValue(max(1.0, min(1.5, zoom_strength)))
+            zoom_mode = str(image_zoom_prompt.get("capture_mode", DEFAULT_IMAGE_ZOOM_PROMPT["capture_mode"])).strip()
+            index = self.image_zoom_capture_mode_input.findData(zoom_mode)
+            self.image_zoom_capture_mode_input.setCurrentIndex(max(index, 0))
             self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_image_edit_into_ui(scene_dir)
             self.update_voice_provider_fields_enabled()
@@ -2346,7 +2461,15 @@ class SceneEditorWindow(QMainWindow):
             "direction": str(self.image_pan_direction_input.currentData() or "from_right").strip(),
             "capture_mode": str(self.image_pan_capture_mode_input.currentData() or "stable_pan").strip(),
         }
-        return meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt
+        image_zoom_prompt = {
+            "width": int((self.image_zoom_size_input.currentData() or (480, 848))[0]),
+            "height": int((self.image_zoom_size_input.currentData() or (480, 848))[1]),
+            "zoom_direction": str(self.image_zoom_direction_input.currentData() or "in").strip(),
+            "focal_point": str(self.image_zoom_focal_input.currentData() or "center").strip(),
+            "zoom_strength": round(float(self.image_zoom_strength_input.value()), 1),
+            "capture_mode": str(self.image_zoom_capture_mode_input.currentData() or "stable_pan").strip(),
+        }
+        return meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt
 
     def parse_duration_value(self):
         value = self.duration_input.currentText().strip()
@@ -2520,8 +2643,8 @@ class SceneEditorWindow(QMainWindow):
             self.status_label.setPlainText("Belum ada adegan yang dipilih.")
             return
         try:
-            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = self.gather_scene_data()
-            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, self.current_scene_dir)
+            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
+            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, self.current_scene_dir)
         except ValueError as e:
             issues = [str(e)]
         if issues:
@@ -2538,7 +2661,8 @@ class SceneEditorWindow(QMainWindow):
         s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
         web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
         image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
-        return validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, scene_dir)
+        image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
+        return validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, scene_dir)
 
     def ensure_scene_is_runnable(self, scene_dir: Path):
         issues = self.get_scene_issues(scene_dir)
@@ -2592,12 +2716,12 @@ class SceneEditorWindow(QMainWindow):
         if not self.current_scene_dir:
             return False
         try:
-            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = self.gather_scene_data()
+            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
         except ValueError as e:
             if not silent:
                 QMessageBox.warning(self, "Data Tidak Valid", str(e))
             return False
-        issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, self.current_scene_dir)
+        issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, self.current_scene_dir)
         if issues and not silent:
             reply = QMessageBox.question(
                 self, "Masalah Validasi",
@@ -2618,6 +2742,7 @@ class SceneEditorWindow(QMainWindow):
             s2v_prompt=s2v_prompt,
             web_prompt=web_prompt,
             image_pan_prompt=image_pan_prompt,
+            image_zoom_prompt=image_zoom_prompt,
             image_edit_prompt=image_edit_prompt,
             z_image_extra_prompts=z_image_extra_prompts,
         )
@@ -2646,7 +2771,7 @@ class SceneEditorWindow(QMainWindow):
             QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
             return
         new_dir = project_dir / scene_dir_name(len(self.list_scene_dirs_current()) + 1)
-        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
+        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
         create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
         self.reload_scene_list()
         self.select_scene_by_name(new_dir.name)
@@ -2676,7 +2801,7 @@ class SceneEditorWindow(QMainWindow):
             target_index = int(scene.name.split("_", 1)[1])
             name = scene_dir_name(target_index + 1) if target_index >= insert_index else scene.name
             duplicate_directory(scene, temp_root / name)
-        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
+        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
         create_scene_files(temp_root / scene_dir_name(insert_index), meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt)
         for scene in scenes:
             shutil.rmtree(scene)

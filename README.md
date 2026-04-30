@@ -38,6 +38,7 @@ File utama:
 - `wan22_i2v_prompt.json` (hanya untuk `default` / `wan22_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
+- `image_zoom_prompt.json` (untuk `image_zoom`)
 
 Catatan format prompt:
 - prompt yang tampil di UI selalu memakai nilai `id_new`
@@ -118,6 +119,13 @@ Nilai `image_model` yang didukung:
   - `height` (portrait only)
   - `direction` (`from_right` / `from_left`)
   - `capture_mode` (`stable_pan` default / `live_capture`)
+- `image_zoom_prompt.json`
+  - `width`
+  - `height`
+  - `zoom_direction` (`in` / `out`)
+  - `focal_point` (`center`, `top_left`, `top_center`, `top_right`, `center_left`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`)
+  - `zoom_strength` (`1.0` sampai `1.5`)
+  - `capture_mode` (`stable_pan` default / `live_capture`)
 - `image_edit_prompt.json`
   - `image_model` (`flux.2` / `gemini`)
   - `gemini_model_id` (khusus saat `image_model=gemini`)
@@ -147,6 +155,13 @@ Kebutuhan prompt per `scene_type`:
   - `width`/`height` pada `image_pan_prompt.json` wajib portrait (tinggi > lebar)
   - durasi diambil dari `scene_meta.duration_seconds`
   - `direction` wajib `from_right` atau `from_left`
+- `image_zoom`
+  - membutuhkan `scene_meta.json`, `image_zoom_prompt.json`, dan minimal satu gambar di root folder scene
+  - `width`/`height` pada `image_zoom_prompt.json` bebas mengikuti rasio target video
+  - durasi diambil dari `scene_meta.duration_seconds`
+  - `zoom_direction` wajib `in` atau `out`
+  - `focal_point` wajib salah satu nilai yang didukung di `image_zoom_prompt.json`
+  - `zoom_strength` wajib di antara `1.0` sampai `1.5`
 
 Catatan sumber image:
 - `default`
@@ -174,6 +189,13 @@ Catatan sumber image:
   - pan selalu menempuh penuh dari sisi ke sisi dalam durasi scene
   - frame selalu mengikuti tinggi penuh gambar sumber (full height), lalu bergerak ke samping
   - mode default `stable_pan` direkomendasikan untuk gerakan yang lebih halus
+  - mode `live_capture` tersedia sebagai alternatif
+  - fps mengikuti scene type `i2v` (`16`)
+- `image_zoom`
+  - membuat video dari satu gambar awal dengan zoom in atau zoom out sesuai `zoom_direction`
+  - titik fokus zoom mengikuti `focal_point` agar anchor zoom tetap konsisten
+  - `zoom_strength` mengatur seberapa jauh zoom bergerak dalam rentang `1.0` sampai `1.5`
+  - mode default `stable_pan` direkomendasikan untuk hasil yang lebih stabil
   - mode `live_capture` tersedia sebagai alternatif
   - fps mengikuti scene type `i2v` (`16`)
 
@@ -287,6 +309,15 @@ Fungsi:
   - mode capture:
     - `stable_pan` (default): pan gambar dengan hasil gerak lebih halus
     - `live_capture`: pan langsung pada source image
+  - jika `generate_caption=true`, burn caption ke video hasil
+- `scene_type=image_zoom`
+  - membaca `image_zoom_prompt.json`
+  - mengambil satu gambar terbaru dari root folder scene sebagai sumber zoom
+  - zoom ditentukan oleh `zoom_direction` (`in` atau `out`)
+  - titik fokus zoom ditentukan oleh `focal_point`
+  - mode capture:
+    - `stable_pan` (default): zoom gambar dengan hasil gerak lebih halus
+    - `live_capture`: zoom langsung pada source image
   - jika `generate_caption=true`, burn caption ke video hasil
 
 Argumen:
@@ -408,6 +439,11 @@ Perilaku UI:
 - untuk `image_pan`:
   - tab `Gambar Awal` tetap tersedia
   - tab `Image Pan` ditampilkan dengan input: `ukuran` (portrait-only), `direction`, `capture_mode`
+  - durasi diatur dari field durasi scene di tab `Metadata`
+  - tombol `Generate Image Awal` tetap aktif
+- untuk `image_zoom`:
+  - tab `Gambar Awal` tetap tersedia
+  - tab `Image Zoom` ditampilkan dengan input: `ukuran`, `zoom_direction`, `focal_point`, `zoom_strength`, `capture_mode`
   - durasi diatur dari field durasi scene di tab `Metadata`
   - tombol `Generate Image Awal` tetap aktif
 - untuk `wan22_s2v`, tab `WAN22 S2V` menyediakan:

@@ -39,6 +39,7 @@ from scripts.generate_caption import apply_caption_to_video
 from scripts.generate_compose import compose_scene
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
+from scripts.generate_image_zoom_video import generate_image_zoom_video
 from prompt_localization import prepare_prompt_payload_for_save, read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 
@@ -61,6 +62,14 @@ DEFAULT_IMAGE_PAN_PROMPT = {
     "width": 480,
     "height": 848,
     "direction": "from_right",
+    "capture_mode": "stable_pan",
+}
+DEFAULT_IMAGE_ZOOM_PROMPT = {
+    "width": 480,
+    "height": 848,
+    "zoom_direction": "in",
+    "focal_point": "center",
+    "zoom_strength": 1.3,
     "capture_mode": "stable_pan",
 }
 
@@ -631,6 +640,71 @@ def process_scene(scene_dir, server):
         if not _apply_caption_if_enabled(composed):
             return False
         write_log(f"Completed image_pan composition for {scene_dir}: {composed}")
+        return True
+
+    if scene_type == 'image_zoom':
+        _ensure_scene_json(scene_dir, 'image_zoom_prompt.json', DEFAULT_IMAGE_ZOOM_PROMPT)
+        try:
+            zoom_prompt = _read_scene_json(scene_dir, 'image_zoom_prompt.json', required=True)
+        except Exception as e:
+            write_log(f"Failed to read image_zoom_prompt.json for {scene_dir}: {e}")
+            return False
+        img_path = _find_latest_root_image(scene_dir)
+        if not img_path:
+            write_log(f"image_zoom scene requires at least one input image in root folder {scene_dir}")
+            return False
+        try:
+            zoom_width = int(zoom_prompt.get('width', 480))
+            zoom_height = int(zoom_prompt.get('height', 848))
+            zoom_duration = float(scene_meta.get('duration_seconds', 5.0))
+            zoom_direction = str(zoom_prompt.get('zoom_direction', 'in')).strip() or 'in'
+            zoom_focal = str(zoom_prompt.get('focal_point', 'center')).strip() or 'center'
+            zoom_strength = float(zoom_prompt.get('zoom_strength', 1.3))
+            zoom_capture_mode = str(zoom_prompt.get('capture_mode', 'stable_pan')).strip() or 'stable_pan'
+        except Exception as e:
+            write_log(f"Invalid image_zoom prompt value for {scene_dir}: {e}")
+            return False
+        if zoom_duration <= 0:
+            write_log(f"Invalid scene duration for image_zoom in {scene_dir}: {zoom_duration}")
+            return False
+        composed = None
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                composed = generate_image_zoom_video(
+                    scene_dir=scene_dir,
+                    image_path=img_path,
+                    width=zoom_width,
+                    height=zoom_height,
+                    duration_seconds=zoom_duration,
+                    zoom_direction=zoom_direction,
+                    focal_point=zoom_focal,
+                    zoom_strength=zoom_strength,
+                    fps=I2V_FPS,
+                    capture_mode=zoom_capture_mode,
+                )
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                write_log(f"image_zoom attempt {attempt}/3 failed for {scene_dir}: {_safe_error_text(e)}")
+                if attempt < 3:
+                    time.sleep(1.0 * attempt)
+        if last_error is not None or not composed:
+            write_log(f"Failed to generate image_zoom video for {scene_dir}: {_safe_error_text(last_error)}")
+            return False
+        try:
+            if not os.path.exists(composed) or os.path.getsize(composed) == 0:
+                write_log(f"Composed image_zoom video missing or empty: {composed}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking composed image_zoom video {composed}: {e}")
+            return False
+        if not _mix_scene_audio_to_video(composed, is_s2v=False):
+            return False
+        if not _apply_caption_if_enabled(composed):
+            return False
+        write_log(f"Completed image_zoom composition for {scene_dir}: {composed}")
         return True
 
     # default behavior: create initial image -> upload -> wan22 prompt -> wait/download video
