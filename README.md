@@ -34,12 +34,14 @@ File utama:
 - `project_settings.json`
 - `scene_meta.json`
 - `z_image_prompt.json`
+- `z_image_extra_prompts.json`
 - `image_edit_prompt.json`
 - `wan22_s2v_prompt.json`
 - `wan22_i2v_prompt.json` (untuk `wan22_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
 - `image_zoom_prompt.json` (untuk `image_zoom`)
+- `web_search_prompt.json` (untuk `i2v`, `image_pan`, `image_zoom`)
 
 Catatan format prompt:
 - prompt yang tampil di UI selalu memakai nilai `id_new`
@@ -59,6 +61,7 @@ Catatan format prompt:
 Field utama:
 - `scene_meta.json`
   - `scene_title`
+  - `scene_description` (wajib)
   - `scene_type`
   - `duration_seconds`
   - `voice_text`
@@ -144,6 +147,8 @@ Kebutuhan prompt per `scene_type`:
 - `wan22_s2v`
   - membutuhkan `scene_meta.json`, `wan22_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_` di root folder scene
   - `voice_text` wajib diisi
+- semua `scene_type`
+  - `scene_title` dan `scene_description` wajib diisi
 - `i2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json` (untuk ukuran target video), dan minimal satu gambar di root folder scene
 - `web_scroll`
@@ -334,6 +339,7 @@ Fungsi utama:
 - edit prompt WAN
 - edit prompt WAN22 S2V
 - tab `Image Edit` untuk edit gambar berbasis prompt
+- tab `Web Search` untuk mencari gambar referensi dari web dan menyimpannya langsung ke folder scene aktif
 - untuk voice, tersedia field:
   - `Pilihan Suara Scene` (per scene): 8 karakter suara
 - group `Audio` berisi proses generate voice/sound untuk scene atau semua scene
@@ -407,6 +413,11 @@ Perilaku UI:
   - tab `S2V`, `I2V`, dan `Gambar Awal` disembunyikan
   - tab `Web Scroll` ditampilkan dengan input: `url`, `ukuran`, `duration_seconds`, `speed`
   - tombol `Generate Image Awal` nonaktif (disabled)
+- untuk scene type `i2v`, `image_pan`, dan `image_zoom`:
+  - tab `Web Search` tersedia
+  - input: `search_term` dan `ukuran`
+  - tombol `Cari Gambar Web` akan mengunduh hasil gambar ke root folder scene
+  - hasil unduhan langsung terlihat di tab `Aset` setelah proses selesai
 - untuk `image_pan`:
   - tab `Gambar Awal` tetap tersedia
   - tab `Image Pan` ditampilkan dengan input: `ukuran` (portrait-only), `direction`
@@ -683,6 +694,7 @@ Contoh `keys.cfg`:
 ```ini
 GEMINIKEY=isi_api_key_gemini
 ELEVENLABSKEY=isi_api_key_elevenlabs
+FIRECRAWLKEY=isi_api_key_firecrawl
 ```
 
 Catatan key Gemini:
@@ -690,6 +702,11 @@ Catatan key Gemini:
   - `GEMINIKEY` di `keys.cfg`
   - `GEMINI_API_KEY` di `keys.cfg` atau environment variable
   - `GOOGLE_API_KEY` di `keys.cfg` atau environment variable
+
+Catatan key Firecrawl (untuk Web Search):
+- `FIRECRAWLKEY` dibaca dari `keys.cfg`
+- alias lama `FIRECRAWL_API_KEY` masih diterima untuk kompatibilitas
+- jika key tidak ada, proses `Cari Gambar Web` di UI akan gagal
 
 ### Generate Sound
 
