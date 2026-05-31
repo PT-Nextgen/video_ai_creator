@@ -3,20 +3,10 @@ import os
 import time
 import types
 
+from scripts.voice_profiles import get_voice_character, resolve_scene_voice_key
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-API_PRODUCTION = os.path.join(ROOT, "api_production")
-
-ELEVENLABS_VOICES = [
-    ("Yetty Indonesia", "Lpe7uP03WRpCk9XkpFnf"),
-    ("Iwan Indonesia", "1kNciG1jHVSuFBPoxdRZ"),
-]
-ELEVENLABS_MODEL_ID = "eleven_v3"
-ELEVENLABS_MODEL_OPTIONS = [
-    ("Eleven v3", "eleven_v3"),
-    ("Eleven Multilingual v2", "eleven_multilingual_v2"),
-    ("Eleven Flash v2.5", "eleven_flash_v2_5"),
-]
+ELEVENLABS_MODEL_ID_FIXED = "eleven_v3"
 
 
 def load_json(path):
@@ -40,17 +30,17 @@ def find_elevenlabs_key():
     return None
 
 
-def synthesize(text, voice_id, api_key, model_id=ELEVENLABS_MODEL_ID, timeout=60):
+def synthesize(text, voice_id, api_key, timeout=120):
     try:
-        from elevenlabs import ElevenLabs
+        from elevenlabs.client import ElevenLabs
     except Exception as e:
         raise RuntimeError("elevenlabs SDK not installed; please pip install elevenlabs") from e
-    client = ElevenLabs(base_url="https://api.elevenlabs.io", api_key=api_key)
+    client = ElevenLabs(base_url="https://api.elevenlabs.io", api_key=api_key, timeout=timeout)
     res = client.text_to_speech.convert(
         voice_id=voice_id,
         output_format="mp3_44100_128",
         text=text,
-        model_id=model_id,
+        model_id=ELEVENLABS_MODEL_ID_FIXED,
     )
     if isinstance(res, (bytes, bytearray)):
         return bytes(res)
@@ -75,16 +65,6 @@ def synthesize(text, voice_id, api_key, model_id=ELEVENLABS_MODEL_ID, timeout=60
     raise RuntimeError("Unexpected response type from ElevenLabs SDK")
 
 
-def build_request(scene_meta: dict) -> dict:
-    model_id = str(scene_meta.get("elevenlabs_model_id", ELEVENLABS_MODEL_ID) or ELEVENLABS_MODEL_ID).strip()
-    return {
-        "voice_id": scene_meta.get("elevenlabs_voice_id"),
-        "text": scene_meta.get("voice_text"),
-        "model_id": model_id,
-        "output_format": "mp3_44100_128",
-    }
-
-
 def process_scene(scene_dir, api_key, logger=None, write_log=None):
     meta_path = os.path.join(scene_dir, "scene_meta.json")
     if not os.path.exists(meta_path):
@@ -101,27 +81,24 @@ def process_scene(scene_dir, api_key, logger=None, write_log=None):
             logger.error("Failed to load %s: %s", meta_path, e)
         return False
 
-    if meta.get("voice_provider") != "elevenlabs":
-        if logger:
-            logger.debug("scene %s not configured for elevenlabs", scene_dir)
-        return False
-
-    request = build_request(meta)
-    voice_id = request.get("voice_id")
-    text = request.get("text")
-    model_id = request.get("model_id") or ELEVENLABS_MODEL_ID
+    text = str(meta.get("voice_text", "")).strip()
+    voice_key = resolve_scene_voice_key(meta)
+    voice = get_voice_character(voice_key)
+    voice_id = str(voice.get("elevenlabs_voice_id", "")).strip()
     if not voice_id or not text:
         if write_log:
-            write_log(f"Scene {scene_dir} tidak memiliki elevenlabs_voice_id atau voice_text yang valid.", level="error")
+            write_log(f"Scene {scene_dir} tidak memiliki voice character atau voice_text yang valid.", level="error")
         if logger:
-            logger.warning("scene %s missing voice_id or text", scene_dir)
+            logger.warning("scene %s missing voice character or text", scene_dir)
         return False
 
     try:
-        audio_bytes = synthesize(text, voice_id, api_key, model_id=model_id)
+        audio_bytes = synthesize(text, voice_id, api_key)
     except Exception as e:
         if logger:
             logger.error("ElevenLabs synth failed for %s: %s", scene_dir, e)
+        if write_log:
+            write_log(f"ElevenLabs gagal untuk {scene_dir}: {e}", level="error")
         return False
     if not audio_bytes:
         if write_log:

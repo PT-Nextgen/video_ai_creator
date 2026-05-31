@@ -31,11 +31,12 @@ source ./.venv/bin/activate
 Folder scene berada di `api_production/<project_name>/scene_<n>/`.
 
 File utama:
+- `project_settings.json`
 - `scene_meta.json`
 - `z_image_prompt.json`
 - `image_edit_prompt.json`
 - `wan22_s2v_prompt.json`
-- `wan22_i2v_prompt.json` (hanya untuk `default` / `wan22_i2v`)
+- `wan22_i2v_prompt.json` (untuk `wan22_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
 - `image_zoom_prompt.json` (untuk `image_zoom`)
@@ -47,9 +48,11 @@ Catatan format prompt:
   - `id_new`
   - `en`
 - `id_old` dipakai sebagai pembanding versi lama, `id_new` adalah versi terbaru dari UI, dan `en` adalah versi runtime yang dikirim ke API/ComfyUI
-- translasi ke bahasa Inggris memakai provider yang dipilih di toolbar atas:
-  - `Gemini` memakai Gemini `gemini-2.5-flash` seperti sebelumnya
-  - `Ollama` memakai server `nextgenserver` dengan model default non-thinking yang terdeteksi otomatis
+- translasi ke bahasa Inggris memakai model project (`project_settings.json.translate.model`)
+- generate prompt ke bahasa Inggris memakai model project (`project_settings.json.prompt_generation.model`)
+- pilihan model di dialog `Konfigurasi Project`:
+  - `gemini-3.5-flash`
+  - `gemini-3.1-flash-lite` (default)
 - translasi berjalan saat runtime jika `id_old != id_new` atau `en` masih kosong
 - saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
 
@@ -59,16 +62,20 @@ Field utama:
   - `scene_type`
   - `duration_seconds`
   - `voice_text`
-  - `voice_provider`
-  - `elevenlabs_voice_id`
-  - `elevenlabs_model_id`
-  - `gemini_tts_model_id`
-  - `gemini_tts_voice_name`
-  - `gemini_tts_gender`
-  - `generate_caption`
-  - `edgetts_voice_id`
+  - `voice_character`
   - `sound_prompt`
   - `sound_volume`
+- `project_settings.json`
+  - `project_description`
+  - `video_size.width`
+  - `video_size.height`
+  - `prompt_generation.provider`
+  - `prompt_generation.model`
+  - `translate.provider`
+  - `translate.model`
+  - `voice.voice_provider` (`gemini` / `elevenlabs`)
+  - `caption.generate_caption`
+  - `cover` (struktur sama seperti `z_image_prompt.json`)
 - `z_image_prompt.json`
   - `image_model`
   - `gemini_model_id` (khusus saat `image_model=gemini`)
@@ -89,9 +96,9 @@ Nilai `image_model` yang didukung:
 - `flux.2 klein 9b`
 - `gemini`
 - `wan22_i2v_prompt.json`
-  - `duration_seconds` (`5` / `10` / `15`)
-  - `positive_prompt_one` sampai `positive_prompt_three`
-  - `negative_prompt_one` sampai `negative_prompt_three`
+  - `duration_seconds` (`5` / `10`)
+  - `positive_prompt_one` sampai `positive_prompt_two`
+  - `negative_prompt_one` sampai `negative_prompt_two`
   - `width`
   - `height`
   - `use_lora`
@@ -113,19 +120,16 @@ Nilai `image_model` yang didukung:
   - `height`
   - `duration_seconds`
   - `speed`
-  - `capture_mode` (`stable_pan` default / `live_capture`)
 - `image_pan_prompt.json`
   - `width` (portrait only)
   - `height` (portrait only)
   - `direction` (`from_right` / `from_left`)
-  - `capture_mode` (`stable_pan` default / `live_capture`)
 - `image_zoom_prompt.json`
   - `width`
   - `height`
   - `zoom_direction` (`in` / `out`)
   - `focal_point` (`center`, `top_left`, `top_center`, `top_right`, `center_left`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`)
   - `zoom_strength` (`1.0` sampai `1.5`)
-  - `capture_mode` (`stable_pan` default / `live_capture`)
 - `image_edit_prompt.json`
   - `image_model` (`flux.2` / `gemini`)
   - `gemini_model_id` (khusus saat `image_model=gemini`)
@@ -135,13 +139,10 @@ Nilai `image_model` yang didukung:
       disimpan sebagai object bilingual `id_old` / `id_new` / `en`
 
 Kebutuhan prompt per `scene_type`:
-- `default`
-  - membutuhkan `scene_meta.json`, `z_image_prompt.json`, dan `wan22_i2v_prompt.json`
 - `wan22_i2v`
   - membutuhkan `scene_meta.json`, `wan22_i2v_prompt.json`, dan minimal satu gambar di root folder scene
 - `wan22_s2v`
   - membutuhkan `scene_meta.json`, `wan22_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_` di root folder scene
-  - `voice_provider` wajib dipilih
   - `voice_text` wajib diisi
 - `i2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json` (untuk ukuran target video), dan minimal satu gambar di root folder scene
@@ -164,11 +165,9 @@ Kebutuhan prompt per `scene_type`:
   - `zoom_strength` wajib di antara `1.0` sampai `1.5`
 
 Catatan sumber image:
-- `default`
-  - image dibuat dari `z_image_prompt.json`, lalu hasilnya dipakai untuk WAN
 - `wan22_i2v`
   - memakai satu gambar terbaru dari root folder scene
-  - durasi gerak WAN mengikuti `wan22_i2v_prompt.json.duration_seconds` (`5` / `10` / `15`)
+  - durasi gerak WAN mengikuti `wan22_i2v_prompt.json.duration_seconds` (`5` / `10`)
 - `wan22_s2v`
   - memakai satu gambar terbaru dan satu file audio speech terbaru dari root folder scene
   - file speech harus berawalan `speech_`
@@ -181,7 +180,6 @@ Catatan sumber image:
   - jika output portrait, browser dirender sebagai mobile browser (emulasi)
   - jika output landscape, browser dirender sebagai desktop browser (non-mobile)
   - mode default `stable_pan` direkomendasikan untuk hasil scroll yang lebih halus
-  - mode `live_capture` tersedia jika membutuhkan tangkapan halaman secara langsung per frame
   - capture halaman panjang dibatasi otomatis agar proses tetap stabil
   - fps mengikuti scene type `i2v` (`16`)
 - `image_pan`
@@ -189,33 +187,27 @@ Catatan sumber image:
   - pan selalu menempuh penuh dari sisi ke sisi dalam durasi scene
   - frame selalu mengikuti tinggi penuh gambar sumber (full height), lalu bergerak ke samping
   - mode default `stable_pan` direkomendasikan untuk gerakan yang lebih halus
-  - mode `live_capture` tersedia sebagai alternatif
   - fps mengikuti scene type `i2v` (`16`)
 - `image_zoom`
   - membuat video dari satu gambar awal dengan zoom in atau zoom out sesuai `zoom_direction`
   - titik fokus zoom mengikuti `focal_point` agar anchor zoom tetap konsisten
   - `zoom_strength` mengatur seberapa jauh zoom bergerak dalam rentang `1.0` sampai `1.5`
   - mode default `stable_pan` direkomendasikan untuk hasil yang lebih stabil
-  - mode `live_capture` tersedia sebagai alternatif
   - fps mengikuti scene type `i2v` (`16`)
 
 Catatan voice dan caption:
 - `voice_text`
   - dipakai sebagai sumber TTS
   - dipakai juga sebagai sumber caption
+- `voice_character`
+  - dipilih per scene dari 8 karakter suara:
+    - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `candy`, `lily`, `finn`, `kevin`
 - prompt lain seperti `sound_prompt`, `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
-- `elevenlabs_model_id`
-  - model ElevenLabs per scene
-  - nilai yang didukung:
-    - `eleven_v3`
-    - `eleven_multilingual_v2`
-    - `eleven_flash_v2_5`
-- `gemini_tts`
-  - model diisi dari katalog Gemini TTS yang tersedia melalui API Gemini
-  - voice yang tersedia mengikuti katalog suara resmi Gemini TTS
-  - gender suara hanya sebagai metadata UI, bukan filter daftar voice
-  - language dipaksa ke `id-ID`
-- `generate_caption`
+- konfigurasi provider voice bersifat global per project di `project_settings.json.voice`:
+  - `voice_provider=gemini` -> model runtime fixed `gemini-3.1-flash-tts-preview` (language `id-ID`)
+  - `voice_provider=elevenlabs` -> model runtime fixed `eleven_v3`
+- konfigurasi caption bersifat global per project di `project_settings.json.caption`:
+  - `generate_caption`
   - boolean
   - default `true`
   - jika aktif, video yang selesai dibuat akan langsung diburn caption otomatis
@@ -227,71 +219,45 @@ Catatan trimming video:
 
 ## Server Config
 
-Konfigurasi server disimpan di `server_config.json`.
+Konfigurasi server ComfyUI disimpan per-project di `project_settings.json` pada key:
 
-Struktur:
+- `comfyui_server`
+  - format: `<ip/host>:<port>`
+  - default: `nextgenserver:8188`
+
+Contoh:
 ```json
 {
-  "comfyui": {
-    "host": "127.0.0.1",
-    "port": 8188
-  },
-  "audio": {
-    "host": "127.0.0.1",
-    "port": 7777
-  },
-  "translate": {
-    "provider": "gemini",
-    "ollama": {
-      "host": "nextgenserver",
-      "port": 11434,
-      "model": ""
-    }
-  }
+  "comfyui_server": "nextgenserver:8188"
 }
 ```
 
 Pemakaian:
-- `comfyui`
-  - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, dan `scene_manager_ui.py`
-- `audio`
-  - dipakai oleh `scripts/generate_sound.py`
-- `translate`
-  - dipakai oleh semua proses runtime yang menerjemahkan prompt bilingual ke bahasa Inggris
-  - provider bisa dipilih dari toolbar atas di UI
-  - `Gemini` memakai Gemini API seperti sebelumnya
-  - `Ollama` memakai `nextgenserver` dengan model default non-thinking
-
-Di UI, konfigurasi ini diubah melalui dialog `Konfigurasi Server`.
+- dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, `scripts/generate_cover_image.py`, dan `scene_manager_ui.py`
+- model `translate` dan `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
+- di UI, konfigurasi ini diubah lewat dialog `Konfigurasi Project` (bukan dialog server terpisah)
 
 ## Main Runner
 
 Script utama: `main.py`
 
 Fungsi:
-- `scene_type=default`
-  - generate image dari `z_image_prompt.json`
-    - jika model ComfyUI (`Z-Image Turbo` / `Flux.*`): generate via ComfyUI dan download image
-    - jika model Gemini: generate via Gemini API
-  - upload image ke ComfyUI
-  - generate video dari `wan22_i2v_prompt.json`
-  - jika `generate_caption=true`, burn caption ke video hasil
 - `scene_type=wan22_i2v`
   - ambil satu gambar terbaru dari root folder scene
   - upload image ke ComfyUI
   - generate video dari `wan22_i2v_prompt.json`
-  - jika `generate_caption=true`, burn caption ke video hasil
+  - jika `project_settings.caption.generate_caption=true`, burn caption ke video hasil
 - `scene_type=wan22_s2v`
   - ambil satu gambar terbaru dari root folder scene
   - ambil satu file audio speech terbaru dari root folder scene
   - upload image dan audio ke ComfyUI
   - generate video dari `wan22_s2v_prompt.json`
   - potong hasil video sesuai durasi speech dengan tambahan maksimal `4 frame`
-  - jika `generate_caption=true`, burn caption ke video hasil setelah trim
+  - jika `project_settings.caption.generate_caption=true`, burn caption ke video hasil setelah trim
 - `scene_type=i2v`
   - ambil semua gambar dari root folder scene
   - compose gambar menjadi video sederhana
-  - jika `generate_caption=true`, burn caption ke video hasil
+  - jika `project_settings.caption.generate_caption=true`, burn caption ke video hasil
 - `scene_type=web_scroll`
   - membaca `web_scroll_prompt.json`
   - render website di browser headless dan scroll dari atas ke bawah selama durasi
@@ -299,17 +265,15 @@ Fungsi:
   - kecepatan scroll disesuaikan dengan `speed`
   - mode capture:
     - `stable_pan` (default): screenshot halaman lalu pan vertikal dengan hasil gerak lebih halus
-    - `live_capture`: screenshot frame-per-frame saat halaman di-scroll
   - capture halaman panjang dibatasi otomatis agar proses tetap stabil
-  - jika `generate_caption=true`, burn caption ke video hasil
+  - jika `project_settings.caption.generate_caption=true`, burn caption ke video hasil
 - `scene_type=image_pan`
   - membaca `image_pan_prompt.json`
   - mengambil satu gambar terbaru dari root folder scene sebagai sumber pan horizontal
   - arah pan ditentukan oleh `direction` (`from_right` atau `from_left`)
   - mode capture:
     - `stable_pan` (default): pan gambar dengan hasil gerak lebih halus
-    - `live_capture`: pan langsung pada source image
-  - jika `generate_caption=true`, burn caption ke video hasil
+  - jika `project_settings.caption.generate_caption=true`, burn caption ke video hasil
 - `scene_type=image_zoom`
   - membaca `image_zoom_prompt.json`
   - mengambil satu gambar terbaru dari root folder scene sebagai sumber zoom
@@ -317,8 +281,7 @@ Fungsi:
   - titik fokus zoom ditentukan oleh `focal_point`
   - mode capture:
     - `stable_pan` (default): zoom gambar dengan hasil gerak lebih halus
-    - `live_capture`: zoom langsung pada source image
-  - jika `generate_caption=true`, burn caption ke video hasil
+  - jika `project_settings.caption.generate_caption=true`, burn caption ke video hasil
 
 Argumen:
 - `--server`, `-s`
@@ -344,9 +307,24 @@ Script: `scene_manager_ui.py`
 Fungsi utama:
 - project-based workspace:
   - `Project Baru` membuat folder project baru di `api_production/<project_name>`
+  - project baru otomatis dibuat dengan `project_settings.json` dan `scene_1`
   - `Buka Project` memilih project yang sudah ada
   - `Tutup Project` menutup project aktif
   - nama project harus unik (tidak boleh duplikat)
+- tombol `Konfigurasi Project` untuk mengatur:
+  - `Deskripsi Project`
+  - `ComfyUI Server` (`<ip/host>:<port>`, wajib diisi, default `nextgenserver:8188`)
+  - `Ukuran Video Project`
+  - `Model Prompt Generation`
+    - pilihan: `gemini-3.5-flash` / `gemini-3.1-flash-lite`
+    - default: `gemini-3.1-flash-lite`
+  - `Model Translate`
+    - pilihan: `gemini-3.5-flash` / `gemini-3.1-flash-lite`
+    - default: `gemini-3.1-flash-lite`
+  - `Voice Project`
+  - `Caption Project`
+  - `Cover`
+  - pada bagian `Cover`, ukuran cover otomatis mengikuti `Ukuran Video Project` dan dropdown ukuran cover dinonaktifkan
 - menampilkan daftar scene dari project aktif
 - drag-and-drop untuk reorder scene
 - tambah, sisipkan, dan hapus scene
@@ -356,27 +334,17 @@ Fungsi utama:
 - edit prompt WAN
 - edit prompt WAN22 S2V
 - tab `Image Edit` untuk edit gambar berbasis prompt
-- pilih model ElevenLabs:
-  - `Eleven v3`
-  - `Eleven Multilingual v2`
-  - `Eleven Flash v2.5`
-- pilih provider voice:
-  - `elevenlabs`
-  - `edgetts`
-  - `gemini_tts`
-- untuk `gemini_tts`, tersedia field:
-  - `Model Gemini TTS`
-  - `Suara Gemini TTS`
-  - `Gender Suara Gemini TTS`
-- aktif/nonaktif caption otomatis per scene lewat checkbox `Generate Caption`
+- untuk voice, tersedia field:
+  - `Pilihan Suara Scene` (per scene): 8 karakter suara
+- group `Audio` berisi proses generate voice/sound untuk scene atau semua scene
 - edit ukuran image dan WAN
 - edit ukuran WAN22 S2V
 - edit `CFG` untuk WAN22 S2V
 - edit pengaturan seed image
 - edit Lora image
 - edit Lora WAN High dan Low
-- pilih langkah WAN `4 langkah` atau `20 langkah`
-- pilih durasi WAN `5 detik`, `10 detik`, atau `15 detik`
+- langkah WAN fixed `4 langkah`
+- pilih durasi WAN `5 detik` atau `10 detik`
 - pilih model image:
   - `Z-Image Turbo`
   - `Flux.2`
@@ -397,28 +365,31 @@ Fungsi utama:
 - klik pada preview membuka file dengan aplikasi default sistem operasi
 - klik ganda pada preview memiliki perilaku yang sama
 - hapus aset dari menu klik kanan
-- group `Cover` untuk generate `cover.png` per project
 - jalankan proses image, scene, voice, sound, dan compose
 - tombol `Save` untuk backup project aktif menjadi ZIP
 - menampilkan log proses
-- mengubah konfigurasi server lewat dialog
 
 Perilaku UI:
 - operasi scene hanya aktif jika project sudah dibuka
-- tombol `Cover` membuka dialog konfigurasi image cover (struktur sama seperti `Gambar Awal`)
-- konfigurasi cover disimpan global per project di `cover_prompt.json`
+- konfigurasi cover disimpan global per project di `project_settings.json.cover`
 - hasil generate cover disimpan ke `api_production/<project_name>/cover/cover.png`
 - `Status Adegan` menampilkan masalah validasi scene aktif
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
 - `voice` dan `sound` bersifat opsional
-- `voice` hanya wajib jika `voice_provider` dipilih
-- saat provider voice `gemini_tts` dipilih:
-  - dropdown model diisi dari katalog model Gemini TTS melalui API Gemini
-  - dropdown suara menampilkan seluruh voice Gemini TTS yang tersedia
-  - dropdown gender hanya sebagai metadata UI dan tidak memfilter daftar suara
-  - language TTS runtime dipaksa ke `id-ID`
+- `voice` hanya wajib jika `voice_text` diisi
+- pilihan suara scene tersedia di metadata scene melalui `voice_character`
+- language TTS runtime dipaksa ke `id-ID`
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
+- ukuran video project menjadi sumber ukuran tunggal untuk tab:
+  - `WAN22_I2V`
+  - `WAN22 S2V`
+  - `Web Scroll`
+  - `Image Pan`
+  - `Image Zoom`
+  - `Gambar Awal` hanya untuk scene type `wan22_i2v`, `wan22_s2v`, `i2v`
+- dropdown ukuran pada tab-tab tersebut dikunci (disabled) dan hanya menampilkan ukuran project aktif
+- khusus tab `Gambar Awal` pada scene type `image_pan` dan `image_zoom`, dropdown ukuran tetap aktif (tidak mengikuti ukuran project)
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
   - negative prompt dinonaktifkan
@@ -430,20 +401,20 @@ Perilaku UI:
   - tombol `Buat Image`
   - semua grup memakai aturan model/ukuran/seed/Lora/Gemini yang sama seperti tab `Gambar Awal`
 - `sound_prompt` tidak wajib
-- `Generate Caption` default aktif untuk scene baru
-- caption tidak lagi dibuat lewat tombol terpisah; caption berjalan otomatis setelah video selesai dibentuk jika `Generate Caption` aktif
+- `Generate Caption` default aktif untuk project baru dan disimpan di `project_settings.json.caption`
+- caption tidak lagi dibuat lewat tombol terpisah; caption berjalan otomatis setelah video selesai dibentuk jika `project_settings.caption.generate_caption` aktif
 - untuk `web_scroll`:
   - tab `S2V`, `I2V`, dan `Gambar Awal` disembunyikan
-  - tab `Web Scroll` ditampilkan dengan input: `url`, `ukuran`, `duration_seconds`, `speed`, `capture_mode`
+  - tab `Web Scroll` ditampilkan dengan input: `url`, `ukuran`, `duration_seconds`, `speed`
   - tombol `Generate Image Awal` nonaktif (disabled)
 - untuk `image_pan`:
   - tab `Gambar Awal` tetap tersedia
-  - tab `Image Pan` ditampilkan dengan input: `ukuran` (portrait-only), `direction`, `capture_mode`
+  - tab `Image Pan` ditampilkan dengan input: `ukuran` (portrait-only), `direction`
   - durasi diatur dari field durasi scene di tab `Metadata`
   - tombol `Generate Image Awal` tetap aktif
 - untuk `image_zoom`:
   - tab `Gambar Awal` tetap tersedia
-  - tab `Image Zoom` ditampilkan dengan input: `ukuran`, `zoom_direction`, `focal_point`, `zoom_strength`, `capture_mode`
+  - tab `Image Zoom` ditampilkan dengan input: `ukuran`, `zoom_direction`, `focal_point`, `zoom_strength`
   - durasi diatur dari field durasi scene di tab `Metadata`
   - tombol `Generate Image Awal` tetap aktif
 - untuk `wan22_s2v`, tab `WAN22 S2V` menyediakan:
@@ -464,7 +435,7 @@ Perilaku UI:
   - input `Prompt` di UI selalu menampilkan `id_new`
   - saat tombol `Edit Gambar` ditekan:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
-    - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai provider translate yang dipilih di toolbar atas, lalu hasilnya dipakai untuk edit
+    - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
@@ -540,12 +511,8 @@ Implementasi domain WAN:
 Template WAN:
 - normal `4 langkah`
   - `api_template/wan22_i2v_4steps_api.json`
-- normal `20 langkah`
-  - `api_template/wan22_i2v_api.json`
 - Lora `4 langkah`
   - `api_template/wan22_i2v_4steps_lora_api.json`
-- Lora `20 langkah`
-  - `api_template/wan22_i2v_lora_api.json`
 
 Resolusi WAN yang tersedia:
 - `368x640`
@@ -566,12 +533,10 @@ Durasi WAN:
 - nilai yang didukung:
   - `5`
   - `10`
-  - `15`
 - UI `WAN22_I2V` menyediakan dropdown `Durasi WAN`
-- prompt WAN yang dipakai hanya 3 pasang:
+- prompt WAN yang dipakai hanya 2 pasang:
   - `positive_prompt_one` / `negative_prompt_one`
   - `positive_prompt_two` / `negative_prompt_two`
-  - `positive_prompt_three` / `negative_prompt_three`
 
 ## WAN22 S2V Workflow
 
@@ -649,7 +614,7 @@ Fungsi:
   - download hasil edit ke root folder scene
 - jika model `Gemini`:
   - kirim gambar sumber + prompt runtime ke Gemini API
-  - prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai Gemini `gemini-2.5-flash`
+  - prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai model `project_settings.json.translate.model`
   - request image size `1K`
   - simpan hasil akhir ke root folder scene dengan ukuran mengikuti orientasi/ukuran gambar sumber
 
@@ -664,7 +629,7 @@ Contoh:
 Script: `scripts/generate_cover_image.py`
 
 Fungsi:
-- membaca `cover_prompt.json` pada root project
+- membaca konfigurasi cover dari `project_settings.json.cover`
 - prompt cover mengikuti aturan bilingual yang sama: UI menulis `id_new`, runtime memakai `en` atau menerjemahkan `id_new` saat perlu
 - generate image cover sesuai model image (`ComfyUI` atau `Gemini`)
 - menyimpan hasil final sebagai `api_production/<project_name>/cover/cover.png`
@@ -681,30 +646,43 @@ Contoh:
 Script: `scripts/generate_voice.py`
 
 Fungsi:
-- membaca `scene_meta.json`
-- memilih engine voice otomatis dari `voice_provider`
-- `edgetts` memakai ComfyUI
-- `elevenlabs` memakai API ElevenLabs
-- `gemini_tts` memakai Gemini API native TTS
-- model ElevenLabs dibaca dari `elevenlabs_model_id`
-- model Gemini TTS dibaca dari `gemini_tts_model_id`
-- voice Gemini TTS dibaca dari `gemini_tts_voice_name`
-- gender Gemini TTS dibaca dari `gemini_tts_gender`
+- membaca provider voice global dari `project_settings.json.voice`:
+  - `gemini`
+  - `elevenlabs`
+- membaca `voice_text` dan `voice_character` dari `scene_meta.json`
+- jika provider `gemini`:
+  - memakai Gemini API native TTS
+  - model fixed `gemini-3.1-flash-tts-preview`
+  - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Candy/Lily/Finn/Kevin)
+  - profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
+    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Candy.txt`, `Lily.txt`, `Finn.txt`, `Kevin.txt`
+  - format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
+  - `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
+  - jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
+  - saat menjalankan semua scene sekaligus, sistem mencoba mode konsisten per `voice_character`:
+    - scene dikelompokkan berdasarkan `voice_character`
+    - grup yang berisi lebih dari satu scene digabung menjadi satu transcript
+    - grup yang hanya berisi satu scene tetap digenerate per scene
+    - menyisipkan token `SCENEBREAKTOKEN` sebagai instruksi jeda panjang antar scene
+    - menghasilkan satu WAV gabungan dan menyimpannya di `api_production/<project_name>/voice_combined/`
+    - membagi WAV berdasarkan jeda panjang, lalu trim silence, snap akhir ke zero crossing, dan memberi fade-out pendek untuk mengurangi bunyi klik
+    - jika deteksi jeda panjang gagal, proses fallback ke generate per scene
+- jika provider `elevenlabs`:
+  - memakai ElevenLabs API
+  - model fixed `eleven_v3`
+  - `voice_id` otomatis mengikuti `voice_character`
 - file output voice selalu memakai awalan `speech_`
 
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_voice.py --server 127.0.0.1:8188 --project demo_project --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_voice.py --server 127.0.0.1:8188 --project demo_project
 ```
-
-Konfigurasi key:
-- `ELEVENLABSKEY` dibaca dari `keys.cfg` di root project
 
 Contoh `keys.cfg`:
 ```ini
-ELEVENLABSKEY=isi_api_key_elevenlabs
-AUDIOCRAFTKEY=isi_api_key_audiocraft
 GEMINIKEY=isi_api_key_gemini
+ELEVENLABSKEY=isi_api_key_elevenlabs
 ```
 
 Catatan key Gemini:
@@ -720,15 +698,15 @@ Script: `scripts/generate_sound.py`
 Fungsi:
 - membaca `sound_prompt` dan `duration_seconds` dari `scene_meta.json`
 - `sound_prompt` juga mengikuti format bilingual `id_old` / `id_new` / `en`, dan runtime memakai `en` bila tersedia
-- request audio ke audio server
-- menyimpan hasil WAV ke folder scene
+- request sound effect ke ElevenLabs Sound Effects API
+- output ElevenLabs dikonversi ke WAV memakai `ffmpeg`, lalu disimpan ke folder scene
 
 Catatan:
-- membaca `keys.cfg` di root project untuk `AUDIOCRAFTKEY`
+- membaca `keys.cfg` di root project untuk `ELEVENLABSKEY`
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe scripts\generate_sound.py --server 127.0.0.1:7777 --project demo_project --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_sound.py --project demo_project --scene scene_1
 ```
 
 ## Caption Otomatis
@@ -743,7 +721,7 @@ Fungsi:
 - burn subtitle langsung ke video final
 
 Perilaku:
-- caption berjalan otomatis setelah video scene selesai dibuat jika `generate_caption=true`
+- caption berjalan otomatis setelah video scene selesai dibuat jika `project_settings.caption.generate_caption=true`
 - sumber teks caption selalu dari `voice_text`
 - file `.caption.srt` disimpan di samping video yang dicaption
 
@@ -817,3 +795,5 @@ File logging utama:
 
 Log runtime default:
 - `content_creation.log`
+
+

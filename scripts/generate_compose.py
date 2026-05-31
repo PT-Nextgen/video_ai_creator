@@ -537,7 +537,7 @@ def compose_scene(
 
     padded_audio_inputs = []
     # Determine speech candidates by filename patterns
-    speech_keys = ('elevenlabs', 'edgetts', 'voice', 'tts')
+    speech_keys = ('voice', 'tts')
     for idx, a in enumerate(audios):
         vol = sound_vols.get(a, 1.0)
         # detect likely speech files by filename
@@ -850,7 +850,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             except Exception:
                 scene_type = ''
 
-            # Keep s2v speech from generated video and mix only scene sounds.
+            # For WAN22 S2V, prefer speech embedded in generated video.
             is_s2v = scene_type == 'wan22_s2v'
             compose_scene(
                 scene_dir,

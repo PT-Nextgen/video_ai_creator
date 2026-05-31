@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in os.sys.path:
@@ -12,9 +13,10 @@ if PROJECT_ROOT not in os.sys.path:
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
 from scripts.server_config import get_server_address
+from scripts.project_settings import load_project_settings
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
-from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
+from prompt_localization import resolve_prompt_payload_for_runtime
 
 
 def _replace_or_copy(src: str, dst: str):
@@ -36,23 +38,24 @@ def _replace_or_copy(src: str, dst: str):
 
 
 def process_cover(project_dir: str, server: str, timeout: int = 600, interval: float = 2.0):
-    cover_config_path = os.path.join(project_dir, "cover_prompt.json")
-    if not os.path.exists(cover_config_path):
-        write_log(f"cover_prompt.json not found in {project_dir}", level="error")
-        return False
+    project_settings_path = os.path.join(project_dir, "project_settings.json")
 
     try:
-        prompts = read_json_for_runtime(cover_config_path, required=True, log_fn=write_log)
-    except Exception as e:
-        write_log(f"Gagal sinkronisasi prompt runtime untuk {cover_config_path}: {e}", level="warning")
-        with open(cover_config_path, "r", encoding="utf-8") as f:
-            raw_prompts = json.load(f)
-        prompts, _, _ = resolve_prompt_payload_for_runtime(
-            "cover_prompt.json",
-            raw_prompts,
-            translate_fn=lambda text: text,
-            log_fn=write_log,
-        )
+        project_settings = load_project_settings(Path(project_dir))
+    except Exception:
+        project_settings = {}
+    cover_prompt = project_settings.get("cover") if isinstance(project_settings, dict) else None
+
+    if not isinstance(cover_prompt, dict) or not cover_prompt:
+        write_log(f"Konfigurasi cover tidak ditemukan di project_settings.json: {project_dir}", level="error")
+        return False
+
+    prompts, _, _ = resolve_prompt_payload_for_runtime(
+        "project_settings_cover.json",
+        cover_prompt,
+        project_dir=Path(project_dir),
+        log_fn=write_log,
+    )
     model_name = get_model_display_name(prompts)
 
     cover_dir = os.path.join(project_dir, "cover")
@@ -76,7 +79,7 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
             workflow,
             server,
             log_file=None,
-            source_label=cover_config_path,
+            source_label=project_settings_path,
             model_name=model_name,
         )
     except Exception as e:
@@ -118,7 +121,7 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate project cover image from cover_prompt.json")
+    parser = argparse.ArgumentParser(description="Generate project cover image from project_settings.json")
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     args = parser.parse_args()

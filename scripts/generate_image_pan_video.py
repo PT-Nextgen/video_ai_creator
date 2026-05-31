@@ -15,7 +15,6 @@ from logging_config import write_log
 
 
 API_PRODUCTION_ROOT = REPO_ROOT / "api_production"
-LIVE_SUPERSAMPLE_FACTOR = 2
 STABLE_SUPERSAMPLE_FACTOR = 2
 HORIZONTAL_MOTION_BLUR_KERNEL = ImageFilter.Kernel(
     (3, 3),
@@ -68,13 +67,13 @@ def _render_image_pan_video_from_source(
     direction: str,
     capture_mode: str,
 ):
-    if capture_mode not in {"live_capture", "stable_pan"}:
-        raise ValueError("Mode capture image_pan tidak valid. Gunakan `stable_pan` atau `live_capture`.")
+    if capture_mode != "stable_pan":
+        raise ValueError("Mode capture image_pan tidak valid. Hanya `stable_pan` yang didukung.")
 
     # Render above output resolution and crop using float source coordinates. This avoids integer
     # crop stepping (`1 px, 2 px, 1 px...`) that appears as vibration at low FPS.
-    supersample = STABLE_SUPERSAMPLE_FACTOR if capture_mode == "stable_pan" else LIVE_SUPERSAMPLE_FACTOR
-    resize_resample = Image.LANCZOS if capture_mode == "stable_pan" else Image.BICUBIC
+    supersample = STABLE_SUPERSAMPLE_FACTOR
+    resize_resample = Image.LANCZOS
     transform_resample = Image.BICUBIC
 
     internal_w = max(1, width * supersample)
@@ -149,8 +148,8 @@ def generate_image_pan_video(
         raise ValueError("FPS image_pan harus lebih besar dari 0.")
     if direction not in {"from_right", "from_left"}:
         raise ValueError("Arah image_pan tidak valid. Gunakan `from_right` atau `from_left`.")
-    if capture_mode not in {"stable_pan", "live_capture"}:
-        raise ValueError("Mode capture image_pan tidak valid. Gunakan `stable_pan` atau `live_capture`.")
+    if capture_mode != "stable_pan":
+        raise ValueError("Mode capture image_pan tidak valid. Hanya `stable_pan` yang didukung.")
 
     output_name = f"image_pan_{int(time.time())}.mp4"
     output_path = scene_dir_path / output_name
@@ -186,7 +185,7 @@ def _main():
     parser.add_argument("--duration", type=float, default=5.0, help="Durasi detik (0.0-20.0, kelipatan 0.1)")
     parser.add_argument("--direction", default="from_right", help="Arah pan: from_right atau from_left")
     parser.add_argument("--fps", type=int, default=16, help="FPS output")
-    parser.add_argument("--mode", default="stable_pan", help="Mode capture: stable_pan atau live_capture")
+    parser.add_argument("--mode", default="stable_pan", help="Mode capture (hanya stable_pan)")
     args = parser.parse_args()
 
     scene_dir = API_PRODUCTION_ROOT / args.project / args.scene

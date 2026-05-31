@@ -11,6 +11,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from logging_config import setup_logging, get_logger, write_log
+from scripts.project_settings import load_project_settings
 
 setup_logging()
 logger = get_logger(__name__)
@@ -260,13 +261,15 @@ def transcribe_audio(audio_path: Path, model_size: str):
     )
     return list(segments)
 
-def is_caption_enabled(scene_meta: dict) -> bool:
-    return bool(scene_meta.get("generate_caption", True))
+def is_caption_enabled(scene_dir: Path, scene_meta: dict) -> bool:
+    project_dir = Path(scene_dir).parent
+    project_settings = load_project_settings(project_dir)
+    return bool(project_settings.get("caption", {}).get("generate_caption", True))
 
 
 def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = DEFAULT_MODEL_SIZE, overwrite: bool = True):
     scene_meta = load_scene_meta(scene_dir)
-    if not is_caption_enabled(scene_meta):
+    if not is_caption_enabled(scene_dir, scene_meta):
         write_log(f"Caption dinonaktifkan untuk {scene_dir}, melewati proses caption.", level="info")
         return True
 

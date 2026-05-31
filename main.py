@@ -41,6 +41,7 @@ from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
 from scripts.generate_image_zoom_video import generate_image_zoom_video
 from prompt_localization import prepare_prompt_payload_for_save, read_json_for_runtime, resolve_prompt_payload_for_runtime
+from scripts.project_settings import load_project_settings
 
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
@@ -56,13 +57,11 @@ DEFAULT_WEB_SCROLL_PROMPT = {
     "height": 640,
     "duration_seconds": 5.0,
     "speed": 1,
-    "capture_mode": "stable_pan",
 }
 DEFAULT_IMAGE_PAN_PROMPT = {
     "width": 480,
     "height": 848,
     "direction": "from_right",
-    "capture_mode": "stable_pan",
 }
 DEFAULT_IMAGE_ZOOM_PROMPT = {
     "width": 480,
@@ -70,7 +69,6 @@ DEFAULT_IMAGE_ZOOM_PROMPT = {
     "zoom_direction": "in",
     "focal_point": "center",
     "zoom_strength": 1.3,
-    "capture_mode": "stable_pan",
 }
 
 # initialize logging for the process (idempotent)
@@ -133,7 +131,7 @@ def _ensure_scene_json(scene_dir, filename, default_data):
 
 
 
-def process_scene(scene_dir, server):
+def process_scene(scene_dir, server, project_generate_caption=True):
     """Process a single scene directory.
 
     Steps:
@@ -150,7 +148,7 @@ def process_scene(scene_dir, server):
         write_log(f"Failed to read scene_meta.json for {scene_dir}: {e}")
         return False
 
-    scene_type = scene_meta.get('scene_type', 'default')
+    scene_type = scene_meta.get('scene_type', 'wan22_i2v')
 
     def _safe_error_text(err):
         text = str(err)
@@ -159,7 +157,7 @@ def process_scene(scene_dir, server):
         return text.encode("cp1252", errors="replace").decode("cp1252")
 
     def _apply_caption_if_enabled(video_path):
-        if not scene_meta.get("generate_caption", True):
+        if not bool(project_generate_caption):
             return True
         try:
             return apply_caption_to_video(Path(scene_dir), Path(video_path), overwrite=True)
@@ -542,7 +540,6 @@ def process_scene(scene_dir, server):
         except (TypeError, ValueError):
             web_duration = 5.0
         web_speed = int(web_prompt.get('speed', 1))
-        web_capture_mode = str(web_prompt.get('capture_mode', 'stable_pan')).strip() or 'stable_pan'
         composed = None
         last_error = None
         for attempt in range(1, 4):
@@ -555,7 +552,7 @@ def process_scene(scene_dir, server):
                     duration_seconds=web_duration,
                     speed=web_speed,
                     fps=WEB_SCROLL_FPS,
-                    capture_mode=web_capture_mode,
+                    capture_mode='stable_pan',
                 )
                 last_error = None
                 break
@@ -597,7 +594,6 @@ def process_scene(scene_dir, server):
             pan_height = int(pan_prompt.get('height', 848))
             pan_duration = float(scene_meta.get('duration_seconds', 5.0))
             pan_direction = str(pan_prompt.get('direction', 'from_right')).strip() or 'from_right'
-            pan_capture_mode = str(pan_prompt.get('capture_mode', 'stable_pan')).strip() or 'stable_pan'
         except Exception as e:
             write_log(f"Invalid image_pan prompt value for {scene_dir}: {e}")
             return False
@@ -616,7 +612,7 @@ def process_scene(scene_dir, server):
                     duration_seconds=pan_duration,
                     direction=pan_direction,
                     fps=I2V_FPS,
-                    capture_mode=pan_capture_mode,
+                    capture_mode='stable_pan',
                 )
                 last_error = None
                 break
@@ -660,7 +656,6 @@ def process_scene(scene_dir, server):
             zoom_direction = str(zoom_prompt.get('zoom_direction', 'in')).strip() or 'in'
             zoom_focal = str(zoom_prompt.get('focal_point', 'center')).strip() or 'center'
             zoom_strength = float(zoom_prompt.get('zoom_strength', 1.3))
-            zoom_capture_mode = str(zoom_prompt.get('capture_mode', 'stable_pan')).strip() or 'stable_pan'
         except Exception as e:
             write_log(f"Invalid image_zoom prompt value for {scene_dir}: {e}")
             return False
@@ -681,7 +676,7 @@ def process_scene(scene_dir, server):
                     focal_point=zoom_focal,
                     zoom_strength=zoom_strength,
                     fps=I2V_FPS,
-                    capture_mode=zoom_capture_mode,
+                    capture_mode='stable_pan',
                 )
                 last_error = None
                 break
@@ -707,178 +702,8 @@ def process_scene(scene_dir, server):
         write_log(f"Completed image_zoom composition for {scene_dir}: {composed}")
         return True
 
-    # default behavior: create initial image -> upload -> wan22 prompt -> wait/download video
-    try:
-        z_prompt = _read_scene_json(scene_dir, 'z_image_prompt.json', required=True)
-        image_model_name = get_image_model_display_name(z_prompt)
-    except Exception as e:
-        write_log(f"Failed to read z_image prompt for {scene_dir}: {e}")
-        return False
-
-    image_out_path = None
-    if is_gemini_prompt(z_prompt) or get_image_model_key(z_prompt) == MODEL_GEMINI_IMAGE:
-        try:
-            image_out_path = generate_scene_image(scene_dir, z_prompt)
-        except Exception as e:
-            write_log(f"Failed to generate Gemini image for {scene_dir}: {e}")
-            return False
-        if not image_out_path or not os.path.exists(image_out_path):
-            write_log(f"Gemini image not found for {scene_dir}: {image_out_path}")
-            return False
-        if os.path.getsize(image_out_path) == 0:
-            write_log(f"Gemini image is empty for {scene_dir}: {image_out_path}")
-            return False
-        write_log(f"Generated {image_model_name} image for {scene_dir}: {image_out_path}")
-    else:
-        try:
-            z_workflow = build_z_image_workflow(z_prompt)
-        except Exception as e:
-            write_log(f"Failed to build z_image workflow for {scene_dir}: {e}")
-            return False
-
-        z_result = send_z_image_workflow(
-            z_workflow,
-            server,
-            log_file=LOG_FILE,
-            source_label=os.path.join(scene_dir, 'z_image_prompt.json'),
-            model_name=image_model_name,
-        )
-        prompt_id = z_result.get('prompt_id') or z_result.get('id')
-        write_log(f"Posted {image_model_name} workflow for {scene_dir}, prompt_id={prompt_id}")
-        try:
-            hist = comfyui_api.get_history_for_prompt(server, prompt_id)
-            write_log(f"History for prompt_id={prompt_id}: {json.dumps(hist)}")
-        except Exception as e:
-            write_log(f"Failed to fetch history for prompt_id={prompt_id}: {e}")
-
-        image_out = None
-        if prompt_id:
-            image_out = comfyui_api.wait_for_output(server, prompt_id, output_type='image', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
-
-        if not image_out:
-            write_log(f"No image found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-            return False
-
-        write_log(f"Image output info: {json.dumps(image_out)}")
-        image_filename = image_out.get('filename') or image_out.get('name') or image_out.get('file')
-        image_subfolder = image_out.get('subfolder')
-        image_type = image_out.get('type')
-
-        if not image_filename:
-            write_log(f"Cannot determine image filename from output: {json.dumps(image_out)}")
-            return False
-
-        image_url = comfyui_api.get_file_url(server, image_filename, subfolder=image_subfolder, type_=image_type)
-        image_out_path = os.path.join(scene_dir, image_filename)
-        try:
-            comfyui_api.download_file_url(image_url, image_out_path)
-        except Exception as e:
-            write_log(f"Failed to download image {image_filename} from {image_url}: {e}")
-            return False
-
-        try:
-            if not os.path.exists(image_out_path) or os.path.getsize(image_out_path) == 0:
-                write_log(f"Downloaded file missing or empty: {image_out_path}")
-                return False
-        except Exception as e:
-            write_log(f"Error checking downloaded file {image_out_path}: {e}")
-            return False
-
-    try:
-        upload_info = comfyui_api.upload_file(server, image_out_path)
-        write_log(f"Upload response for {image_out_path}: {json.dumps(upload_info)}")
-    except Exception as e:
-        write_log(f"Upload failed for {image_out_path}: {e}")
-        return False
-
-    returned_name = None
-    for key in ('name', 'filename', 'file'):
-        if key in upload_info and upload_info.get(key):
-            returned_name = upload_info.get(key)
-            break
-    if not returned_name and upload_info.get('url'):
-        try:
-            from urllib.parse import urlparse
-            returned_name = os.path.basename(urlparse(upload_info.get('url')).path)
-        except Exception:
-            returned_name = None
-
-    if returned_name and returned_name != image_filename:
-        new_local_path = os.path.join(scene_dir, returned_name)
-        try:
-            os.replace(image_out_path, new_local_path)
-            image_out_path = new_local_path
-            uploaded_name = returned_name
-            write_log(f"Local file renamed to match server: {returned_name}")
-        except Exception as e:
-            uploaded_name = returned_name
-            write_log(f"Failed to rename local file to {returned_name}: {e} -- Using server-side name for workflow.")
-    else:
-        uploaded_name = returned_name or image_filename
-
-    try:
-        wan_prompt = _read_scene_json(scene_dir, 'wan22_i2v_prompt.json', required=True)
-        wan_workflow = build_wan_workflow(wan_prompt, scene_meta, uploaded_name=uploaded_name)
-    except Exception as e:
-        write_log(f"Failed to build wan22 workflow for {scene_dir}: {e}")
-        return False
-
-    wan_result = send_wan_workflow(
-        wan_workflow,
-        uploaded_name,
-        server,
-        log_file=LOG_FILE,
-        source_label=os.path.join(scene_dir, 'wan22_i2v_prompt.json'),
-    )
-    prompt_id = wan_result.get('prompt_id') or wan_result.get('id')
-    write_log(f"Posted wan22 workflow for {scene_dir}, prompt_id={prompt_id}")
-
-    try:
-        wan_hist = comfyui_api.get_history_for_prompt(server, prompt_id)
-        write_log(f"WAN history for prompt_id={prompt_id}: {json.dumps(wan_hist)}")
-    except Exception as e:
-        write_log(f"Failed to fetch WAN history for prompt_id={prompt_id}: {e}")
-
-    video_out = None
-    if prompt_id:
-        video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
-
-    if not video_out:
-        write_log(f"No video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-        return False
-
-    write_log(f"Video output info: {json.dumps(video_out)}")
-    video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-    video_subfolder = video_out.get('subfolder')
-    video_type = video_out.get('type')
-
-    if not video_filename:
-        write_log(f"Cannot determine video filename from output: {json.dumps(video_out)}")
-        return False
-
-    video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
-    video_out_path = os.path.join(scene_dir, video_filename)
-    try:
-        comfyui_api.download_file_url(video_url, video_out_path)
-    except Exception as e:
-        write_log(f"Failed to download video {video_filename} from {video_url}: {e}")
-        return False
-
-    try:
-        if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
-            write_log(f"Downloaded file missing or empty: {video_out_path}")
-            return False
-    except Exception as e:
-        write_log(f"Error checking downloaded file {video_out_path}: {e}")
-        return False
-
-    if not _mix_scene_audio_to_video(video_out_path, is_s2v=False):
-        return False
-    if not _apply_caption_if_enabled(video_out_path):
-        return False
-
-    write_log(f"Completed processing {scene_dir}")
-    return True
+    write_log(f"Unsupported scene_type `{scene_type}` for {scene_dir}.")
+    return False
 
 
 def main():
@@ -894,6 +719,13 @@ def main():
         write_log(f"Project folder tidak ditemukan: {project_dir}")
         print(f"Project folder not found: {project_dir}")
         return 1
+    try:
+        project_settings = load_project_settings(Path(project_dir))
+    except Exception as e:
+        write_log(f"Gagal membaca project_settings.json: {e}")
+        print(f"Gagal membaca project_settings.json: {e}")
+        return 1
+    project_generate_caption = bool(project_settings.get("caption", {}).get("generate_caption", True))
 
     scenes = sorted([d for d in os.listdir(project_dir) if d.startswith('scene_')], key=_scene_sort_key)
 
@@ -922,7 +754,7 @@ def main():
         for scene in scenes:
             scene_dir = os.path.join(project_dir, scene)
             print(f"Processing {scene_dir}")
-            ok = process_scene(scene_dir, args.server)
+            ok = process_scene(scene_dir, args.server, project_generate_caption=project_generate_caption)
             if not ok:
                 write_log(f"Stopping run due to failure processing {scene}")
                 print(f"Stopped due to failure in {scene}")

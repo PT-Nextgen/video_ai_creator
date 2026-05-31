@@ -15,7 +15,6 @@ from logging_config import write_log
 
 
 API_PRODUCTION_ROOT = REPO_ROOT / "api_production"
-LIVE_SUPERSAMPLE_FACTOR = 2
 STABLE_SUPERSAMPLE_FACTOR = 2
 MOTION_BLUR_KERNEL = ImageFilter.Kernel(
     (3, 3),
@@ -56,11 +55,11 @@ def _render_image_zoom_video_from_source(
     zoom_strength: float,
     capture_mode: str,
 ):
-    if capture_mode not in {"stable_pan", "live_capture"}:
-        raise ValueError("Mode capture image_zoom tidak valid. Gunakan `stable_pan` atau `live_capture`.")
+    if capture_mode != "stable_pan":
+        raise ValueError("Mode capture image_zoom tidak valid. Hanya `stable_pan` yang didukung.")
 
-    supersample = STABLE_SUPERSAMPLE_FACTOR if capture_mode == "stable_pan" else LIVE_SUPERSAMPLE_FACTOR
-    resize_resample = Image.LANCZOS if capture_mode == "stable_pan" else Image.BICUBIC
+    supersample = STABLE_SUPERSAMPLE_FACTOR
+    resize_resample = Image.LANCZOS
 
     internal_w = max(1, width * supersample)
     internal_h = max(1, height * supersample)
@@ -162,8 +161,8 @@ def generate_image_zoom_video(
         )
     if zoom_strength < 1.0 or zoom_strength > 1.5:
         raise ValueError("Kekuatan zoom image_zoom harus di antara 1.0 sampai 1.5.")
-    if capture_mode not in {"stable_pan", "live_capture"}:
-        raise ValueError("Mode capture image_zoom tidak valid. Gunakan `stable_pan` atau `live_capture`.")
+    if capture_mode != "stable_pan":
+        raise ValueError("Mode capture image_zoom tidak valid. Hanya `stable_pan` yang didukung.")
 
     output_name = f"image_zoom_{int(time.time())}.mp4"
     output_path = scene_dir_path / output_name
@@ -209,7 +208,7 @@ def _main():
     )
     parser.add_argument("--zoom-strength", type=float, default=1.3, help="Kekuatan zoom (1.0-1.5)")
     parser.add_argument("--fps", type=int, default=16, help="FPS output")
-    parser.add_argument("--mode", default="stable_pan", help="Mode capture: stable_pan atau live_capture")
+    parser.add_argument("--mode", default="stable_pan", help="Mode capture (hanya stable_pan)")
     args = parser.parse_args()
 
     scene_dir = API_PRODUCTION_ROOT / args.project / args.scene

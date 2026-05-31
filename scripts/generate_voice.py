@@ -1,34 +1,32 @@
 import argparse
-import importlib.util
+import audioop
 import os
 import sys
 import time
+import wave
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from scripts import comfyui_api
 from logging_config import setup_logging, get_logger, write_log
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
-from edgetts.edgetts import build_edgetts_workflow
-from gemini.gemini_tts import process_scene as process_gemini_tts_scene
-
-
-def _load_local_elevenlabs_tts():
-    module_path = os.path.join(ROOT, "elevenlabs", "elevenlabs_tts.py")
-    spec = importlib.util.spec_from_file_location("project_elevenlabs_tts", module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load local elevenlabs_tts module from {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-_elevenlabs_tts = _load_local_elevenlabs_tts()
-find_elevenlabs_key = _elevenlabs_tts.find_elevenlabs_key
-process_elevenlabs_scene = _elevenlabs_tts.process_scene
+from gemini.gemini_tts import (
+    GEMINI_TTS_MODE_DEFAULT,
+    GEMINI_VOICE_NAME_BY_CHARACTER,
+    _build_tts_text,
+    process_scene as process_gemini_tts_scene,
+    synthesize as synthesize_gemini,
+)
+from scripts.elevenlabs_tts import find_elevenlabs_key, process_scene as process_elevenlabs_tts_scene
+from scripts.voice_profiles import (
+    VOICE_PROVIDER_ELEVENLABS,
+    VOICE_PROVIDER_GEMINI,
+    resolve_scene_voice_key,
+)
+from scripts.project_settings import load_project_settings
 
 
 setup_logging()
@@ -36,6 +34,541 @@ logger = get_logger(__name__)
 
 POLL_INTERVAL = 3.0
 POLL_TIMEOUT = 600
+
+
+def _estimate_ratio_boundaries(total_frames: int, text_lengths: list[int]) -> list[int]:
+    weights = [max(1, int(v)) for v in text_lengths]
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        return []
+    boundaries = []
+    cumulative = 0
+    for idx in range(len(weights) - 1):
+        cumulative += weights[idx]
+        boundary = int(round((cumulative / total_weight) * total_frames))
+        boundaries.append(max(1, min(total_frames - 1, boundary)))
+    return boundaries
+
+
+def _snap_boundaries_to_silence(
+    pcm: bytes,
+    channels: int,
+    sample_width: int,
+    frame_rate: int,
+    total_frames: int,
+    boundaries: list[int],
+) -> list[int]:
+    if not boundaries or total_frames <= 0:
+        return boundaries
+    bytes_per_frame = channels * sample_width
+    win_frames = max(1, int(frame_rate * 0.08))  # 80 ms
+    step_frames = max(1, int(frame_rate * 0.02))  # 20 ms
+    search_frames = max(step_frames, int(frame_rate * 0.7))  # 700 ms around estimated boundary
+    min_gap_frames = int(frame_rate * 0.35)  # keep at least 350 ms per segment
+
+    snapped = []
+    prev_boundary = 0
+    for idx, est in enumerate(boundaries):
+        lower_limit = prev_boundary + min_gap_frames
+        upper_limit = total_frames - ((len(boundaries) - idx) * min_gap_frames)
+        lo = max(lower_limit, est - search_frames)
+        hi = min(upper_limit, est + search_frames)
+        if lo >= hi:
+            candidate = max(lower_limit, min(upper_limit, est))
+            snapped.append(candidate)
+            prev_boundary = candidate
+            continue
+
+        best_boundary = est
+        best_rms = None
+        pos = lo
+        while pos <= hi:
+            start = pos * bytes_per_frame
+            end = min(len(pcm), (pos + win_frames) * bytes_per_frame)
+            frag = pcm[start:end]
+            if frag:
+                try:
+                    rms = audioop.rms(frag, sample_width)
+                except Exception:
+                    rms = None
+                if rms is not None and (best_rms is None or rms < best_rms):
+                    best_rms = rms
+                    best_boundary = pos
+            pos += step_frames
+
+        best_boundary = max(lower_limit, min(upper_limit, best_boundary))
+        snapped.append(best_boundary)
+        prev_boundary = best_boundary
+
+    return snapped
+
+
+def _split_wav_by_ratio(in_wav_path: str, out_paths: list[str], text_lengths: list[int]):
+    with wave.open(in_wav_path, "rb") as src:
+        channels = src.getnchannels()
+        sample_width = src.getsampwidth()
+        frame_rate = src.getframerate()
+        total_frames = src.getnframes()
+        all_pcm = src.readframes(total_frames)
+
+    if total_frames <= 0 or not out_paths:
+        return False
+
+    bytes_per_frame = channels * sample_width
+    boundaries = _estimate_ratio_boundaries(total_frames, text_lengths)
+    boundaries = _snap_boundaries_to_silence(
+        pcm=all_pcm,
+        channels=channels,
+        sample_width=sample_width,
+        frame_rate=frame_rate,
+        total_frames=total_frames,
+        boundaries=boundaries,
+    )
+    segment_edges = [0, *boundaries, total_frames]
+
+    for idx, out_path in enumerate(out_paths):
+        start_frame = segment_edges[idx]
+        end_frame = segment_edges[idx + 1]
+        start_byte = max(0, start_frame * bytes_per_frame)
+        end_byte = min(len(all_pcm), end_frame * bytes_per_frame)
+        chunk_pcm = all_pcm[start_byte:end_byte]
+        chunk_pcm = _trim_segment_silence(
+            chunk_pcm,
+            channels=channels,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            threshold_rms=260,
+            window_ms=20,
+            keep_pad_ms=40,
+        )
+        chunk_pcm = _snap_end_to_zero_crossing(
+            chunk_pcm,
+            channels=channels,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            search_ms=30,
+        )
+        chunk_pcm = _apply_fade_out(
+            chunk_pcm,
+            channels=channels,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            fade_ms=24,
+            tail_silence_ms=80,
+        )
+
+        with wave.open(out_path, "wb") as dst:
+            dst.setnchannels(channels)
+            dst.setsampwidth(sample_width)
+            dst.setframerate(frame_rate)
+            dst.writeframes(chunk_pcm)
+    return True
+
+
+def _find_silence_runs(
+    pcm: bytes,
+    channels: int,
+    sample_width: int,
+    frame_rate: int,
+    threshold_rms: int = 260,
+    window_ms: int = 20,
+):
+    bytes_per_frame = channels * sample_width
+    win_frames = max(1, int(frame_rate * (window_ms / 1000.0)))
+    total_frames = len(pcm) // bytes_per_frame
+    runs = []
+    in_run = False
+    run_start = 0
+    pos = 0
+    while pos < total_frames:
+        start = pos * bytes_per_frame
+        end = min(len(pcm), (pos + win_frames) * bytes_per_frame)
+        frag = pcm[start:end]
+        if not frag:
+            break
+        try:
+            rms = audioop.rms(frag, sample_width)
+        except Exception:
+            rms = 10**9
+        is_silent = rms <= threshold_rms
+        if is_silent and not in_run:
+            in_run = True
+            run_start = pos
+        elif not is_silent and in_run:
+            in_run = False
+            runs.append((run_start, pos))
+        pos += win_frames
+    if in_run:
+        runs.append((run_start, total_frames))
+    return runs
+
+
+def _trim_segment_silence(
+    segment_pcm: bytes,
+    channels: int,
+    sample_width: int,
+    frame_rate: int,
+    threshold_rms: int = 260,
+    window_ms: int = 20,
+    keep_pad_ms: int = 60,
+):
+    bytes_per_frame = channels * sample_width
+    win_frames = max(1, int(frame_rate * (window_ms / 1000.0)))
+    keep_pad_frames = max(0, int(frame_rate * (keep_pad_ms / 1000.0)))
+    total_frames = len(segment_pcm) // bytes_per_frame
+    if total_frames <= 0:
+        return segment_pcm
+
+    first_voice = 0
+    last_voice = total_frames
+
+    pos = 0
+    while pos < total_frames:
+        start = pos * bytes_per_frame
+        end = min(len(segment_pcm), (pos + win_frames) * bytes_per_frame)
+        frag = segment_pcm[start:end]
+        if not frag:
+            break
+        try:
+            rms = audioop.rms(frag, sample_width)
+        except Exception:
+            rms = 0
+        if rms > threshold_rms:
+            first_voice = pos
+            break
+        pos += win_frames
+
+    pos = total_frames
+    while pos > 0:
+        s = max(0, pos - win_frames)
+        start = s * bytes_per_frame
+        end = min(len(segment_pcm), pos * bytes_per_frame)
+        frag = segment_pcm[start:end]
+        if not frag:
+            break
+        try:
+            rms = audioop.rms(frag, sample_width)
+        except Exception:
+            rms = 0
+        if rms > threshold_rms:
+            last_voice = pos
+            break
+        pos -= win_frames
+
+    first_voice = max(0, first_voice - keep_pad_frames)
+    last_voice = min(total_frames, last_voice + keep_pad_frames)
+    if last_voice <= first_voice:
+        return segment_pcm
+    return segment_pcm[first_voice * bytes_per_frame:last_voice * bytes_per_frame]
+
+
+def _snap_end_to_zero_crossing(
+    pcm: bytes,
+    channels: int,
+    sample_width: int,
+    frame_rate: int,
+    search_ms: int = 30,
+):
+    if sample_width != 2 or channels <= 0:
+        return pcm
+    bytes_per_frame = channels * sample_width
+    total_frames = len(pcm) // bytes_per_frame
+    if total_frames <= 2:
+        return pcm
+
+    search_frames = max(1, int(frame_rate * (search_ms / 1000.0)))
+    start_frame = max(1, total_frames - search_frames)
+    best_cut_frame = total_frames
+    min_abs_val = None
+
+    for f in range(start_frame, total_frames):
+        byte_pos = f * bytes_per_frame
+        sample_bytes = pcm[byte_pos:byte_pos + 2]
+        if len(sample_bytes) < 2:
+            continue
+        sample_val = int.from_bytes(sample_bytes, byteorder="little", signed=True)
+        abs_val = abs(sample_val)
+        if min_abs_val is None or abs_val < min_abs_val:
+            min_abs_val = abs_val
+            best_cut_frame = f
+            if abs_val == 0:
+                break
+
+    cut_bytes = max(bytes_per_frame, min(len(pcm), best_cut_frame * bytes_per_frame))
+    return pcm[:cut_bytes]
+
+
+def _apply_fade_out(
+    pcm: bytes,
+    channels: int,
+    sample_width: int,
+    frame_rate: int,
+    fade_ms: int = 12,
+    tail_silence_ms: int = 60,
+):
+    if sample_width != 2 or channels <= 0:
+        return pcm
+    bytes_per_frame = channels * sample_width
+    total_frames = len(pcm) // bytes_per_frame
+    if total_frames <= 2:
+        return pcm
+
+    fade_frames = max(1, int(frame_rate * (fade_ms / 1000.0)))
+    fade_frames = min(fade_frames, total_frames - 1)
+    if fade_frames <= 0:
+        return pcm
+
+    out = bytearray(pcm)
+    start_fade = total_frames - fade_frames
+    for i in range(fade_frames):
+        frame_idx = start_fade + i
+        gain = 0.0 if fade_frames <= 1 else (fade_frames - 1 - i) / (fade_frames - 1)
+        frame_offset = frame_idx * bytes_per_frame
+        for ch in range(channels):
+            s_off = frame_offset + (ch * sample_width)
+            sample_val = int.from_bytes(out[s_off:s_off + 2], byteorder="little", signed=True)
+            scaled = int(round(sample_val * gain))
+            if scaled > 32767:
+                scaled = 32767
+            elif scaled < -32768:
+                scaled = -32768
+            out[s_off:s_off + 2] = int(scaled).to_bytes(2, byteorder="little", signed=True)
+
+    silence_frames = max(0, int(frame_rate * (tail_silence_ms / 1000.0)))
+    if silence_frames:
+        out.extend(b"\x00" * silence_frames * bytes_per_frame)
+    return bytes(out)
+
+
+def _split_wav_by_long_silence(
+    in_wav_path: str,
+    out_paths: list[str],
+    text_lengths: list[int] | None = None,
+    expected_pause_seconds: float = 3.0,
+):
+    with wave.open(in_wav_path, "rb") as src:
+        channels = src.getnchannels()
+        sample_width = src.getsampwidth()
+        frame_rate = src.getframerate()
+        total_frames = src.getnframes()
+        all_pcm = src.readframes(total_frames)
+
+    if total_frames <= 0 or not out_paths:
+        return False
+
+    need_boundaries = len(out_paths) - 1
+    if need_boundaries <= 0:
+        need_boundaries = 0
+
+    silence_runs = _find_silence_runs(
+        pcm=all_pcm,
+        channels=channels,
+        sample_width=sample_width,
+        frame_rate=frame_rate,
+        threshold_rms=260,
+        window_ms=20,
+    )
+
+    min_pause_frames = int(frame_rate * max(2.2, expected_pause_seconds * 0.72))
+    eligible = []
+    for s, e in silence_runs:
+        dur = e - s
+        if dur >= min_pause_frames:
+            center = (s + e) // 2
+            eligible.append((s, e, dur, center))
+
+    if len(eligible) < need_boundaries:
+        return False
+
+    boundaries = []
+    if need_boundaries > 0:
+        # Prioritize the longest silence runs first (the inserted scene separators
+        # should be the most dominant silences), then map to expected boundaries.
+        strongest = sorted(eligible, key=lambda item: item[2], reverse=True)[:need_boundaries]
+        strongest = sorted(strongest, key=lambda item: item[3])
+
+        if text_lengths and len(text_lengths) == len(out_paths):
+            ratio_targets = _estimate_ratio_boundaries(total_frames, text_lengths)
+            chosen = []
+            remaining = strongest[:]
+            for target in ratio_targets[:need_boundaries]:
+                best_idx = None
+                best_dist = None
+                for idx, item in enumerate(remaining):
+                    center = item[3]
+                    dist = abs(center - target)
+                    if best_dist is None or dist < best_dist:
+                        best_dist = dist
+                        best_idx = idx
+                if best_idx is None:
+                    return False
+                chosen.append(remaining.pop(best_idx))
+            boundaries = sorted([item[3] for item in chosen])
+        else:
+            boundaries = [item[3] for item in strongest]
+
+    bytes_per_frame = channels * sample_width
+    edges = [0, *boundaries, total_frames]
+    for idx, out_path in enumerate(out_paths):
+        start_frame = edges[idx]
+        end_frame = edges[idx + 1]
+        start_byte = max(0, start_frame * bytes_per_frame)
+        end_byte = min(len(all_pcm), end_frame * bytes_per_frame)
+        chunk_pcm = all_pcm[start_byte:end_byte]
+        chunk_pcm = _trim_segment_silence(
+            chunk_pcm,
+            channels=channels,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            threshold_rms=260,
+            window_ms=20,
+            keep_pad_ms=60,
+        )
+        chunk_pcm = _snap_end_to_zero_crossing(
+            chunk_pcm,
+            channels=channels,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            search_ms=30,
+        )
+        chunk_pcm = _apply_fade_out(
+            chunk_pcm,
+            channels=channels,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            fade_ms=24,
+            tail_silence_ms=80,
+        )
+        with wave.open(out_path, "wb") as dst:
+            dst.setnchannels(channels)
+            dst.setsampwidth(sample_width)
+            dst.setframerate(frame_rate)
+            dst.writeframes(chunk_pcm)
+    return True
+
+
+def _generate_and_split_gemini_scene_group(project_dir: str, voice_key: str, scene_items: list[dict], logger_obj):
+    if not scene_items:
+        return True
+
+    if len(scene_items) == 1:
+        item = scene_items[0]
+        return process_gemini_tts_scene(item["scene_dir"], logger=logger_obj, write_log=write_log)
+
+    voice_name = GEMINI_VOICE_NAME_BY_CHARACTER.get(voice_key, "Kore")
+    combined_parts = []
+    separator_text = "SCENEBREAKTOKEN"
+    preamble = (
+        "Bacakan seluruh transcript sampai selesai tanpa berhenti di tengah. "
+        "Setiap kali menemukan token SCENEBREAKTOKEN, diam selama kira-kira 3 detik, "
+        "jangan ucapkan tokennya, lalu lanjutkan ke bagian berikutnya."
+    )
+    for idx, item in enumerate(scene_items, start=1):
+        combined_parts.append(item["text"])
+        if idx < len(scene_items):
+            combined_parts.append(separator_text)
+    combined_text = preamble + "\n\n" + "\n\n".join(combined_parts)
+
+    prompt_text = _build_tts_text(voice_key, combined_text, mode=GEMINI_TTS_MODE_DEFAULT)
+    try:
+        audio_bytes = synthesize_gemini(prompt_text, voice_name)
+    except Exception as e:
+        write_log(f"Gemini TTS gabungan gagal untuk voice `{voice_key}`: {e}", level="error")
+        if logger_obj:
+            logger_obj.error("Gemini combined TTS failed for %s: %s", voice_key, e)
+        return False
+    if not audio_bytes:
+        write_log(f"Gemini TTS gabungan voice `{voice_key}` mengembalikan audio kosong.", level="error")
+        return False
+
+    combined_dir = os.path.join(project_dir, "voice_combined")
+    os.makedirs(combined_dir, exist_ok=True)
+    timestamp = int(time.time())
+    tmp_wav = os.path.join(combined_dir, f"speech_gemini_combined_{voice_key}_{timestamp}.wav")
+    try:
+        with wave.open(tmp_wav, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(audio_bytes)
+    except Exception as e:
+        write_log(f"Gagal menyimpan audio gabungan Gemini voice `{voice_key}`: {e}", level="error")
+        return False
+
+    out_paths = [
+        os.path.join(item["scene_dir"], f"speech_gemini_tts_{timestamp}.wav")
+        for item in scene_items
+    ]
+    lengths = [len(item["text"]) for item in scene_items]
+
+    ok = False
+    try:
+        ok = _split_wav_by_long_silence(
+            tmp_wav,
+            out_paths,
+            text_lengths=lengths,
+            expected_pause_seconds=3.0,
+        )
+        if not ok:
+            write_log(
+                f"Deteksi jeda panjang gagal untuk voice `{voice_key}`, batalkan mode konsisten dan fallback ke mode per-scene.",
+                level="warning",
+            )
+            return False
+    finally:
+        pass
+
+    if not ok:
+        write_log(f"Gagal membagi audio Gemini gabungan voice `{voice_key}` ke tiap scene.", level="error")
+        return False
+
+    for item, out_path in zip(scene_items, out_paths):
+        write_log(f"Gemini konsisten voice `{voice_key}`: voice scene {item['scene']} tersimpan di {out_path}")
+    write_log(f"Gemini konsisten voice `{voice_key}`: audio gabungan tersimpan di {tmp_wav}")
+    return True
+
+
+def _process_gemini_all_scenes_consistent(project_dir: str, scenes: list[str], logger_obj):
+    scene_items = []
+    for scene in scenes:
+        scene_dir = os.path.join(project_dir, scene)
+        meta_path = os.path.join(scene_dir, "scene_meta.json")
+        if not os.path.exists(meta_path):
+            continue
+        try:
+            meta = load_json(meta_path)
+        except Exception as e:
+            write_log(f"Gagal membaca {meta_path}: {e}")
+            continue
+        text = str(meta.get("voice_text", "")).strip()
+        if not text:
+            continue
+        voice_key = resolve_scene_voice_key(meta)
+        scene_items.append({
+            "scene": scene,
+            "scene_dir": scene_dir,
+            "text": text,
+            "voice_key": voice_key,
+        })
+
+    if not scene_items:
+        write_log("Mode Gemini konsisten: tidak ada scene dengan voice_text untuk diproses.", level="error")
+        return False
+
+    grouped_items = {}
+    for item in scene_items:
+        grouped_items.setdefault(item["voice_key"], []).append(item)
+
+    write_log(
+        "Mode Gemini konsisten: memproses batch per voice_character: "
+        + ", ".join(f"{key}={len(items)} scene" for key, items in grouped_items.items())
+    )
+
+    for voice_key, items in grouped_items.items():
+        ok = _generate_and_split_gemini_scene_group(project_dir, voice_key, items, logger_obj)
+        if not ok:
+            return False
+    return True
 
 
 def _scene_sort_key(name: str):
@@ -47,113 +580,24 @@ def _scene_sort_key(name: str):
         return (10**9, str(name))
 
 
-def wait_for_audio_output(server: str, prompt_id: str, timeout: int = POLL_TIMEOUT, interval: float = POLL_INTERVAL):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            hist = comfyui_api.get_history_for_prompt(server, prompt_id, timeout=5, interval=interval)
-        except Exception as e:
-            write_log(f"Error fetching history for {prompt_id}: {e}", level="warning")
-            time.sleep(interval)
-            continue
-
-        if not isinstance(hist, dict):
-            time.sleep(interval)
-            continue
-
-        outputs = hist.get("outputs")
-        if not outputs and len(hist) == 1:
-            sole = next(iter(hist.values()))
-            outputs = sole.get("outputs") if isinstance(sole, dict) else None
-
-        if outputs and isinstance(outputs, dict):
-            for node_val in outputs.values():
-                if not isinstance(node_val, dict):
-                    continue
-                for items in node_val.values():
-                    if not isinstance(items, list):
-                        continue
-                    for item in items:
-                        if isinstance(item, dict) and item.get("filename", "").lower().endswith((".mp3", ".wav", ".ogg")):
-                            return {
-                                "filename": item.get("filename"),
-                                "subfolder": item.get("subfolder"),
-                                "type": item.get("type"),
-                            }
-
-        time.sleep(interval)
-    return None
-
-
-def process_edgetts_scene(scene_dir, server, timeout=POLL_TIMEOUT, interval=POLL_INTERVAL):
-    meta_path = os.path.join(scene_dir, "scene_meta.json")
-    if not os.path.exists(meta_path):
-        logger.debug("No scene_meta.json in %s", scene_dir)
-        return False
-
-    try:
-        scene_meta = load_json(meta_path)
-    except Exception as e:
-        write_log(f"Failed to load {meta_path}: {e}")
-        return False
-
-    if scene_meta.get("voice_provider") != "edgetts":
-        logger.debug("Scene %s not configured for edgetts", scene_dir)
-        return False
-    if not str(scene_meta.get("voice_text", "")).strip() or not str(scene_meta.get("edgetts_voice_id", "")).strip():
-        write_log(f"Scene {scene_dir} tidak memiliki edgetts_voice_id atau voice_text yang valid.")
-        return False
-
-    try:
-        workflow = build_edgetts_workflow(scene_meta)
-        res = comfyui_api.post_workflow_api(workflow, server)
-    except Exception as e:
-        write_log(f"Failed to post edgetts workflow for {scene_dir}: {e}")
-        return False
-
-    prompt_id = res.get("prompt_id") or res.get("id")
-    write_log(f"Posted edgetts workflow for {scene_dir}, prompt_id={prompt_id}")
-    if not prompt_id:
-        write_log(f"No prompt_id returned for edgetts in {scene_dir}")
-        return False
-
-    audio_out = wait_for_audio_output(server, prompt_id, timeout=timeout, interval=interval)
-    if not audio_out:
-        write_log(f"No audio output found for {scene_dir} (prompt_id={prompt_id})")
-        return False
-
-    try:
-        file_url = comfyui_api.get_file_url(
-            server,
-            audio_out.get("filename"),
-            subfolder=audio_out.get("subfolder"),
-            type_=audio_out.get("type"),
-        )
-        filename = audio_out.get("filename") or "edgetts_output.wav"
-        if not filename.startswith("speech_"):
-            filename = f"speech_{filename}"
-        out_path = os.path.join(scene_dir, filename)
-        comfyui_api.download_file_url(file_url, out_path)
-        if not os.path.exists(out_path) or os.path.getsize(out_path) <= 0:
-            write_log(f"File audio EdgeTTS untuk {scene_dir} kosong atau gagal tersimpan.")
-            try:
-                if os.path.exists(out_path):
-                    os.remove(out_path)
-            except OSError:
-                pass
-            return False
-        write_log(f"Downloaded audio for {scene_dir} -> {out_path}")
-        return True
-    except Exception as e:
-        write_log(f"Failed to download audio for {scene_dir}: {e}")
-        return False
-
-
 def main(project_name, specific_scenes=None, comfyui_server=None):
     project_dir = os.path.join(ROOT, "api_production", str(project_name).strip())
     if not os.path.exists(project_dir):
         print("Project folder not found:", project_dir)
         return 1
+    try:
+        project_settings = load_project_settings(Path(project_dir))
+    except Exception as e:
+        write_log(f"Gagal membaca project_settings.json: {e}", level="error")
+        return 1
+    voice_cfg = project_settings.get("voice", {}) if isinstance(project_settings, dict) else {}
+    voice_provider = str(voice_cfg.get("voice_provider", VOICE_PROVIDER_GEMINI)).strip().lower()
+    elevenlabs_key = None
+    if voice_provider == VOICE_PROVIDER_ELEVENLABS:
+        elevenlabs_key = find_elevenlabs_key()
+        if not elevenlabs_key:
+            write_log("Mode voice project adalah ElevenLabs, tetapi ELEVENLABSKEY tidak ditemukan di keys.cfg.", level="error")
+            return 1
 
     scenes = sorted([d for d in os.listdir(project_dir) if d.startswith("scene_")], key=_scene_sort_key)
     if specific_scenes:
@@ -162,10 +606,15 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
         write_log("Tidak ada scene yang cocok untuk diproses.")
         return 1
 
-    elevenlabs_key = find_elevenlabs_key()
-    comfyui_server = comfyui_server or get_server_address("comfyui")
     had_error = False
     processed_count = 0
+
+    if voice_provider == VOICE_PROVIDER_GEMINI and not specific_scenes and len(scenes) > 1:
+        print("Processing all scenes with Gemini consistent mode")
+        ok = _process_gemini_all_scenes_consistent(project_dir, scenes, logger)
+        if ok:
+            return 0
+        write_log("Fallback ke mode per-scene karena mode Gemini konsisten gagal.", level="warning")
 
     for scene in scenes:
         scene_dir = os.path.join(project_dir, scene)
@@ -180,40 +629,29 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
             had_error = True
             continue
 
-        provider = str(meta.get("voice_provider", "")).strip().lower()
         print("Processing", scene_dir)
-        if provider == "edgetts":
-            processed_count += 1
-            if not process_edgetts_scene(scene_dir, comfyui_server):
-                write_log(f"Gagal membuat voice EdgeTTS untuk {scene}.")
-                had_error = True
-        elif provider == "gemini_tts":
-            processed_count += 1
-            if not process_gemini_tts_scene(scene_dir, logger=logger, write_log=write_log):
-                write_log(f"Gagal membuat voice Gemini TTS untuk {scene}.")
-                had_error = True
-        elif provider == "elevenlabs":
-            processed_count += 1
-            if not elevenlabs_key:
-                write_log(f"ElevenLabs API key tidak ditemukan. Gagal memproses {scene}.")
-                had_error = True
-                continue
-            if not process_elevenlabs_scene(scene_dir, elevenlabs_key, logger=logger, write_log=write_log):
+        processed_count += 1
+        if voice_provider == VOICE_PROVIDER_ELEVENLABS:
+            ok = process_elevenlabs_tts_scene(scene_dir, api_key=elevenlabs_key, logger=logger, write_log=write_log)
+            if not ok:
                 write_log(f"Gagal membuat voice ElevenLabs untuk {scene}.")
                 had_error = True
         else:
-            logger.debug("Scene %s tidak memiliki voice_provider yang didukung", scene_dir)
+            ok = process_gemini_tts_scene(scene_dir, logger=logger, write_log=write_log)
+            if not ok:
+                write_log(f"Gagal membuat voice Gemini TTS untuk {scene}.")
+                had_error = True
 
     if processed_count == 0:
-        write_log("Tidak ada scene dengan voice_provider yang didukung untuk diproses.")
+        write_log("Tidak ada scene yang bisa diproses untuk Gemini TTS.")
         return 1
     return 1 if had_error else 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate voice untuk scene sesuai voice_provider")
+    parser = argparse.ArgumentParser(description="Generate voice untuk scene berdasarkan provider voice global project")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-s", action="append", help="Scene yang diproses (repeatable)")
-    parser.add_argument("--server", default=get_server_address("comfyui"), help="ComfyUI server host:port untuk EdgeTTS")
+    parser.add_argument("--server", default=get_server_address("comfyui"), help="Argumen kompatibilitas lama (tidak dipakai).")
     args = parser.parse_args()
     sys.exit(main(project_name=args.project, specific_scenes=args.scene, comfyui_server=args.server))

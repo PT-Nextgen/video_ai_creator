@@ -9,9 +9,7 @@ logger = get_logger(__name__)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
-TEMPLATE_20 = "wan22_i2v_api.json"
 TEMPLATE_4 = "wan22_i2v_4steps_api.json"
-TEMPLATE_20_LORA = "wan22_i2v_lora_api.json"
 TEMPLATE_4_LORA = "wan22_i2v_4steps_lora_api.json"
 SIZE_OPTIONS = [
     ("368x640", 368, 640),
@@ -23,21 +21,17 @@ SIZE_OPTIONS = [
 ]
 STEP_OPTIONS = [
     ("4 langkah", TEMPLATE_4),
-    ("20 langkah", TEMPLATE_20),
 ]
 WAN_DURATION_OPTIONS = [
     ("5 detik", 5),
     ("10 detik", 10),
-    ("15 detik", 15),
 ]
 DEFAULT_PROMPT = {
     "duration_seconds": 10,
     "positive_prompt_one": "",
     "positive_prompt_two": "",
-    "positive_prompt_three": "",
     "negative_prompt_one": "",
     "negative_prompt_two": "",
-    "negative_prompt_three": "",
     "width": 368,
     "height": 640,
     "use_lora": False,
@@ -88,33 +82,28 @@ def _set_wan_loop_total(workflow, value):
 
 def get_template_name(wan_prompt: dict | None = None) -> str:
     wan_prompt = wan_prompt or {}
-    template_name = wan_prompt.get("json_api", TEMPLATE_20)
+    template_name = wan_prompt.get("json_api", TEMPLATE_4)
     use_lora = bool(wan_prompt.get("use_lora"))
-    if template_name in {TEMPLATE_4_LORA, TEMPLATE_4}:
-        return TEMPLATE_4_LORA if use_lora else TEMPLATE_4
-    if template_name in {TEMPLATE_20_LORA, TEMPLATE_20}:
-        return TEMPLATE_20_LORA if use_lora else TEMPLATE_20
-    if template_name not in {TEMPLATE_20, TEMPLATE_4, TEMPLATE_20_LORA, TEMPLATE_4_LORA}:
-        template_name = TEMPLATE_20
-    return template_name
+    if template_name not in {TEMPLATE_4, TEMPLATE_4_LORA}:
+        template_name = TEMPLATE_4
+    return TEMPLATE_4_LORA if use_lora else TEMPLATE_4
 
 
 def get_step_template_name(wan_prompt: dict | None = None) -> str:
-    wan_prompt = wan_prompt or {}
-    template_name = wan_prompt.get("json_api", TEMPLATE_20)
-    if template_name in {TEMPLATE_4, TEMPLATE_4_LORA}:
-        return TEMPLATE_4
-    return TEMPLATE_20
+    return TEMPLATE_4
 
 
 def build_workflow(wan_prompt, scene_meta, uploaded_name=None):
     workflow = copy.deepcopy(_load_template(get_template_name(wan_prompt)))
     replace_map = {}
-    for suffix in ["one", "two", "three"]:
+    for suffix in ["one", "two"]:
         pos_key = f"positive_prompt_{suffix}"
         neg_key = f"negative_prompt_{suffix}"
         replace_map[pos_key] = wan_prompt.get(pos_key, "")
         replace_map[neg_key] = wan_prompt.get(neg_key, "")
+    # Keep template compatibility without exposing prompt #3 in UI/JSON.
+    replace_map["positive_prompt_three"] = ""
+    replace_map["negative_prompt_three"] = ""
 
     _traverse_and_replace(workflow, replace_map)
 
@@ -205,7 +194,7 @@ def prepare_and_send_workflow(scene_dir, uploaded_name, server, log_file=None):
     and send the modified workflow (without overwriting the original file).
     """
     wan_json_path = None
-    for fname in ['wan22_i2v_4steps_api.json', 'wan22_i2v_api.json']:
+    for fname in ['wan22_i2v_4steps_api.json']:
         fpath = os.path.join(scene_dir, fname)
         if os.path.exists(fpath):
             wan_json_path = fpath

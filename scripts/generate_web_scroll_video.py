@@ -209,40 +209,6 @@ def _render_pan_video_from_image(input_image: Path, out_video: Path, width: int,
         writer.close()
 
 
-def _render_live_capture_video(page, out_video: Path, width: int, height: int, duration_seconds: float, speed: int, fps: int):
-    frames_total = max(1, int(round(duration_seconds * fps)))
-    max_scroll = int(
-        page.evaluate(
-            "() => Math.max(0, document.documentElement.scrollHeight - window.innerHeight)"
-        )
-    )
-    y_positions = _build_scroll_positions(frames_total, max_scroll, speed, fps)
-    writer = imageio.get_writer(
-        str(out_video),
-        fps=fps,
-        codec="libx264",
-        ffmpeg_params=["-crf", "18", "-preset", "veryfast"],
-        macro_block_size=None,
-    )
-    try:
-        for y in y_positions:
-            page.evaluate("(v) => window.scrollTo(0, v)", int(round(y)))
-            page.wait_for_timeout(12)
-            image_bytes = page.screenshot(full_page=False, type="png")
-            # Convert screenshot bytes to RGB frame and fit target canvas without stretching.
-            with Image.open(BytesIO(image_bytes)) as shot:
-                src = shot.convert("RGB")
-                src_w, src_h = src.size
-                if src_w != width or src_h != height:
-                    # Fill target frame without black bars by cover-resize + center-crop.
-                    frame = np.asarray(_resize_cover_rgb(src, width, height), dtype=np.uint8)
-                else:
-                    frame = np.asarray(src, dtype=np.uint8)
-            writer.append_data(frame)
-    finally:
-        writer.close()
-
-
 def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, speed, fps=16, capture_mode="stable_pan"):
     scene_dir_path = Path(scene_dir)
     if not is_valid_http_url(str(url).strip()):
@@ -263,8 +229,8 @@ def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, s
     if fps <= 0:
         raise ValueError("FPS web_scroll harus lebih besar dari 0.")
     capture_mode = str(capture_mode or "stable_pan").strip()
-    if capture_mode not in {"stable_pan", "live_capture"}:
-        raise ValueError("Mode capture web_scroll tidak valid. Gunakan `stable_pan` atau `live_capture`.")
+    if capture_mode != "stable_pan":
+        raise ValueError("Mode capture web_scroll tidak valid. Hanya `stable_pan` yang didukung.")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -336,72 +302,51 @@ def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, s
         )
         page.evaluate("() => window.scrollTo(0, 0)")
         page.wait_for_timeout(250)
-        if capture_mode == "stable_pan":
-            capture_css_height, estimated_image_height, scroll_height, viewport_height, scale = _stable_pan_capture_height_css(
-                page=page,
-                duration_seconds=duration_seconds,
-                speed=speed,
-                device_scale_factor=mobile_device_scale if is_portrait_output else 1.0,
-            )
-            if scroll_height * scale <= MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT:
-                page.screenshot(path=str(fullpage_path), full_page=True, type="png")
-            else:
-                write_log(
-                    "Stable pan memakai partial screenshot: "
-                    f"capture_height={capture_css_height}px CSS, "
-                    f"estimated_image_height={estimated_image_height}px, "
-                    f"limit={MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT}px, "
-                    f"page_height={scroll_height}px CSS, viewport_height={viewport_height}px CSS"
-                )
-                _capture_partial_top_screenshot(
-                    page=page,
-                    dst_path=fullpage_path,
-                    width=width,
-                    capture_css_height=capture_css_height,
-                )
-            try:
-                internal_w, internal_h, canvas_h = _prepare_pan_source_image(
-                    src_path=fullpage_path,
-                    dst_path=pan_source_path,
-                    width=width,
-                    height=height,
-                )
-                _render_pan_video_from_image(
-                    input_image=pan_source_path,
-                    out_video=output_path,
-                    width=width,
-                    height=height,
-                    duration_seconds=duration_seconds,
-                    speed=speed,
-                    fps=fps,
-                    internal_w=internal_w,
-                    internal_h=internal_h,
-                    canvas_h=canvas_h,
-                )
-            except PILImage.DecompressionBombError:
-                write_log(
-                    "Stable pan fallback ke live_capture karena full-page screenshot terlalu besar "
-                    "(Pillow decompression bomb protection)."
-                )
-                _render_live_capture_video(
-                    page=page,
-                    out_video=output_path,
-                    width=width,
-                    height=height,
-                    duration_seconds=duration_seconds,
-                    speed=speed,
-                    fps=fps,
-                )
+        capture_css_height, estimated_image_height, scroll_height, viewport_height, scale = _stable_pan_capture_height_css(
+            page=page,
+            duration_seconds=duration_seconds,
+            speed=speed,
+            device_scale_factor=mobile_device_scale if is_portrait_output else 1.0,
+        )
+        if scroll_height * scale <= MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT:
+            page.screenshot(path=str(fullpage_path), full_page=True, type="png")
         else:
-            _render_live_capture_video(
+            write_log(
+                "Stable pan memakai partial screenshot: "
+                f"capture_height={capture_css_height}px CSS, "
+                f"estimated_image_height={estimated_image_height}px, "
+                f"limit={MAX_STABLE_PAN_SCREENSHOT_IMAGE_HEIGHT}px, "
+                f"page_height={scroll_height}px CSS, viewport_height={viewport_height}px CSS"
+            )
+            _capture_partial_top_screenshot(
                 page=page,
+                dst_path=fullpage_path,
+                width=width,
+                capture_css_height=capture_css_height,
+            )
+        try:
+            internal_w, internal_h, canvas_h = _prepare_pan_source_image(
+                src_path=fullpage_path,
+                dst_path=pan_source_path,
+                width=width,
+                height=height,
+            )
+            _render_pan_video_from_image(
+                input_image=pan_source_path,
                 out_video=output_path,
                 width=width,
                 height=height,
                 duration_seconds=duration_seconds,
                 speed=speed,
                 fps=fps,
+                internal_w=internal_w,
+                internal_h=internal_h,
+                canvas_h=canvas_h,
             )
+        except PILImage.DecompressionBombError as e:
+            raise RuntimeError(
+                "Stable pan gagal karena screenshot terlalu besar (Pillow decompression bomb protection)."
+            ) from e
     finally:
         if context is not None:
             try:
@@ -437,7 +382,7 @@ def _main():
     parser.add_argument("--duration", type=float, default=5.0, help="Durasi detik (0.0-20.0, kelipatan 0.1)")
     parser.add_argument("--speed", type=int, default=1, help="Speed scroll (1-5)")
     parser.add_argument("--fps", type=int, default=16, help="FPS output")
-    parser.add_argument("--mode", default="stable_pan", help="Mode capture: stable_pan atau live_capture")
+    parser.add_argument("--mode", default="stable_pan", help="Mode capture (hanya stable_pan)")
     args = parser.parse_args()
 
     scene_dir = API_PRODUCTION_ROOT / args.project / args.scene

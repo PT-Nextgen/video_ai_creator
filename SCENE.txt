@@ -1,0 +1,19 @@
+S — Subject
+Objek utama gambar.
+Contoh: seorang anak laki-laki, robot kecil, kucing oranye, mobil futuristik
+
+C — Context / Composition
+Konteks, aksi, posisi kamera, atau komposisi.
+Contoh: sedang duduk di atap rumah, close-up, terlihat dari samping, wide shot
+
+E — Environment
+Tempat atau latar.
+Contoh: di kota cyberpunk saat hujan, di hutan berkabut, di kamar anak-anak
+
+N — Nuance / Narrative
+Mood, cerita kecil, ekspresi, emosi.
+Contoh: suasana hangat, misterius, lucu, tegang, seperti adegan film
+
+E — Execution / Effects
+Gaya visual, pencahayaan, warna, kualitas, lensa, detail teknis.
+Contoh: cinematic lighting, ultra detailed, anime style, 35mm lens, soft shadows

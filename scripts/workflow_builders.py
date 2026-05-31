@@ -2,7 +2,6 @@ import copy
 import json
 import os
 
-from edgetts.edgetts import build_edgetts_workflow
 from wan22_i2v.wan22_i2v import build_wan_workflow
 from z_image.z_image import build_z_image_workflow
 

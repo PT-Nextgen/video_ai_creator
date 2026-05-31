@@ -8,50 +8,24 @@ from typing import Optional
 import requests
 
 from gemini.gemini_image import find_gemini_key
+from scripts.voice_profiles import get_voice_character, resolve_scene_voice_key
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_TTS_LANGUAGE_CODE = "id-ID"
-GEMINI_TTS_FALLBACK_MODELS = [
-    ("Gemini 2.5 Flash Preview TTS", "gemini-2.5-flash-preview-tts"),
-    ("Gemini 2.5 Pro Preview TTS", "gemini-2.5-pro-preview-tts"),
-]
-GEMINI_TTS_VOICE_OPTIONS = [
-    ("Zephyr", "Zephyr"),
-    ("Puck", "Puck"),
-    ("Charon", "Charon"),
-    ("Kore", "Kore"),
-    ("Fenrir", "Fenrir"),
-    ("Leda", "Leda"),
-    ("Orus", "Orus"),
-    ("Aoede", "Aoede"),
-    ("Callirrhoe", "Callirrhoe"),
-    ("Autonoe", "Autonoe"),
-    ("Enceladus", "Enceladus"),
-    ("Iapetus", "Iapetus"),
-    ("Umbriel", "Umbriel"),
-    ("Algieba", "Algieba"),
-    ("Despina", "Despina"),
-    ("Erinome", "Erinome"),
-    ("Algenib", "Algenib"),
-    ("Rasalgethi", "Rasalgethi"),
-    ("Laomedeia", "Laomedeia"),
-    ("Achernar", "Achernar"),
-    ("Alnilam", "Alnilam"),
-    ("Schedar", "Schedar"),
-    ("Gacrux", "Gacrux"),
-    ("Pulcherrima", "Pulcherrima"),
-    ("Achird", "Achird"),
-    ("Zubenelgenubi", "Zubenelgenubi"),
-    ("Vindemiatrix", "Vindemiatrix"),
-    ("Sadachbia", "Sadachbia"),
-    ("Sadaltager", "Sadaltager"),
-    ("Sulafat", "Sulafat"),
-]
-GEMINI_TTS_GENDER_OPTIONS = [
-    ("Pria", "pria"),
-    ("Wanita", "wanita"),
-]
+GEMINI_TTS_MODEL_ID_FIXED = "gemini-3.1-flash-tts-preview"
+GEMINI_TTS_MODE_DEFAULT = "structured"
+GEMINI_VOICE_NAME_BY_CHARACTER = {
+    "yetty": "Kore",
+    "nilasari": "Kore",
+    "dany_saputra": "Charon",
+    "dakocan": "Puck",
+    "candy": "Leda",
+    "lily": "Leda",
+    "finn": "Puck",
+    "kevin": "Charon",
+}
+
 
 def _api_key() -> Optional[str]:
     return find_gemini_key()
@@ -83,65 +57,34 @@ def _extract_inline_audio_bytes(response_json: dict) -> Optional[bytes]:
     return None
 
 
-def _list_models_from_api(api_key: str) -> list[tuple[str, str]]:
-    url = f"{GEMINI_API_URL}/models"
-    models: list[tuple[str, str]] = []
-    page_token = None
-    for _ in range(10):
-        params = {"pageSize": 1000}
-        if page_token:
-            params["pageToken"] = page_token
-        resp = requests.get(url, headers=_api_headers(api_key), params=params, timeout=30)
-        if resp.status_code >= 400:
-            break
-        data = resp.json()
-        for item in data.get("models", []):
-            methods = item.get("supportedGenerationMethods") or []
-            name = str(item.get("name", "")).strip()
-            display_name = str(item.get("displayName", "")).strip()
-            if not name or "generateContent" not in methods:
-                continue
-            model_id = name.split("/", 1)[1] if name.startswith("models/") else name
-            haystack = f"{model_id} {display_name}".lower()
-            if "tts" not in haystack:
-                continue
-            label = display_name or model_id
-            models.append((label, model_id))
-        page_token = str(data.get("nextPageToken", "")).strip() or None
-        if not page_token:
-            break
-    seen = set()
-    unique: list[tuple[str, str]] = []
-    for label, model_id in models:
-        if model_id in seen:
-            continue
-        seen.add(model_id)
-        unique.append((label, model_id))
-    return unique
-
-
-def list_gemini_tts_models(api_key: Optional[str] = None) -> list[tuple[str, str]]:
-    api_key = api_key or _api_key()
-    if api_key:
-        try:
-            models = _list_models_from_api(api_key)
-            if models:
-                return models
-        except Exception:
-            pass
-    return GEMINI_TTS_FALLBACK_MODELS[:]
-
-
-def list_gemini_tts_voices(gender: str | None = None) -> list[tuple[str, str]]:
-    # Gender is accepted for compatibility with the UI, but Gemini TTS does
-    # not expose gender-based filtering. All voices remain available.
-    _ = gender
-    return GEMINI_TTS_VOICE_OPTIONS[:]
-
-
-def default_gemini_tts_model_id() -> str:
-    models = list_gemini_tts_models()
-    return models[0][1] if models else GEMINI_TTS_FALLBACK_MODELS[0][1]
+def _build_tts_text(voice_key: str, raw_text: str, mode: str = GEMINI_TTS_MODE_DEFAULT) -> str:
+    text = str(raw_text or "").strip()
+    mode = str(mode or "").strip().lower()
+    if mode == "consistent":
+        return text
+    voice = get_voice_character(voice_key)
+    profile_name = voice.get("display_name", "Voice Talent")
+    profile_text = voice.get("gemini_profile_text", "")
+    if "#### TRANSCRIPT" in profile_text:
+        return profile_text.rstrip() + "\n" + text
+    prompt_template = (
+        f"# AUDIO PROFILE: {profile_name}\n"
+        "## \"Indonesian Voice Performance\"\n\n"
+        "## THE SCENE: Voice Over Recording Session\n"
+        "The talent is in a professional voice-over booth. Keep delivery emotionally\n"
+        "engaging while preserving clear diction and stable pacing for Indonesian content.\n\n"
+        "### DIRECTOR'S NOTES\n"
+        "Style:\n"
+        f"* {profile_text}\n"
+        "* Keep pronunciation clean and listener-friendly in Indonesian.\n\n"
+        "Pace: Natural and adaptive to sentence meaning. Avoid awkward dead air.\n\n"
+        "Accent: Indonesian.\n\n"
+        "### SAMPLE CONTEXT\n"
+        "Use this voice for content where expressive, clear, and audience-fit narration is required.\n\n"
+        "#### TRANSCRIPT\n"
+        "{transcript}"
+    )
+    return prompt_template.format(transcript=text)
 
 
 def _write_wav_from_pcm(pcm_bytes: bytes, out_path: str, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2):
@@ -152,11 +95,11 @@ def _write_wav_from_pcm(pcm_bytes: bytes, out_path: str, sample_rate: int = 2400
         wf.writeframes(pcm_bytes)
 
 
-def synthesize(text: str, model_id: str, voice_name: str, api_key: Optional[str] = None, language_code: str = GEMINI_TTS_LANGUAGE_CODE, timeout: int = 180) -> bytes:
+def synthesize(text: str, voice_name: str, api_key: Optional[str] = None, language_code: str = GEMINI_TTS_LANGUAGE_CODE, timeout: int = 180) -> bytes:
     api_key = api_key or _api_key()
     if not api_key:
         raise RuntimeError("Gemini API key tidak ditemukan.")
-    url = f"{GEMINI_API_URL}/models/{model_id}:generateContent"
+    url = f"{GEMINI_API_URL}/models/{GEMINI_TTS_MODEL_ID_FIXED}:generateContent"
     payload = {
         "contents": [{"parts": [{"text": text}]}],
         "generationConfig": {
@@ -174,7 +117,7 @@ def synthesize(text: str, model_id: str, voice_name: str, api_key: Optional[str]
     resp = requests.post(url, headers=_api_headers(api_key), data=json.dumps(payload), timeout=timeout)
     if resp.status_code >= 400:
         raise requests.HTTPError(
-            f"{resp.status_code} Client Error for model {model_id}: {resp.text[:1200]}",
+            f"{resp.status_code} Client Error for model {GEMINI_TTS_MODEL_ID_FIXED}: {resp.text[:1200]}",
             response=resp,
         )
     result = resp.json()
@@ -198,19 +141,17 @@ def process_scene(scene_dir, logger=None, write_log=None):
             logger.error("Failed to load %s: %s", meta_path, e)
         return False
 
-    if str(meta.get("voice_provider", "")).strip().lower() != "gemini_tts":
-        return False
-
     text = str(meta.get("voice_text", "")).strip()
-    model_id = str(meta.get("gemini_tts_model_id", default_gemini_tts_model_id())).strip()
-    voice_name = str(meta.get("gemini_tts_voice_name", "")).strip()
-    if not text or not model_id or not voice_name:
+    voice_key = resolve_scene_voice_key(meta)
+    voice_name = GEMINI_VOICE_NAME_BY_CHARACTER.get(voice_key, "Kore")
+    if not text:
         if write_log:
-            write_log(f"Scene {scene_dir} belum memiliki konfigurasi Gemini TTS yang lengkap.", level="error")
+            write_log(f"Scene {scene_dir} belum memiliki voice_text untuk Gemini TTS.", level="error")
         return False
 
     try:
-        audio_bytes = synthesize(text, model_id, voice_name)
+        prompt_text = _build_tts_text(voice_key, text, mode=GEMINI_TTS_MODE_DEFAULT)
+        audio_bytes = synthesize(prompt_text, voice_name)
     except Exception as e:
         if write_log:
             write_log(f"Gemini TTS gagal untuk {scene_dir}: {e}", level="error")
