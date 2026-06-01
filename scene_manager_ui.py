@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 from wan22_i2v.wan22_i2v import DEFAULT_PROMPT as DEFAULT_WAN_PROMPT
 from wan22_i2v.wan22_i2v import SIZE_OPTIONS as WAN_SIZE_OPTIONS
-from wan22_i2v.wan22_i2v import WAN_DURATION_OPTIONS
 from wan22_i2v.wan22_i2v import get_template_name as get_wan_template_name
 from wan22_s2v.wan22_s2v import DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT
 from wan22_s2v.wan22_s2v import MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION
@@ -1219,9 +1218,6 @@ class SceneEditorWindow(QMainWindow):
             self.z_extra_clipboard_buttons.append(clipboard_button)
             self.z_extra_generate_prompt_buttons.append(generate_button)
             self.z_extra_buttons.append(button)
-        self.wan_duration_input = QComboBox()
-        for label, duration_value in WAN_DURATION_OPTIONS:
-            self.wan_duration_input.addItem(label, duration_value)
         self.wan_size_input = QComboBox()
         for label, width, height in WAN_SIZE_OPTIONS:
             self.wan_size_input.addItem(label, (width, height))
@@ -1409,7 +1405,6 @@ class SceneEditorWindow(QMainWindow):
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_size_input.currentTextChanged,
-            self.wan_duration_input.currentTextChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.image_pan_size_input.currentTextChanged,
@@ -1554,20 +1549,18 @@ class SceneEditorWindow(QMainWindow):
 
         self.wan_tab = QWidget()
         wan_layout = QGridLayout(self.wan_tab)
-        wan_layout.addWidget(QLabel("Durasi WAN"), 0, 0)
-        wan_layout.addWidget(self.wan_duration_input, 0, 1)
-        wan_layout.addWidget(QLabel("Ukuran"), 1, 0)
-        wan_layout.addWidget(self.wan_size_input, 1, 1)
-        wan_layout.addWidget(self.wan_use_lora_input, 2, 0, 1, 2)
-        wan_layout.addWidget(QLabel("Nama Lora High"), 3, 0)
-        wan_layout.addWidget(self.wan_lora_high_name_input, 3, 1)
-        wan_layout.addWidget(QLabel("Kekuatan Lora High"), 4, 0)
-        wan_layout.addWidget(self.wan_lora_high_strength_input, 4, 1)
-        wan_layout.addWidget(QLabel("Nama Lora Low"), 5, 0)
-        wan_layout.addWidget(self.wan_lora_low_name_input, 5, 1)
-        wan_layout.addWidget(QLabel("Kekuatan Lora Low"), 6, 0)
-        wan_layout.addWidget(self.wan_lora_low_strength_input, 6, 1)
-        row = 7
+        wan_layout.addWidget(QLabel("Ukuran"), 0, 0)
+        wan_layout.addWidget(self.wan_size_input, 0, 1)
+        wan_layout.addWidget(self.wan_use_lora_input, 1, 0, 1, 2)
+        wan_layout.addWidget(QLabel("Nama Lora High"), 2, 0)
+        wan_layout.addWidget(self.wan_lora_high_name_input, 2, 1)
+        wan_layout.addWidget(QLabel("Kekuatan Lora High"), 3, 0)
+        wan_layout.addWidget(self.wan_lora_high_strength_input, 3, 1)
+        wan_layout.addWidget(QLabel("Nama Lora Low"), 4, 0)
+        wan_layout.addWidget(self.wan_lora_low_name_input, 4, 1)
+        wan_layout.addWidget(QLabel("Kekuatan Lora Low"), 5, 0)
+        wan_layout.addWidget(self.wan_lora_low_strength_input, 5, 1)
+        row = 6
         for slot in ("one", "two"):
             positive_key = f"positive_prompt_{slot}"
             negative_key = f"negative_prompt_{slot}"
@@ -2562,9 +2555,6 @@ class SceneEditorWindow(QMainWindow):
             self.wan_use_lora_input.setChecked(bool(wan_prompt.get("use_lora", False)))
             wan_width = int(wan_prompt.get("width", DEFAULT_WAN_PROMPT["width"]))
             wan_height = int(wan_prompt.get("height", DEFAULT_WAN_PROMPT["height"]))
-            wan_duration = int(wan_prompt.get("duration_seconds", DEFAULT_WAN_PROMPT["duration_seconds"]))
-            index = self.wan_duration_input.findData(wan_duration)
-            self.wan_duration_input.setCurrentIndex(max(index, 0))
             index = -1
             for i in range(self.wan_size_input.count()):
                 size_value = self.wan_size_input.itemData(i)
@@ -2720,7 +2710,6 @@ class SceneEditorWindow(QMainWindow):
         }
         z_prompt["json_api"] = get_z_image_template_name(z_prompt)
         wan_prompt = {
-            "duration_seconds": int(self.wan_duration_input.currentData() or DEFAULT_WAN_PROMPT["duration_seconds"]),
             "width": int((self.wan_size_input.currentData() or (368, 640))[0]),
             "height": int((self.wan_size_input.currentData() or (368, 640))[1]),
             "use_lora": self.wan_use_lora_input.isChecked(),
@@ -3534,11 +3523,10 @@ class SceneEditorWindow(QMainWindow):
                 f"Source image: {source_name or '(none)'}",
             ])
         elif prompt_kind == "wan_i2v":
-            duration_label = self.wan_duration_input.currentText().strip()
             size_data = self.wan_size_input.currentData() or (368, 640)
             lines.extend([
                 f"Target: WAN I2V prompt field `{prompt_key or 'unknown'}`",
-                f"WAN duration: {duration_label}",
+                f"WAN duration: from scene_meta.json",
                 f"WAN size: {int(size_data[0])}x{int(size_data[1])}",
             ])
         elif prompt_kind == "wan_s2v":

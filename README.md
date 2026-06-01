@@ -540,11 +540,11 @@ Lora WAN:
   - nama file dan kekuatan bisa diatur dari UI
 
 Durasi WAN:
-- diatur per scene melalui `wan22_i2v_prompt.json.duration_seconds`
+- diatur per scene melalui `scene_meta.json.duration_seconds`
 - nilai yang didukung:
   - `5`
   - `10`
-- UI `WAN22_I2V` menyediakan dropdown `Durasi WAN`
+- UI `WAN22_I2V` tidak lagi menyediakan dropdown durasi
 - prompt WAN yang dipakai hanya 2 pasang:
   - `positive_prompt_one` / `negative_prompt_one`
   - `positive_prompt_two` / `negative_prompt_two`
