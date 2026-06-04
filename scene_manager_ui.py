@@ -250,10 +250,11 @@ def sync_scene_prompt_files(
 
     Rules:
     - z_image_prompt.json: always present
-    - wan22_i2v_prompt.json: only for wan22/wan22_i2v
+    - wan22_i2v_prompt.json: always present (used when switching to wan later)
     - wan22_s2v_prompt.json: always present (used when switching to s2v later)
     """
     write_prompt_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
+    write_prompt_json(scene_dir / "wan22_i2v_prompt.json", wan_prompt or DEFAULT_WAN_PROMPT)
     write_prompt_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
     write_prompt_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
     write_prompt_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
@@ -262,12 +263,102 @@ def sync_scene_prompt_files(
     write_prompt_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
     write_prompt_json(scene_dir / "z_image_extra_prompts.json", z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
 
-    wan_required_types = {"wan22", "wan22_i2v"}
-    wan_path = scene_dir / "wan22_i2v_prompt.json"
-    if scene_type in wan_required_types:
-        write_prompt_json(wan_path, wan_prompt or DEFAULT_WAN_PROMPT)
-    elif wan_path.exists():
-        wan_path.unlink()
+
+def validate_project_name(project_name: str) -> str:
+    normalized = str(project_name or "").strip()
+    if not normalized:
+        raise ValueError("Nama project tidak boleh kosong.")
+    if any(ch in normalized for ch in '\\/:*?"<>|'):
+        raise ValueError("Nama project mengandung karakter yang tidak valid.")
+    return normalized
+
+
+def sync_project_size_to_scene_files(project_dir: Path, project_settings: dict | None = None):
+    if project_settings is None:
+        project_settings = load_project_settings_file(project_dir)
+    video_size = project_settings.get("video_size", {}) if isinstance(project_settings, dict) else {}
+    try:
+        width = int(video_size.get("width", DEFAULT_PROJECT_SETTINGS["video_size"]["width"]))
+    except (TypeError, ValueError):
+        width = DEFAULT_PROJECT_SETTINGS["video_size"]["width"]
+    try:
+        height = int(video_size.get("height", DEFAULT_PROJECT_SETTINGS["video_size"]["height"]))
+    except (TypeError, ValueError):
+        height = DEFAULT_PROJECT_SETTINGS["video_size"]["height"]
+
+    for scene_dir in list_scene_dirs_in_project(project_dir):
+        meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
+        scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
+        prompt_files = [
+            "wan22_i2v_prompt.json",
+            "wan22_s2v_prompt.json",
+            "web_scroll_prompt.json",
+            "image_pan_prompt.json",
+            "image_zoom_prompt.json",
+        ]
+        if scene_type in {"wan22_i2v", "wan22_s2v", "i2v"}:
+            prompt_files.insert(0, "z_image_prompt.json")
+        for filename in prompt_files:
+            path = scene_dir / filename
+            if not path.exists():
+                continue
+            try:
+                data = load_json(path, {})
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            data["width"] = width
+            data["height"] = height
+            write_prompt_json(path, data)
+
+
+def create_project_on_disk(
+    project_name: str,
+    *,
+    create_default_scene: bool = True,
+    project_settings: dict | None = None,
+) -> tuple[Path, dict]:
+    project_name = validate_project_name(project_name)
+    API_PRODUCTION.mkdir(parents=True, exist_ok=True)
+    project_dir = API_PRODUCTION / project_name
+    if project_dir.exists():
+        raise FileExistsError(f"Project `{project_name}` sudah ada.")
+
+    project_dir.mkdir(parents=True, exist_ok=False)
+    initial_project_settings = copy.deepcopy(project_settings or DEFAULT_PROJECT_SETTINGS)
+    if not isinstance(initial_project_settings.get("cover"), dict):
+        initial_project_settings["cover"] = copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
+    saved_settings = save_project_settings_file(project_dir, initial_project_settings)
+
+    if create_default_scene:
+        create_scene_in_project(project_dir, scene_type="wan22_i2v", scene_title="", duration=10)
+    sync_project_size_to_scene_files(project_dir, saved_settings)
+    return project_dir, saved_settings
+
+
+def create_scene_in_project(
+    project_dir: Path,
+    *,
+    scene_type: str,
+    scene_title: str = "",
+    scene_description: str = "",
+    voice_text: str = "",
+    duration: int = 10,
+) -> Path:
+    if not project_dir.exists() or not project_dir.is_dir():
+        raise FileNotFoundError(f"Project tidak ditemukan: {project_dir}")
+    new_dir = project_dir / scene_dir_name(len(list_scene_dirs_in_project(project_dir)) + 1)
+    meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(
+        scene_title,
+        scene_type,
+        duration,
+    )
+    meta["scene_description"] = str(scene_description or "").strip()
+    meta["voice_text"] = str(voice_text or "").strip()
+    create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt)
+    sync_project_size_to_scene_files(project_dir)
+    return new_dir
 
 
 def duplicate_directory(src: Path, dst: Path):
@@ -2053,30 +2144,20 @@ class SceneEditorWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Project Baru", "Masukkan nama project:")
         if not ok:
             return
-        project_name = (name or "").strip()
-        if not project_name:
-            QMessageBox.warning(self, "Nama Tidak Valid", "Nama project tidak boleh kosong.")
+        try:
+            project_name = validate_project_name(name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Nama Tidak Valid", str(exc))
             return
-        if any(ch in project_name for ch in '\\/:*?"<>|'):
-            QMessageBox.warning(self, "Nama Tidak Valid", "Nama project mengandung karakter yang tidak valid.")
+        try:
+            create_project_on_disk(project_name, create_default_scene=True)
+        except FileExistsError as exc:
+            QMessageBox.warning(self, "Project Sudah Ada", str(exc))
             return
-        API_PRODUCTION.mkdir(parents=True, exist_ok=True)
-        pdir = API_PRODUCTION / project_name
-        if pdir.exists():
-            QMessageBox.warning(self, "Project Sudah Ada", f"Project `{project_name}` sudah ada.")
-            return
-        pdir.mkdir(parents=True, exist_ok=False)
-        initial_project_settings = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
-        initial_project_settings["cover"] = copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
         self.current_project_name = project_name
-        self.save_project_settings(initial_project_settings, sync_scene_sizes=False)
-        default_scene = pdir / scene_dir_name(1)
-        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates("", "wan22_i2v", 10)
-        create_scene_files(default_scene, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt)
-        self.sync_project_size_to_all_scenes()
         self.load_project_settings()
         self.reload_scene_list()
-        self.select_scene_by_name(default_scene.name)
+        self.select_scene_by_name(scene_dir_name(1))
         self.refresh_project_state()
         QTimer.singleShot(0, lambda snap=window_snapshot: self.restore_window_state(snap))
         self.statusBar().showMessage(f"Project {project_name} dibuat.", 3000)
@@ -3298,9 +3379,12 @@ class SceneEditorWindow(QMainWindow):
         if project_dir is None:
             QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
             return
-        new_dir = project_dir / scene_dir_name(len(self.list_scene_dirs_current()) + 1)
-        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
-        create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt)
+        new_dir = create_scene_in_project(
+            project_dir,
+            scene_type=data["scene_type"],
+            scene_title=data["scene_title"],
+            duration=data["duration_seconds"],
+        )
         self.reload_scene_list()
         self.select_scene_by_name(new_dir.name)
 

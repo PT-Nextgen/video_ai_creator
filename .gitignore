@@ -21,7 +21,6 @@ parts/
 sdist/
 var/
 wheels/
-api_production/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -101,7 +100,6 @@ Thumbs.db
 content_creation.log
 keys.cfg
 history_fetch/
-api_production/
 prompt_planning/
 backup_production/
 outputs/
@@ -134,4 +132,14 @@ models/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Allow operational files in api_production, but keep project folders ignored
+!api_production/
+api_production/*
+!api_production/CLI.md
+!api_production/README-PRODUCTION.md
+!api_production/project_cli.py
+!api_production/project_cli.bat
+!api_production/AGENT-SKILLS/
+!api_production/AGENT-SKILLS/**
 

@@ -43,6 +43,10 @@ File utama:
 - `image_zoom_prompt.json` (untuk `image_zoom`)
 - `web_search_prompt.json` (untuk `i2v`, `image_pan`, `image_zoom`)
 
+Catatan pembuatan file scene:
+- saat membuat scene baru, baik dari UI maupun CLI, semua file JSON prompt inti di atas langsung dibuat otomatis
+- tujuannya agar scene bisa langsung diganti `scene_type` tanpa perlu membuat file JSON tambahan secara manual
+
 Catatan format prompt:
 - prompt yang tampil di UI selalu memakai nilai `id_new`
 - di JSON, field prompt disimpan sebagai object bilingual:
@@ -242,6 +246,65 @@ Pemakaian:
 - model `translate` dan `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
 - di UI, konfigurasi ini diubah lewat dialog `Konfigurasi Project` (bukan dialog server terpisah)
 
+## Project CLI
+
+Script: `scripts/project_cli.py`
+
+Fungsi:
+- membuat project baru dari CLI dengan struktur dan format file yang sama seperti UI
+- menambah scene baru ke project yang sudah ada dengan pilihan `scene_type` yang sama seperti UI
+- backend pembuatan project dan scene dipakai bersama oleh UI dan CLI agar format JSON tetap konsisten
+- tersedia launcher tipis di folder `api_production`:
+  - `api_production/project_cli.py`
+  - `api_production/project_cli.bat`
+  - launcher ini mengasumsikan source code ada di parent directory dari `api_production`
+  - launcher harus dijalankan dari dalam folder `api_production`
+
+Subcommand:
+- `create-project`
+  - default membuat project kosong, hanya `project_settings.json`
+  - bisa memakai `--with-default-scene` untuk mengikuti perilaku tombol `Project Baru` di UI dan otomatis membuat `scene_1`
+  - bisa mengisi:
+    - `project_description`
+    - `video_size.width`
+    - `video_size.height`
+    - `comfyui_server`
+    - `prompt_generation.model`
+    - `translate.model`
+    - `voice.voice_provider`
+    - `caption.generate_caption`
+- `create-scene`
+  - menambah scene baru berurutan (`scene_1`, `scene_2`, dst)
+  - bisa mengisi:
+    - `scene_title`
+    - `scene_description`
+    - `voice_text`
+    - `scene_type`
+    - `duration_seconds`
+  - setelah scene dibuat, ukuran project otomatis disinkronkan ke file prompt scene yang relevan
+
+Pilihan `scene_type`:
+- `wan22_i2v`
+- `wan22_s2v`
+- `i2v`
+- `web_scroll`
+- `image_pan`
+- `image_zoom`
+
+Contoh:
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-model gemini-3.1-flash-lite --translate-model gemini-3.1-flash-lite --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
+```
+
+Contoh dari folder `api_production`:
+```powershell
+.\project_cli.bat create-project --project demo_project
+.\project_cli.bat create-scene --project demo_project --scene-type image_zoom --title "Zoom Intro" --scene-description "Close-up magnet merah biru." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
+```
+
 ## Main Runner
 
 Script utama: `main.py`
@@ -374,6 +437,7 @@ Fungsi utama:
 - jalankan proses image, scene, voice, sound, dan compose
 - tombol `Save` untuk backup project aktif menjadi ZIP
 - menampilkan log proses
+- memakai backend pembuatan project/scene yang sama dengan `scripts/project_cli.py`, tetapi perilaku `Project Baru` di UI tetap otomatis membuat `scene_1`
 
 Perilaku UI:
 - operasi scene hanya aktif jika project sudah dibuka
