@@ -6,8 +6,16 @@
 ## Flow scene
 1. Buat gambar awal
    Baca `TEXT-TO-IMAGE.md`
+   CLI untuk membuat gambar awal:
+   ```powershell
+   ..\.venv\Scripts\python.exe ..\scripts\generate_initial_image.py --project <nama_project> --scene <nama_scene>
+   ```
 2. Buat video dengan menggunakan gambar awal 
    Baca `IMAGE-TO-VIDEO.md`
+   CLI untuk memproses scene dan membuat video:
+   ```powershell
+   ..\.venv\Scripts\python.exe ..\main.py --project <nama_project> --scene <nama_scene>
+   ```
 3. Tidak boleh mengubah setting apapun selain yang dijelaskan pada `TEXT-TO-IMAGE.md` dan `IMAGE-TO-VIDEO.md`
 
 ## Panduan untuk pembuatan scene
@@ -17,6 +25,5 @@
 4. Scene ini tidak untuk membuat gambar atau video dengan screen rumit, misal split screen dan sejenisnya
 5. Scene ini tidak untuk membuat gambar atau video pakai text, karena akurasi text sangat rendah
 6. Jadikan pedoman di atas sebagai panduan untuk pembuatan prompt gambar awal dan video
-
 
 

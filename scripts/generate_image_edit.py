@@ -13,6 +13,7 @@ if PROJECT_ROOT not in os.sys.path:
 from flux2.flux2 import MODEL_FLUX2, build_flux2_edit_workflow
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image_edit
 from logging_config import setup_logging, write_log
+from prompt_localization import read_json_for_runtime
 from scripts import comfyui_api
 from scripts.server_config import get_server_address
 
@@ -54,6 +55,41 @@ def _resolve_source_image(scene_dir: str, source_image: str) -> str:
     if ext not in IMAGE_EXTS:
         raise RuntimeError(f"File gambar tidak didukung: {source_name}")
     return source_path
+
+
+def _resolve_prompt_slot(scene_dir: str, prompt_file: str, prompt_index: int) -> tuple[str, str, str, str]:
+    prompt_filename = str(prompt_file or "image_edit_prompt.json").strip() or "image_edit_prompt.json"
+    prompt_path = os.path.join(scene_dir, prompt_filename)
+    if not os.path.exists(prompt_path):
+        raise RuntimeError(f"File prompt tidak ditemukan: {prompt_filename}")
+
+    payload = read_json_for_runtime(prompt_path, required=True, log_fn=write_log)
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Format file prompt tidak valid: {prompt_filename}")
+
+    groups = payload.get("groups")
+    if not isinstance(groups, list):
+        raise RuntimeError(f"Field groups tidak ditemukan pada {prompt_filename}")
+
+    slot_index = max(1, int(prompt_index or 1))
+    if slot_index > len(groups):
+        raise RuntimeError(f"Prompt group index {slot_index} tidak ditemukan di {prompt_filename}")
+
+    group = groups[slot_index - 1]
+    if not isinstance(group, dict):
+        raise RuntimeError(f"Format group prompt tidak valid pada slot {slot_index}")
+
+    source_image = str(group.get("source_image", "")).strip()
+    prompt_text = str(group.get("prompt", "")).strip()
+    model_name = str(payload.get("image_model", "")).strip()
+    gemini_model_id = str(payload.get("gemini_model_id", "")).strip()
+
+    if not source_image:
+        raise RuntimeError(f"source_image pada slot {slot_index} kosong.")
+    if not prompt_text:
+        raise RuntimeError(f"prompt pada slot {slot_index} kosong.")
+
+    return source_image, prompt_text, model_name, gemini_model_id
 
 
 def process_scene(
@@ -114,10 +150,12 @@ def main():
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", required=True, help="Nama scene, contoh scene_1")
-    parser.add_argument("--model", "-m", default=MODEL_FLUX2, help="Model edit image: flux.2 atau gemini")
+    parser.add_argument("--model", "-m", default="", help="Model edit image: flux.2 atau gemini")
     parser.add_argument("--gemini-model-id", default="", help="Model Gemini image spesifik (opsional)")
-    parser.add_argument("--source-image", required=True, help="Nama file gambar sumber di root folder scene")
-    parser.add_argument("--prompt", required=True, help="Prompt edit gambar")
+    parser.add_argument("--source-image", default="", help="Nama file gambar sumber di root folder scene")
+    parser.add_argument("--prompt", default="", help="Prompt edit gambar")
+    parser.add_argument("--prompt-file", default="", help="Nama file prompt scene, contoh image_edit_prompt.json")
+    parser.add_argument("--prompt-index", type=int, default=1, help="Index group prompt (1-based) untuk file prompt bertipe groups")
     args = parser.parse_args()
 
     setup_logging()
@@ -129,13 +167,38 @@ def main():
         return 1
 
     try:
+        source_image = str(args.source_image or "").strip()
+        prompt_text = str(args.prompt or "").strip()
+        model_name = str(args.model or "").strip()
+        gemini_model_id = str(args.gemini_model_id or "").strip()
+
+        if str(args.prompt_file or "").strip():
+            slot_source_image, slot_prompt_text, slot_model_name, slot_gemini_model_id = _resolve_prompt_slot(
+                str(scene_dir),
+                args.prompt_file,
+                args.prompt_index,
+            )
+            source_image = slot_source_image
+            prompt_text = slot_prompt_text
+            if slot_model_name:
+                model_name = slot_model_name
+            if slot_gemini_model_id:
+                gemini_model_id = slot_gemini_model_id
+
+        if not model_name:
+            model_name = MODEL_FLUX2
+        if not source_image:
+            raise RuntimeError("Gambar awal belum dipilih.")
+        if not prompt_text:
+            raise RuntimeError("Prompt edit wajib diisi.")
+
         output_path = process_scene(
             scene_dir=str(scene_dir),
             server=args.server,
-            model_name=args.model,
-            source_image=args.source_image,
-            prompt=args.prompt,
-            gemini_model_id=args.gemini_model_id,
+            model_name=model_name,
+            source_image=source_image,
+            prompt=prompt_text,
+            gemini_model_id=gemini_model_id,
         )
         print(f"OK: {output_path}")
         return 0

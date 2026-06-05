@@ -652,24 +652,19 @@ Fungsi:
 - membaca `z_image_prompt.json`
 - prompt UI yang disimpan di JSON menggunakan `id_new`, lalu runtime akan memakai `en` jika tersedia atau akan menerjemahkan `id_new` ke Inggris saat diperlukan
 - bisa juga membaca file prompt tambahan berbasis group untuk generate image alternatif dengan aturan model scene yang sama
-- jika model ComfyUI:
+- jalur model dipilih otomatis dari `z_image_prompt.json`
+- jika model image scene adalah model biasa / ComfyUI:
   - membangun workflow image sesuai model yang dipilih
   - mengirim workflow ke ComfyUI
   - mendownload image hasil ke folder scene
-- jika model Gemini:
+- jika model image scene adalah `Gemini`:
   - generate image via Gemini API
   - simpan image hasil ke folder scene sesuai ukuran target scene (scale + center crop)
 
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_initial_image.py --server 127.0.0.1:8188 --project demo_project --scene scene_1
-```
-
-Script khusus Gemini (opsional): `scripts/generate_initial_image_gemini.py`
-
-Contoh:
-```powershell
-.\.venv\Scripts\python.exe scripts\generate_initial_image_gemini.py --project demo_project --scene scene_1
+.\.venv\Scripts\python.exe scripts\generate_initial_image.py --project demo_project --scene scene_1 --prompt-file z_image_extra_prompts.json --prompt-index 1
 ```
 
 ## Generate Image Edit
@@ -679,6 +674,8 @@ Script: `scripts/generate_image_edit.py`
 Fungsi:
 - membaca konfigurasi model edit dari UI (`Flux.2` atau `Gemini`)
 - mengambil gambar sumber dari root folder scene sesuai pilihan dropdown
+- bisa dijalankan manual dengan `--source-image` + `--prompt`
+- bisa juga membaca slot prompt dari `image_edit_prompt.json` dengan `--prompt-file image_edit_prompt.json --prompt-index 1|2|3`
 - jika model `Flux.2`:
   - upload gambar sumber ke ComfyUI
   - membangun workflow dari `api_template/flux2_edit_api.json`
@@ -697,6 +694,9 @@ Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --model flux.2 --source-image input.png --prompt "Tambahkan nuansa cinematic malam"
 .\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --model gemini --gemini-model-id gemini-3.1-flash-image-preview --source-image input.png --prompt "Ubah menjadi gaya watercolor"
+.\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --prompt-file image_edit_prompt.json --prompt-index 1
+.\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --prompt-file image_edit_prompt.json --prompt-index 2
+.\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --prompt-file image_edit_prompt.json --prompt-index 3
 ```
 
 ## Generate Cover Project

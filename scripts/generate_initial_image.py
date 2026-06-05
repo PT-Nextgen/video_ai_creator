@@ -140,7 +140,7 @@ def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_i
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate initial images for scenes via ComfyUI")
+    parser = argparse.ArgumentParser(description="Generate initial images for scenes with automatic model routing")
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", action="append", help="Scene name to process (e.g., scene_1). Repeatable")
