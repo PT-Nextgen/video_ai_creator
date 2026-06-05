@@ -140,6 +140,7 @@ api_production/*
 !api_production/README-PRODUCTION.md
 !api_production/project_cli.py
 !api_production/project_cli.bat
+!api_production/AGENTS.md
 !api_production/AGENT-SKILLS/
 !api_production/AGENT-SKILLS/**
 
