@@ -36,8 +36,9 @@ File utama:
 - `z_image_prompt.json`
 - `z_image_extra_prompts.json`
 - `image_edit_prompt.json`
+- `wan22_t2v_prompt.json` (untuk `wan22_t2v_i2v`)
 - `wan22_s2v_prompt.json`
-- `wan22_i2v_prompt.json` (untuk `wan22_i2v`)
+- `wan22_i2v_prompt.json` (untuk `wan22_i2v` dan stage 2 `wan22_t2v_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
 - `image_zoom_prompt.json` (untuk `image_zoom`)
@@ -92,10 +93,8 @@ Field utama:
   - `height`
   - `use_random_seed`
   - `seed`
-  - `use_lora`
   - `lora_name`
   - `strength_model`
-  - `json_api`
 
 Nilai `image_model` yang didukung:
 - `z-image turbo`
@@ -108,19 +107,33 @@ Nilai `image_model` yang didukung:
   - `negative_prompt_one` sampai `negative_prompt_two`
   - `width`
   - `height`
-  - `use_lora`
   - `lora_high_name`
   - `lora_high_strength`
   - `lora_low_name`
   - `lora_low_strength`
-  - `json_api`
+  - `lora_high_name_2`
+  - `lora_high_strength_2`
+  - `lora_low_name_2`
+  - `lora_low_strength_2`
+- `wan22_t2v_prompt.json`
+  - `positive_prompt`
+  - `negative_prompt`
+  - `width`
+  - `height`
+  - `lora_high_name`
+  - `lora_high_strength`
+  - `lora_low_name`
+  - `lora_low_strength`
+  - `lora_high_name_2`
+  - `lora_high_strength_2`
+  - `lora_low_name_2`
+  - `lora_low_strength_2`
 - `wan22_s2v_prompt.json`
   - `positive_prompt`
   - `negative_prompt`
   - `width`
   - `height`
   - `cfg`
-  - `json_api`
 - `web_scroll_prompt.json`
   - `url`
   - `width`
@@ -148,6 +161,11 @@ Nilai `image_model` yang didukung:
 Kebutuhan prompt per `scene_type`:
 - `wan22_i2v`
   - membutuhkan `scene_meta.json`, `wan22_i2v_prompt.json`, dan minimal satu gambar di root folder scene
+- `wan22_t2v_i2v`
+  - membutuhkan `scene_meta.json`, `wan22_t2v_prompt.json`, dan `wan22_i2v_prompt.json` (isi WAN22_I2V tetap seperti scene `wan22_i2v` biasa)
+  - durasi scene hanya `5`, `10`, atau `15`
+  - jika durasi `5`, hanya stage `WAN22_T2V` yang dijalankan
+  - jika durasi `10` atau `15`, stage `WAN22_T2V` dijalankan dulu lalu frame terakhir (frame ke 81) dipakai sebagai input untuk stage `WAN22_I2V`
 - `wan22_s2v`
   - membutuhkan `scene_meta.json`, `wan22_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_` di root folder scene
   - `voice_text` wajib diisi
@@ -177,6 +195,11 @@ Catatan sumber image:
 - `wan22_i2v`
   - memakai satu gambar terbaru dari root folder scene
   - durasi gerak WAN mengikuti `wan22_i2v_prompt.json.duration_seconds` (`5` / `10`)
+- `wan22_t2v_i2v`
+  - stage `WAN22_T2V` selalu dijalankan terlebih dahulu
+  - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
+  - jika durasi scene `10` atau `15`, frame terakhir dari video T2V (frame ke 81) dipakai sebagai input image untuk stage `WAN22_I2V`
+  - durasi stage `WAN22_I2V` otomatis menjadi `5` untuk scene `10` detik dan `10` untuk scene `15` detik
 - `wan22_s2v`
   - memakai satu gambar terbaru dan satu file audio speech terbaru dari root folder scene
   - file speech harus berawalan `speech_`
@@ -285,6 +308,7 @@ Subcommand:
 
 Pilihan `scene_type`:
 - `wan22_i2v`
+- `wan22_t2v_i2v`
 - `wan22_s2v`
 - `i2v`
 - `web_scroll`
@@ -297,12 +321,14 @@ Contoh:
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-model gemini-3.1-flash-lite --translate-model gemini-3.1-flash-lite --voice-provider gemini --generate-caption true
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
 ```
 
 Contoh dari folder `api_production`:
 ```powershell
 .\project_cli.bat create-project --project demo_project
 .\project_cli.bat create-scene --project demo_project --scene-type image_zoom --title "Zoom Intro" --scene-description "Close-up magnet merah biru." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
+.\project_cli.bat create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
 ```
 
 ## Main Runner
@@ -310,6 +336,11 @@ Contoh dari folder `api_production`:
 Script utama: `main.py`
 
 Fungsi:
+- `scene_type=wan22_t2v_i2v`
+  - ambil video dari stage `WAN22_T2V`
+  - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
+  - jika durasi scene `10` atau `15`, frame terakhir dari video T2V (frame ke 81) dipakai sebagai input image untuk stage `WAN22_I2V`
+  - stage `WAN22_I2V` tetap memakai script yang sudah ada di repo
 - `scene_type=wan22_i2v`
   - ambil satu gambar terbaru dari root folder scene
   - upload image ke ComfyUI
@@ -411,9 +442,9 @@ Fungsi utama:
 - edit `CFG` untuk WAN22 S2V
 - edit pengaturan seed image
 - edit Lora image
-- edit Lora WAN High dan Low
+- edit Lora WAN High 1, Low 1, High 2, dan Low 2
 - langkah WAN fixed `4 langkah`
-- pilih durasi WAN `5 detik` atau `10 detik`
+- pilih durasi WAN `5 detik`, `10 detik`, atau `15 detik` (khusus `wan22_t2v_i2v`)
 - pilih model image:
   - `Z-Image Turbo`
   - `Flux.2`
@@ -452,6 +483,7 @@ Perilaku UI:
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
 - ukuran video project menjadi sumber ukuran tunggal untuk tab:
+  - `WAN22_T2V`
   - `WAN22_I2V`
   - `WAN22 S2V`
   - `Web Scroll`
@@ -459,7 +491,20 @@ Perilaku UI:
   - `Image Zoom`
   - `Gambar Awal` hanya untuk scene type `wan22_i2v`, `wan22_s2v`, `i2v`
 - dropdown ukuran pada tab-tab tersebut dikunci (disabled) dan hanya menampilkan ukuran project aktif
+- scene type `wan22_t2v_i2v` hanya menampilkan 4 tab:
+  - `Meta`
+  - `WAN22_T2V`
+  - `WAN22_I2V`
+  - `Aset`
 - khusus tab `Gambar Awal` pada scene type `image_pan` dan `image_zoom`, dropdown ukuran tetap aktif (tidak mengikuti ukuran project)
+- tab `WAN22_I2V` selalu memakai Lora dan tidak lagi menampilkan checkbox `Pakai Lora`
+- tab `WAN22_T2V` juga selalu memakai Lora dan tidak menampilkan checkbox `Pakai Lora`
+- tab `WAN22_T2V` menyediakan:
+  - `Ukuran`
+  - 4 field Lora: `Lora High 1`, `Lora Low 1`, `Lora High 2`, `Lora Low 2`
+  - `Prompt Positif`
+  - `Prompt Negatif`
+  - tombol `Buat Prompt` pada `Prompt Positif`
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
   - negative prompt dinonaktifkan
@@ -512,7 +557,7 @@ Perilaku UI:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
     - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
-- tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
+- tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - setelah proses selesai dari UI, akan muncul popup:
   - informasi keberhasilan beserta file output yang terdeteksi
@@ -581,13 +626,13 @@ Resolusi image yang tersedia:
 
 Implementasi domain WAN:
 - `wan22_i2v/wan22_i2v.py`
+- `wan22_t2v/wan22_t2v.py`
 - `wan22_s2v/wan22_s2v.py`
 
 Template WAN:
-- normal `4 langkah`
-  - `api_template/wan22_i2v_4steps_api.json`
-- Lora `4 langkah`
+- `4 langkah` lora-only
   - `api_template/wan22_i2v_4steps_lora_api.json`
+  - `api_template/wan22_t2v_4steps_lora_api.json`
 
 Resolusi WAN yang tersedia:
 - `368x640`
@@ -598,20 +643,44 @@ Resolusi WAN yang tersedia:
 - `1280x720`
 
 Lora WAN:
-- `Lora High`
+- `Lora High / Low` set 1
   - nama file dan kekuatan bisa diatur dari UI
-- `Lora Low`
+  - default nama file:
+    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
+    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
+  - default kekuatan: `0`
+  - dipetakan ke node `264` dan `265`
+- `Lora High / Low` set 2
   - nama file dan kekuatan bisa diatur dari UI
+  - default nama file:
+    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
+    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
+  - default kekuatan: `0`
+  - dipetakan ke node `266` dan `267`
+- `wan22_t2v_i2v` / `WAN22_T2V`
+  - nama file dan kekuatan bisa diatur dari UI
+  - default nama file:
+    - `WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors`
+    - `WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors`
+  - default kekuatan: `0`
+  - dipetakan ke node `114` dan `115`
+  - layer tambahan dipetakan ke node `133` dan `134`
 
 Durasi WAN:
 - diatur per scene melalui `scene_meta.json.duration_seconds`
 - nilai yang didukung:
   - `5`
   - `10`
+- untuk `wan22_t2v_i2v`:
+  - nilai yang didukung: `5`, `10`, `15`
+  - `5` = hanya stage `WAN22_T2V`
+  - `10` = stage `WAN22_T2V` lalu `WAN22_I2V` selama `5` detik
+  - `15` = stage `WAN22_T2V` lalu `WAN22_I2V` selama `10` detik
 - UI `WAN22_I2V` tidak lagi menyediakan dropdown durasi
 - prompt WAN yang dipakai hanya 2 pasang:
   - `positive_prompt_one` / `negative_prompt_one`
   - `positive_prompt_two` / `negative_prompt_two`
+- file `wan22_i2v_prompt.json` tetap dipakai untuk stage `WAN22_I2V`, sedangkan `wan22_t2v_prompt.json` menyimpan prompt positif/negatif, ukuran, dan 4 field Lora stage `WAN22_T2V`
 
 ## WAN22 S2V Workflow
 

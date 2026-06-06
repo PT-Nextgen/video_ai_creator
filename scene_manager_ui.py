@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from wan22_i2v.wan22_i2v import DEFAULT_PROMPT as DEFAULT_WAN_PROMPT
 from wan22_i2v.wan22_i2v import SIZE_OPTIONS as WAN_SIZE_OPTIONS
-from wan22_i2v.wan22_i2v import get_template_name as get_wan_template_name
+from wan22_t2v.wan22_t2v import DEFAULT_PROMPT as DEFAULT_WAN22_T2V_PROMPT
 from wan22_s2v.wan22_s2v import DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT
 from wan22_s2v.wan22_s2v import MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION
 from wan22_s2v.wan22_s2v import SIZE_OPTIONS as WAN22_S2V_SIZE_OPTIONS
@@ -120,6 +120,43 @@ DEFAULT_Z_IMAGE_EXTRA_PROMPTS = {
     ],
 }
 
+WAN22_T2V_SCENE_TYPE = "wan22_t2v_i2v"
+DEFAULT_DURATION_OPTIONS = [5, 10]
+WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
+
+
+def duration_options_for_scene_type(scene_type: str) -> list[int]:
+    scene_type = str(scene_type or "").strip()
+    if scene_type == WAN22_T2V_SCENE_TYPE:
+        return list(WAN22_T2V_DURATION_OPTIONS)
+    return list(DEFAULT_DURATION_OPTIONS)
+
+
+def populate_duration_combo(combo: QComboBox, scene_type: str, selected_value: int | None = None):
+    desired_value = selected_value
+    if desired_value is None:
+        current_data = combo.currentData()
+        if isinstance(current_data, int):
+            desired_value = current_data
+        elif current_data is not None:
+            try:
+                desired_value = int(current_data)
+            except (TypeError, ValueError):
+                desired_value = None
+
+    options = duration_options_for_scene_type(scene_type)
+    if desired_value not in options:
+        desired_value = 10 if 10 in options else (options[0] if options else None)
+
+    combo.blockSignals(True)
+    combo.clear()
+    for value in options:
+        combo.addItem(str(value), value)
+    if desired_value is not None:
+        index = combo.findData(desired_value)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+    combo.blockSignals(False)
+
 
 def load_json(path: Path, default: dict):
     if not path.exists():
@@ -190,6 +227,7 @@ def build_scene_templates(title: str, scene_type: str, duration: int):
     return (
         meta,
         copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT),
+        copy.deepcopy(DEFAULT_WAN22_T2V_PROMPT),
         copy.deepcopy(DEFAULT_WAN_PROMPT),
         copy.deepcopy(DEFAULT_WAN22_S2V_PROMPT),
         copy.deepcopy(DEFAULT_WEB_SCROLL_PROMPT),
@@ -203,6 +241,7 @@ def create_scene_files(
     scene_dir: Path,
     meta=None,
     z_prompt=None,
+    wan_t2v_prompt=None,
     wan_prompt=None,
     wan22_s2v_prompt=None,
     web_scroll_prompt=None,
@@ -222,6 +261,7 @@ def create_scene_files(
         scene_dir,
         scene_type=scene_type,
         z_prompt=z_prompt or DEFAULT_Z_IMAGE_PROMPT,
+        wan_t2v_prompt=wan_t2v_prompt or DEFAULT_WAN22_T2V_PROMPT,
         wan_prompt=wan_prompt or DEFAULT_WAN_PROMPT,
         s2v_prompt=wan22_s2v_prompt or DEFAULT_WAN22_S2V_PROMPT,
         web_prompt=web_scroll_prompt or DEFAULT_WEB_SCROLL_PROMPT,
@@ -237,6 +277,7 @@ def sync_scene_prompt_files(
     scene_dir: Path,
     scene_type: str,
     z_prompt: dict,
+    wan_t2v_prompt: dict,
     wan_prompt: dict,
     s2v_prompt: dict,
     web_prompt: dict,
@@ -250,10 +291,12 @@ def sync_scene_prompt_files(
 
     Rules:
     - z_image_prompt.json: always present
+    - wan22_t2v_prompt.json: always present
     - wan22_i2v_prompt.json: always present (used when switching to wan later)
     - wan22_s2v_prompt.json: always present (used when switching to s2v later)
     """
     write_prompt_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
+    write_prompt_json(scene_dir / "wan22_t2v_prompt.json", wan_t2v_prompt or DEFAULT_WAN22_T2V_PROMPT)
     write_prompt_json(scene_dir / "wan22_i2v_prompt.json", wan_prompt or DEFAULT_WAN_PROMPT)
     write_prompt_json(scene_dir / "wan22_s2v_prompt.json", s2v_prompt or DEFAULT_WAN22_S2V_PROMPT)
     write_prompt_json(scene_dir / "web_scroll_prompt.json", web_prompt or DEFAULT_WEB_SCROLL_PROMPT)
@@ -290,6 +333,7 @@ def sync_project_size_to_scene_files(project_dir: Path, project_settings: dict |
         meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
         scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
         prompt_files = [
+            "wan22_t2v_prompt.json",
             "wan22_i2v_prompt.json",
             "wan22_s2v_prompt.json",
             "web_scroll_prompt.json",
@@ -348,15 +392,30 @@ def create_scene_in_project(
 ) -> Path:
     if not project_dir.exists() or not project_dir.is_dir():
         raise FileNotFoundError(f"Project tidak ditemukan: {project_dir}")
+    scene_type = str(scene_type or "").strip()
+    duration = int(duration)
+    if scene_type == WAN22_T2V_SCENE_TYPE and duration not in WAN22_T2V_DURATION_OPTIONS:
+        raise ValueError("Durasi untuk scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
     new_dir = project_dir / scene_dir_name(len(list_scene_dirs_in_project(project_dir)) + 1)
-    meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(
+    meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(
         scene_title,
         scene_type,
         duration,
     )
     meta["scene_description"] = str(scene_description or "").strip()
     meta["voice_text"] = str(voice_text or "").strip()
-    create_scene_files(new_dir, meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt)
+    create_scene_files(
+        new_dir,
+        meta=meta,
+        z_prompt=z_prompt,
+        wan_t2v_prompt=wan_t2v_prompt,
+        wan_prompt=wan_prompt,
+        wan22_s2v_prompt=s2v_prompt,
+        web_scroll_prompt=web_prompt,
+        image_pan_prompt=image_pan_prompt,
+        image_zoom_prompt=image_zoom_prompt,
+        web_search_prompt=web_search_prompt,
+    )
     sync_project_size_to_scene_files(project_dir)
     return new_dir
 
@@ -423,6 +482,7 @@ def _is_one_decimal_step(value: float):
 def validate_scene_data(
     meta: dict,
     z_prompt: dict,
+    wan_t2v_prompt: dict,
     wan_prompt: dict,
     s2v_prompt: dict | None = None,
     web_prompt: dict | None = None,
@@ -432,6 +492,7 @@ def validate_scene_data(
 ):
     issues = []
     scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
+    wan_t2v_prompt = wan_t2v_prompt or DEFAULT_WAN22_T2V_PROMPT
     s2v_prompt = s2v_prompt or DEFAULT_WAN22_S2V_PROMPT
     web_prompt = web_prompt or DEFAULT_WEB_SCROLL_PROMPT
     image_pan_prompt = image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT
@@ -446,11 +507,22 @@ def validate_scene_data(
     except Exception:
         if scene_type not in {"wan22_s2v", "web_scroll"}:
             issues.append("Durasi harus berupa angka.")
+    if scene_type == WAN22_T2V_SCENE_TYPE:
+        try:
+            duration_value = int(meta.get("duration_seconds", 0))
+        except Exception:
+            duration_value = 0
+        if duration_value not in WAN22_T2V_DURATION_OPTIONS:
+            issues.append("Durasi scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
+        if not str(wan_t2v_prompt.get("positive_prompt", "")).strip():
+            issues.append("Prompt positif WAN22 T2V wajib diisi.")
     if scene_type in {"wan22", "wan22_i2v"}:
         if not str(wan_prompt.get("positive_prompt_one", "")).strip():
             issues.append("Prompt positif WAN pertama wajib diisi.")
         if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
             issues.append("Adegan WAN membutuhkan minimal satu gambar lokal di folder scene.")
+    if scene_type == WAN22_T2V_SCENE_TYPE and not str(wan_prompt.get("positive_prompt_one", "")).strip():
+        issues.append("Prompt positif WAN22 I2V pertama wajib diisi.")
     if scene_type == "wan22_s2v":
         if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
             issues.append("Adegan WAN22 S2V membutuhkan minimal satu gambar di root folder scene.")
@@ -561,11 +633,9 @@ class SceneTemplateDialog(QDialog):
         self.setWindowTitle(title)
         self.title_input = QLineEdit()
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
+        self.type_combo.addItems(["wan22_i2v", WAN22_T2V_SCENE_TYPE, "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
         self.duration_combo = QComboBox()
-        self.duration_combo.addItem("5", 5)
-        self.duration_combo.addItem("10", 10)
-        self.duration_combo.setCurrentIndex(1)
+        populate_duration_combo(self.duration_combo, self.type_combo.currentText(), selected_value=10)
         form = QFormLayout(self)
         form.addRow("Judul Adegan", self.title_input)
         form.addRow("Tipe Adegan", self.type_combo)
@@ -578,6 +648,7 @@ class SceneTemplateDialog(QDialog):
         self.update_fields_for_scene_type(self.type_combo.currentText())
 
     def update_fields_for_scene_type(self, scene_type: str):
+        populate_duration_combo(self.duration_combo, scene_type)
         self.duration_combo.setEnabled(scene_type not in {"wan22_s2v", "web_scroll"})
 
     def get_data(self):
@@ -1222,6 +1293,7 @@ class SceneEditorWindow(QMainWindow):
         self.editor_tabs = None
         self.meta_tab = None
         self.z_tab = None
+        self.wan_t2v_tab = None
         self.wan_tab = None
         self.s2v_tab = None
         self.web_tab = None
@@ -1246,10 +1318,9 @@ class SceneEditorWindow(QMainWindow):
         self.scene_description_input.setFixedHeight(80)
         self.scene_description_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.duration_input = QComboBox()
-        for value in [5, 10]:
-            self.duration_input.addItem(str(value), value)
+        populate_duration_combo(self.duration_input, "wan22_i2v", selected_value=10)
         self.scene_type_combo = QComboBox()
-        self.scene_type_combo.addItems(["wan22_i2v", "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
+        self.scene_type_combo.addItems(["wan22_i2v", WAN22_T2V_SCENE_TYPE, "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
         self.scene_voice_character_input = QComboBox()
         for voice_label, voice_key in SCENE_VOICE_OPTIONS:
             self.scene_voice_character_input.addItem(voice_label, voice_key)
@@ -1312,11 +1383,32 @@ class SceneEditorWindow(QMainWindow):
         self.wan_size_input = QComboBox()
         for label, width, height in WAN_SIZE_OPTIONS:
             self.wan_size_input.addItem(label, (width, height))
-        self.wan_use_lora_input = QCheckBox("Pakai Lora")
         self.wan_lora_high_name_input = QLineEdit()
         self.wan_lora_high_strength_input = QLineEdit()
         self.wan_lora_low_name_input = QLineEdit()
         self.wan_lora_low_strength_input = QLineEdit()
+        self.wan_lora_high2_name_input = QLineEdit()
+        self.wan_lora_high2_strength_input = QLineEdit()
+        self.wan_lora_low2_name_input = QLineEdit()
+        self.wan_lora_low2_strength_input = QLineEdit()
+        self.wan_t2v_size_input = QComboBox()
+        for label, width, height in WAN_SIZE_OPTIONS:
+            self.wan_t2v_size_input.addItem(label, (width, height))
+        self.wan_t2v_lora_high_name_input = QLineEdit()
+        self.wan_t2v_lora_high_strength_input = QLineEdit()
+        self.wan_t2v_lora_low_name_input = QLineEdit()
+        self.wan_t2v_lora_low_strength_input = QLineEdit()
+        self.wan_t2v_lora_high2_name_input = QLineEdit()
+        self.wan_t2v_lora_high2_strength_input = QLineEdit()
+        self.wan_t2v_lora_low2_name_input = QLineEdit()
+        self.wan_t2v_lora_low2_strength_input = QLineEdit()
+        self.wan_t2v_positive_input = QTextEdit()
+        self.wan_t2v_negative_input = QTextEdit()
+        self.wan_t2v_generate_prompt_button = QToolButton()
+        self.wan_t2v_generate_prompt_button.setText("Buat Prompt")
+        self.wan_t2v_generate_prompt_button.clicked.connect(
+            lambda _checked=False: self.generate_wan_prompt_from_ui("positive_prompt", prompt_kind="wan_t2v")
+        )
         self.wan_prompt_inputs = {}
         self.wan_generate_prompt_buttons = {}
         for key in [
@@ -1496,6 +1588,7 @@ class SceneEditorWindow(QMainWindow):
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_size_input.currentTextChanged,
+            self.wan_t2v_size_input.currentTextChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.image_pan_size_input.currentTextChanged,
@@ -1509,7 +1602,6 @@ class SceneEditorWindow(QMainWindow):
             self.image_edit_model_input.currentIndexChanged,
             self.image_edit_gemini_model_input.currentIndexChanged,
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
-            self.wan_use_lora_input.checkStateChanged,
         ]:
             signal.connect(self.refresh_scene_status)
         for widget in [
@@ -1517,6 +1609,13 @@ class SceneEditorWindow(QMainWindow):
             self.z_negative_input, self.z_seed_input, self.z_lora_name_input, self.z_lora_strength_input,
             self.wan_lora_high_name_input, self.wan_lora_high_strength_input,
             self.wan_lora_low_name_input, self.wan_lora_low_strength_input,
+            self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input,
+            self.wan_lora_low2_name_input, self.wan_lora_low2_strength_input,
+            self.wan_t2v_positive_input, self.wan_t2v_negative_input,
+            self.wan_t2v_lora_high_name_input, self.wan_t2v_lora_high_strength_input,
+            self.wan_t2v_lora_low_name_input, self.wan_t2v_lora_low_strength_input,
+            self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input,
+            self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input,
             self.s2v_positive_input, self.s2v_negative_input,
             *self.wan_prompt_inputs.values(),
             *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
@@ -1526,7 +1625,6 @@ class SceneEditorWindow(QMainWindow):
         self.z_use_random_seed_input.toggled.connect(self.update_seed_fields_enabled)
         self.z_model_input.currentIndexChanged.connect(self.update_image_model_fields_enabled)
         self.image_edit_model_input.currentIndexChanged.connect(self.update_image_edit_model_fields_enabled)
-        self.wan_use_lora_input.toggled.connect(self.update_wan_lora_fields_enabled)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
         self.scene_type_combo.currentTextChanged.connect(self.update_run_action_buttons_state)
@@ -1605,7 +1703,7 @@ class SceneEditorWindow(QMainWindow):
             ("Volume Suara Latar", self.sound_volume_input),
         ]:
             meta_layout.addRow(label, widget)
-        tabs.addTab(self.meta_tab, "Metadata")
+        tabs.addTab(self.meta_tab, "Meta")
 
         self.z_tab = QWidget()
         z_layout = QFormLayout(self.z_tab)
@@ -1638,30 +1736,57 @@ class SceneEditorWindow(QMainWindow):
         z_extra_layout.addStretch(1)
         tabs.addTab(self.z_extra_tab, "Prompt Tambahan")
 
+        self.wan_t2v_tab = QWidget()
+        wan_t2v_layout = QGridLayout(self.wan_t2v_tab)
+
+        def add_t2v_lora_row(row: int, title: str, name_widget, strength_widget):
+            strength_widget.setFixedWidth(84)
+            strength_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            wan_t2v_layout.addWidget(QLabel(title), row, 0)
+            wan_t2v_layout.addWidget(name_widget, row, 1)
+            wan_t2v_layout.addWidget(QLabel("Kekuatan"), row, 2)
+            wan_t2v_layout.addWidget(strength_widget, row, 3)
+
+        wan_t2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_size_input, 0, 1, 1, 3)
+        add_t2v_lora_row(1, "Lora High 1", self.wan_t2v_lora_high_name_input, self.wan_t2v_lora_high_strength_input)
+        add_t2v_lora_row(2, "Lora Low 1", self.wan_t2v_lora_low_name_input, self.wan_t2v_lora_low_strength_input)
+        add_t2v_lora_row(3, "Lora High 2", self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input)
+        add_t2v_lora_row(4, "Lora Low 2", self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input)
+        wan_t2v_layout.addWidget(QLabel("Prompt Positif"), 5, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_positive_input, 5, 1, 1, 3)
+        wan_t2v_layout.addWidget(self.wan_t2v_generate_prompt_button, 6, 1, 1, 3, Qt.AlignLeft)
+        wan_t2v_layout.addWidget(QLabel("Prompt Negatif"), 7, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_negative_input, 7, 1, 1, 3)
+        tabs.addTab(self.wan_t2v_tab, "WAN22_T2V")
+
         self.wan_tab = QWidget()
         wan_layout = QGridLayout(self.wan_tab)
+        def add_lora_row(row: int, title: str, name_widget, strength_widget):
+            strength_widget.setFixedWidth(84)
+            strength_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            wan_layout.addWidget(QLabel(title), row, 0)
+            wan_layout.addWidget(name_widget, row, 1)
+            wan_layout.addWidget(QLabel("Kekuatan"), row, 2)
+            wan_layout.addWidget(strength_widget, row, 3)
+
         wan_layout.addWidget(QLabel("Ukuran"), 0, 0)
-        wan_layout.addWidget(self.wan_size_input, 0, 1)
-        wan_layout.addWidget(self.wan_use_lora_input, 1, 0, 1, 2)
-        wan_layout.addWidget(QLabel("Nama Lora High"), 2, 0)
-        wan_layout.addWidget(self.wan_lora_high_name_input, 2, 1)
-        wan_layout.addWidget(QLabel("Kekuatan Lora High"), 3, 0)
-        wan_layout.addWidget(self.wan_lora_high_strength_input, 3, 1)
-        wan_layout.addWidget(QLabel("Nama Lora Low"), 4, 0)
-        wan_layout.addWidget(self.wan_lora_low_name_input, 4, 1)
-        wan_layout.addWidget(QLabel("Kekuatan Lora Low"), 5, 0)
-        wan_layout.addWidget(self.wan_lora_low_strength_input, 5, 1)
-        row = 6
+        wan_layout.addWidget(self.wan_size_input, 0, 1, 1, 3)
+        add_lora_row(1, "Lora High 1", self.wan_lora_high_name_input, self.wan_lora_high_strength_input)
+        add_lora_row(2, "Lora Low 1", self.wan_lora_low_name_input, self.wan_lora_low_strength_input)
+        add_lora_row(3, "Lora High 2", self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input)
+        add_lora_row(4, "Lora Low 2", self.wan_lora_low2_name_input, self.wan_lora_low2_strength_input)
+        row = 5
         for slot in ("one", "two"):
             positive_key = f"positive_prompt_{slot}"
             negative_key = f"negative_prompt_{slot}"
             wan_layout.addWidget(QLabel(positive_key.replace("_", " ").title()), row, 0)
-            wan_layout.addWidget(self.wan_prompt_inputs[positive_key], row, 1)
+            wan_layout.addWidget(self.wan_prompt_inputs[positive_key], row, 1, 1, 3)
             row += 1
-            wan_layout.addWidget(self.wan_generate_prompt_buttons[positive_key], row, 1, alignment=Qt.AlignLeft)
+            wan_layout.addWidget(self.wan_generate_prompt_buttons[positive_key], row, 1, 1, 3, Qt.AlignLeft)
             row += 1
             wan_layout.addWidget(QLabel(negative_key.replace("_", " ").title()), row, 0)
-            wan_layout.addWidget(self.wan_prompt_inputs[negative_key], row, 1)
+            wan_layout.addWidget(self.wan_prompt_inputs[negative_key], row, 1, 1, 3)
             row += 1
         tabs.addTab(self.wan_tab, "WAN22_I2V")
 
@@ -1740,17 +1865,19 @@ class SceneEditorWindow(QMainWindow):
         if self.editor_tabs is None:
             return
         scene_type = self.scene_type_combo.currentText().strip()
+        is_wan22_t2v = scene_type == WAN22_T2V_SCENE_TYPE
         visible_map = {
             self.meta_tab: True,
-            self.z_tab: scene_type != "web_scroll",
+            self.z_tab: scene_type != "web_scroll" and not is_wan22_t2v,
             self.z_extra_tab: scene_type == "i2v",
-            self.wan_tab: scene_type in {"wan22", "wan22_i2v"},
+            self.wan_t2v_tab: is_wan22_t2v,
+            self.wan_tab: scene_type in {"wan22", "wan22_i2v", WAN22_T2V_SCENE_TYPE},
             self.s2v_tab: scene_type == "wan22_s2v",
             self.web_tab: scene_type == "web_scroll",
             self.image_pan_tab: scene_type == "image_pan",
             self.image_zoom_tab: scene_type == "image_zoom",
             self.web_search_tab: scene_type in {"i2v", "image_pan", "image_zoom"},
-            self.image_edit_tab: scene_type != "web_scroll",
+            self.image_edit_tab: scene_type != "web_scroll" and not is_wan22_t2v,
             self.assets_tab: scene_type != "web_scroll",
         }
         current_widget = self.editor_tabs.currentWidget()
@@ -1801,6 +1928,7 @@ class SceneEditorWindow(QMainWindow):
 
     def update_scene_type_specific_fields(self):
         scene_type = self.scene_type_combo.currentText().strip()
+        populate_duration_combo(self.duration_input, scene_type)
         hide_meta_duration = scene_type in {"wan22_s2v", "web_scroll"}
         self.duration_input.setEnabled(not hide_meta_duration)
         if self.duration_label is not None:
@@ -1989,6 +2117,7 @@ class SceneEditorWindow(QMainWindow):
         width, height = self._project_video_size()
         for combo in (
             self.wan_size_input,
+            self.wan_t2v_size_input,
             self.s2v_size_input,
             self.web_size_input,
             self.image_pan_size_input,
@@ -2226,7 +2355,9 @@ class SceneEditorWindow(QMainWindow):
         if self.generate_initial_image_button is None:
             return
         scene_type = self.scene_type_combo.currentText().strip()
-        self.generate_initial_image_button.setEnabled(scene_type != "web_scroll")
+        self.generate_initial_image_button.setEnabled(
+            scene_type not in {"web_scroll", WAN22_T2V_SCENE_TYPE}
+        )
 
     def build_audio_action_group(self):
         frame = QFrame(self)
@@ -2431,11 +2562,17 @@ class SceneEditorWindow(QMainWindow):
         self.update_lora_fields_enabled()
 
     def update_wan_lora_fields_enabled(self):
-        enabled = self.wan_use_lora_input.isChecked()
-        self.wan_lora_high_name_input.setEnabled(enabled)
-        self.wan_lora_high_strength_input.setEnabled(enabled)
-        self.wan_lora_low_name_input.setEnabled(enabled)
-        self.wan_lora_low_strength_input.setEnabled(enabled)
+        for widget in [
+            self.wan_lora_high_name_input,
+            self.wan_lora_high_strength_input,
+            self.wan_lora_low_name_input,
+            self.wan_lora_low_strength_input,
+            self.wan_lora_high2_name_input,
+            self.wan_lora_high2_strength_input,
+            self.wan_lora_low2_name_input,
+            self.wan_lora_low2_strength_input,
+        ]:
+            widget.setEnabled(True)
 
     def _set_form_field_visible(self, form_layout, widget, visible: bool):
         widget.setVisible(visible)
@@ -2515,12 +2652,23 @@ class SceneEditorWindow(QMainWindow):
         for scene_dir in self.list_scene_dirs_current():
             meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
+            wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
             wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
             web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
             image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
             image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
-            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, scene_dir)
+            issues = validate_scene_data(
+                meta,
+                z_prompt,
+                wan_t2v_prompt,
+                wan_prompt,
+                s2v_prompt,
+                web_prompt,
+                image_pan_prompt,
+                image_zoom_prompt,
+                scene_dir,
+            )
             label = scene_dir.name if not issues else f"{scene_dir.name} ({len(issues)} masalah)"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, str(scene_dir))
@@ -2583,6 +2731,7 @@ class SceneEditorWindow(QMainWindow):
         try:
             meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
+            wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
             wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
             web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
@@ -2591,14 +2740,14 @@ class SceneEditorWindow(QMainWindow):
             web_search_prompt = load_json(scene_dir / "web_search_prompt.json", DEFAULT_WEB_SEARCH_PROMPT)
             self.scene_title_input.setText(str(meta.get("scene_title", "")))
             self.scene_description_input.setPlainText(str(meta.get("scene_description", "")))
+            self.scene_type_combo.setCurrentText(str(meta.get("scene_type", "wan22_i2v")))
+            self.update_scene_type_tabs()
+            self.update_scene_type_specific_fields()
             duration_value = str(meta.get("duration_seconds", ""))
             index = self.duration_input.findData(int(float(duration_value))) if duration_value else -1
             if index < 0:
                 index = self.duration_input.findText(duration_value)
             self.duration_input.setCurrentIndex(max(index, 0))
-            self.scene_type_combo.setCurrentText(str(meta.get("scene_type", "wan22_i2v")))
-            self.update_scene_type_tabs()
-            self.update_scene_type_specific_fields()
             voice_key = resolve_scene_voice_key(meta)
             index = self.scene_voice_character_input.findData(voice_key)
             self.scene_voice_character_input.setCurrentIndex(max(index, 0))
@@ -2633,7 +2782,25 @@ class SceneEditorWindow(QMainWindow):
             self.update_lora_fields_enabled()
             self.z_positive_input.setPlainText(str(z_prompt.get("positive_prompt", "")))
             self.z_negative_input.setPlainText(str(z_prompt.get("negative_prompt", "")))
-            self.wan_use_lora_input.setChecked(bool(wan_prompt.get("use_lora", False)))
+            wan_t2v_width = int(wan_t2v_prompt.get("width", DEFAULT_WAN22_T2V_PROMPT["width"]))
+            wan_t2v_height = int(wan_t2v_prompt.get("height", DEFAULT_WAN22_T2V_PROMPT["height"]))
+            index = -1
+            for i in range(self.wan_t2v_size_input.count()):
+                size_value = self.wan_t2v_size_input.itemData(i)
+                if isinstance(size_value, tuple) and size_value == (wan_t2v_width, wan_t2v_height):
+                    index = i
+                    break
+            self.wan_t2v_size_input.setCurrentIndex(max(index, 0))
+            self.wan_t2v_lora_high_name_input.setText(str(wan_t2v_prompt.get("lora_high_name", DEFAULT_WAN22_T2V_PROMPT["lora_high_name"])))
+            self.wan_t2v_lora_high_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength"])))
+            self.wan_t2v_lora_low_name_input.setText(str(wan_t2v_prompt.get("lora_low_name", DEFAULT_WAN22_T2V_PROMPT["lora_low_name"])))
+            self.wan_t2v_lora_low_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength"])))
+            self.wan_t2v_lora_high2_name_input.setText(str(wan_t2v_prompt.get("lora_high_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"])))
+            self.wan_t2v_lora_high2_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength_2"])))
+            self.wan_t2v_lora_low2_name_input.setText(str(wan_t2v_prompt.get("lora_low_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"])))
+            self.wan_t2v_lora_low2_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength_2"])))
+            self.wan_t2v_positive_input.setPlainText(str(wan_t2v_prompt.get("positive_prompt", "")))
+            self.wan_t2v_negative_input.setPlainText(str(wan_t2v_prompt.get("negative_prompt", "")))
             wan_width = int(wan_prompt.get("width", DEFAULT_WAN_PROMPT["width"]))
             wan_height = int(wan_prompt.get("height", DEFAULT_WAN_PROMPT["height"]))
             index = -1
@@ -2647,6 +2814,10 @@ class SceneEditorWindow(QMainWindow):
             self.wan_lora_high_strength_input.setText(str(wan_prompt.get("lora_high_strength", DEFAULT_WAN_PROMPT["lora_high_strength"])))
             self.wan_lora_low_name_input.setText(str(wan_prompt.get("lora_low_name", DEFAULT_WAN_PROMPT["lora_low_name"])))
             self.wan_lora_low_strength_input.setText(str(wan_prompt.get("lora_low_strength", DEFAULT_WAN_PROMPT["lora_low_strength"])))
+            self.wan_lora_high2_name_input.setText(str(wan_prompt.get("lora_high_name_2", DEFAULT_WAN_PROMPT["lora_high_name_2"])))
+            self.wan_lora_high2_strength_input.setText(str(wan_prompt.get("lora_high_strength_2", DEFAULT_WAN_PROMPT["lora_high_strength_2"])))
+            self.wan_lora_low2_name_input.setText(str(wan_prompt.get("lora_low_name_2", DEFAULT_WAN_PROMPT["lora_low_name_2"])))
+            self.wan_lora_low2_strength_input.setText(str(wan_prompt.get("lora_low_strength_2", DEFAULT_WAN_PROMPT["lora_low_strength_2"])))
             self.update_wan_lora_fields_enabled()
             for key, widget in self.wan_prompt_inputs.items():
                 widget.setPlainText(str(wan_prompt.get(key, "")))
@@ -2790,17 +2961,31 @@ class SceneEditorWindow(QMainWindow):
             "strength_model": self.parse_lora_strength_value(),
         }
         z_prompt["json_api"] = get_z_image_template_name(z_prompt)
+        wan_t2v_prompt = {
+            "width": int((self.wan_t2v_size_input.currentData() or (368, 640))[0]),
+            "height": int((self.wan_t2v_size_input.currentData() or (368, 640))[1]),
+            "positive_prompt": self.wan_t2v_positive_input.toPlainText().strip(),
+            "negative_prompt": self.wan_t2v_negative_input.toPlainText().strip(),
+            "lora_high_name": self.wan_t2v_lora_high_name_input.text().strip(),
+            "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high_strength_input, "High 1"),
+            "lora_low_name": self.wan_t2v_lora_low_name_input.text().strip(),
+            "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low_strength_input, "Low 1"),
+            "lora_high_name_2": self.wan_t2v_lora_high2_name_input.text().strip(),
+            "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high2_strength_input, "High 2"),
+            "lora_low_name_2": self.wan_t2v_lora_low2_name_input.text().strip(),
+            "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low2_strength_input, "Low 2"),
+        }
         wan_prompt = {
             "width": int((self.wan_size_input.currentData() or (368, 640))[0]),
             "height": int((self.wan_size_input.currentData() or (368, 640))[1]),
-            "use_lora": self.wan_use_lora_input.isChecked(),
             "lora_high_name": self.wan_lora_high_name_input.text().strip(),
-            "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_lora_high_strength_input, "High"),
+            "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_lora_high_strength_input, "High 1"),
             "lora_low_name": self.wan_lora_low_name_input.text().strip(),
-            "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_lora_low_strength_input, "Low"),
-            "json_api": get_wan_template_name({
-                "use_lora": self.wan_use_lora_input.isChecked(),
-            }),
+            "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_lora_low_strength_input, "Low 1"),
+            "lora_high_name_2": self.wan_lora_high2_name_input.text().strip(),
+            "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_high2_strength_input, "High 2"),
+            "lora_low_name_2": self.wan_lora_low2_name_input.text().strip(),
+            "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_low2_strength_input, "Low 2"),
         }
         for key, widget in self.wan_prompt_inputs.items():
             wan_prompt[key] = widget.toPlainText().strip()
@@ -2831,7 +3016,7 @@ class SceneEditorWindow(QMainWindow):
             "focal_point": str(self.image_zoom_focal_input.currentData() or "center").strip(),
             "zoom_strength": round(float(self.image_zoom_strength_input.value()), 1),
         }
-        return meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt
+        return meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt
 
     def gather_web_search_prompt(self):
         size_data = self.web_search_size_input.currentData() or (480, 848)
@@ -3083,7 +3268,10 @@ class SceneEditorWindow(QMainWindow):
             parsed = int(float(value))
         except ValueError:
             raise ValueError("Durasi harus berupa angka.")
-        if parsed not in {5, 10}:
+        allowed = set(duration_options_for_scene_type(self.scene_type_combo.currentText().strip()))
+        if parsed not in allowed:
+            if allowed == {5, 10, 15}:
+                raise ValueError("Durasi hanya boleh 5, 10, atau 15 detik.")
             raise ValueError("Durasi hanya boleh 5 atau 10 detik.")
         return parsed
 
@@ -3117,17 +3305,15 @@ class SceneEditorWindow(QMainWindow):
         return parsed
 
     def parse_wan_lora_strength_value(self, widget: QLineEdit, label: str):
-        if not self.wan_use_lora_input.isChecked():
-            return 1.0
         value = widget.text().strip()
         if not value:
-            raise ValueError(f"Kekuatan Lora {label} WAN wajib diisi saat Lora digunakan.")
+            return 0.0
         try:
             parsed = float(value)
         except ValueError:
-            raise ValueError(f"Kekuatan Lora {label} WAN harus berupa bilangan desimal positif.")
-        if parsed <= 0:
-            raise ValueError(f"Kekuatan Lora {label} WAN harus berupa bilangan desimal positif.")
+            raise ValueError(f"Kekuatan Lora {label} WAN harus berupa bilangan desimal.")
+        if parsed < 0:
+            raise ValueError(f"Kekuatan Lora {label} WAN tidak boleh negatif.")
         return parsed
 
     def load_image_edit_prompt(self, scene_dir: Path):
@@ -3250,8 +3436,18 @@ class SceneEditorWindow(QMainWindow):
             self.status_label.setPlainText("Belum ada adegan yang dipilih.")
             return
         try:
-            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
-            issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, self.current_scene_dir)
+            meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
+            issues = validate_scene_data(
+                meta,
+                z_prompt,
+                wan_t2v_prompt,
+                wan_prompt,
+                s2v_prompt,
+                web_prompt,
+                image_pan_prompt,
+                image_zoom_prompt,
+                self.current_scene_dir,
+            )
         except ValueError as e:
             issues = [str(e)]
         if issues:
@@ -3264,12 +3460,23 @@ class SceneEditorWindow(QMainWindow):
     def get_scene_issues(self, scene_dir: Path):
         meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
         z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
+        wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
         wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
         s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
         web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
         image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
         image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
-        return validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, scene_dir)
+        return validate_scene_data(
+            meta,
+            z_prompt,
+            wan_t2v_prompt,
+            wan_prompt,
+            s2v_prompt,
+            web_prompt,
+            image_pan_prompt,
+            image_zoom_prompt,
+            scene_dir,
+        )
 
     def ensure_scene_is_runnable(self, scene_dir: Path):
         issues = self.get_scene_issues(scene_dir)
@@ -3323,12 +3530,22 @@ class SceneEditorWindow(QMainWindow):
         if not self.current_scene_dir:
             return False
         try:
-            meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
+            meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
         except ValueError as e:
             if not silent:
                 QMessageBox.warning(self, "Data Tidak Valid", str(e))
             return False
-        issues = validate_scene_data(meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, self.current_scene_dir)
+        issues = validate_scene_data(
+            meta,
+            z_prompt,
+            wan_t2v_prompt,
+            wan_prompt,
+            s2v_prompt,
+            web_prompt,
+            image_pan_prompt,
+            image_zoom_prompt,
+            self.current_scene_dir,
+        )
         if issues and not silent:
             reply = QMessageBox.question(
                 self, "Masalah Validasi",
@@ -3346,6 +3563,7 @@ class SceneEditorWindow(QMainWindow):
             self.current_scene_dir,
             scene_type=scene_type,
             z_prompt=z_prompt,
+            wan_t2v_prompt=wan_t2v_prompt,
             wan_prompt=wan_prompt,
             s2v_prompt=s2v_prompt,
             web_prompt=web_prompt,
@@ -3413,8 +3631,19 @@ class SceneEditorWindow(QMainWindow):
             target_index = int(scene.name.split("_", 1)[1])
             name = scene_dir_name(target_index + 1) if target_index >= insert_index else scene.name
             duplicate_directory(scene, temp_root / name)
-        meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
-        create_scene_files(temp_root / scene_dir_name(insert_index), meta, z_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt)
+        meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
+        create_scene_files(
+            temp_root / scene_dir_name(insert_index),
+            meta=meta,
+            z_prompt=z_prompt,
+            wan_t2v_prompt=wan_t2v_prompt,
+            wan_prompt=wan_prompt,
+            wan22_s2v_prompt=s2v_prompt,
+            web_scroll_prompt=web_prompt,
+            image_pan_prompt=image_pan_prompt,
+            image_zoom_prompt=image_zoom_prompt,
+            web_search_prompt=web_search_prompt,
+        )
         for scene in scenes:
             shutil.rmtree(scene)
         for child in sorted(temp_root.iterdir(), key=lambda p: p.name):
@@ -3606,6 +3835,13 @@ class SceneEditorWindow(QMainWindow):
                 f"Edit model: {edit_model}",
                 f"Source image: {source_name or '(none)'}",
             ])
+        elif prompt_kind == "wan_t2v":
+            size_data = self.wan_t2v_size_input.currentData() or (368, 640)
+            lines.extend([
+                f"Target: WAN22 T2V prompt field `{prompt_key or 'unknown'}`",
+                f"Scene duration: {self.duration_input.currentText().strip() or '10'}",
+                f"WAN22 T2V size: {int(size_data[0])}x{int(size_data[1])}",
+            ])
         elif prompt_kind == "wan_i2v":
             size_data = self.wan_size_input.currentData() or (368, 640)
             lines.extend([
@@ -3638,6 +3874,13 @@ class SceneEditorWindow(QMainWindow):
         if prompt_kind == "image_edit" and slot_index is not None and 0 <= slot_index < len(self.image_edit_prompt_inputs):
             self.image_edit_prompt_inputs[slot_index].setPlainText(text)
             return
+        if prompt_kind == "wan_t2v":
+            if prompt_key == "positive_prompt":
+                self.wan_t2v_positive_input.setPlainText(text)
+                return
+            if prompt_key == "negative_prompt":
+                self.wan_t2v_negative_input.setPlainText(text)
+                return
         if prompt_kind == "wan_i2v" and prompt_key in self.wan_prompt_inputs:
             self.wan_prompt_inputs[prompt_key].setPlainText(text)
             return
@@ -3655,6 +3898,8 @@ class SceneEditorWindow(QMainWindow):
             return self.current_scene_dir / "z_image_extra_prompts.json", "positive_prompt", None
         if prompt_kind == "image_edit":
             return self.current_scene_dir / "image_edit_prompt.json", "prompt", None
+        if prompt_kind == "wan_t2v":
+            return self.current_scene_dir / "wan22_t2v_prompt.json", str(prompt_key or "").strip(), None
         if prompt_kind == "wan_i2v":
             return self.current_scene_dir / "wan22_i2v_prompt.json", str(prompt_key or "").strip(), None
         if prompt_kind == "wan_s2v":
@@ -3695,6 +3940,7 @@ class SceneEditorWindow(QMainWindow):
             "z_image": "Gambar Awal",
             "z_extra": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
             "image_edit": f"Edit Gambar {slot_index + 1 if slot_index is not None else 1}",
+            "wan_t2v": f"WAN T2V ({prompt_key or 'prompt'})",
             "wan_i2v": f"WAN I2V ({prompt_key or 'prompt'})",
             "wan_s2v": f"WAN22 S2V ({prompt_key or 'prompt'})",
         }.get(prompt_kind, prompt_kind)
@@ -3822,21 +4068,31 @@ class SceneEditorWindow(QMainWindow):
             return
         self._start_prompt_generation("image_edit", slot_index, self.image_edit_prompt_inputs[slot_index].toPlainText().strip())
 
-    def generate_wan_prompt_from_ui(self, prompt_key: str):
+    def generate_wan_prompt_from_ui(self, prompt_key: str, prompt_kind: str = "wan_i2v"):
         key = str(prompt_key or "").strip()
-        if not key.startswith("positive_prompt_"):
-            QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN.")
+        prompt_kind = str(prompt_kind or "wan_i2v").strip()
+        if prompt_kind == "wan_t2v":
+            if key != "positive_prompt":
+                QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN22 T2V.")
+                return
+            widget = self.wan_t2v_positive_input
+        elif prompt_kind == "wan_i2v":
+            if not key.startswith("positive_prompt_"):
+                QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN.")
+                return
+            widget = self.wan_prompt_inputs.get(key)
+        else:
+            QMessageBox.information(self, "Belum Siap", "Buat Prompt tidak tersedia untuk field ini.")
             return
-        widget = self.wan_prompt_inputs.get(key)
         if widget is None:
             QMessageBox.information(self, "Belum Siap", "Field prompt WAN tidak valid.")
             return
-        self._start_prompt_generation("wan_i2v", None, widget.toPlainText().strip(), prompt_key=key)
+        self._start_prompt_generation(prompt_kind, None, widget.toPlainText().strip(), prompt_key=key)
 
     def generate_s2v_prompt_from_ui(self, prompt_key: str):
         key = str(prompt_key or "").strip()
         if key != "positive_prompt":
-            QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN22 S2V.")
+            QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN.")
             return
         prompt_text = self.s2v_positive_input.toPlainText().strip()
         self._start_prompt_generation("wan_s2v", None, prompt_text, prompt_key=key)
@@ -3924,6 +4180,14 @@ class SceneEditorWindow(QMainWindow):
             return
         if not self.current_scene_dir:
             QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        scene_type = self.scene_type_combo.currentText().strip()
+        if scene_type == WAN22_T2V_SCENE_TYPE:
+            QMessageBox.information(
+                self,
+                "Tidak Tersedia",
+                "Buat Gambar Awal tidak tersedia untuk scene wan22_t2v_i2v.",
+            )
             return
         if not self.save_current_scene():
             return

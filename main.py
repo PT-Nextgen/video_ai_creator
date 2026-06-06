@@ -1,7 +1,9 @@
 import argparse
+import copy
 import os
 import json
 import time
+import tempfile
 from pathlib import Path
 from datetime import datetime
 import sys
@@ -25,7 +27,17 @@ from z_image.z_image import (
     send_workflow as send_z_image_workflow,
 )
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image, is_gemini_prompt
-from wan22_i2v.wan22_i2v import build_wan_workflow, send_workflow as send_wan_workflow
+from wan22_i2v.wan22_i2v import (
+    DEFAULT_PROMPT as DEFAULT_WAN_PROMPT,
+    build_wan_workflow,
+    send_workflow as send_wan_workflow,
+)
+from wan22_t2v.wan22_t2v import (
+    DEFAULT_PROMPT as DEFAULT_WAN22_T2V_PROMPT,
+    build_wan_t2v_workflow,
+    resolve_wan22_i2v_duration,
+    send_workflow as send_wan22_t2v_workflow,
+)
 from wan22_s2v.wan22_s2v import (
     DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT,
     MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION,
@@ -36,7 +48,7 @@ from wan22_s2v.wan22_s2v import (
 )
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
 from scripts.generate_caption import apply_caption_to_video
-from scripts.generate_compose import compose_scene
+from scripts.generate_compose import compose_scene, ffprobe_fps, ffprobe_size, run as run_ffmpeg
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
 from scripts.generate_image_zoom_video import generate_image_zoom_video
@@ -128,6 +140,58 @@ def _ensure_scene_json(scene_dir, filename, default_data):
         write_log(f"{filename} tidak ditemukan di {scene_dir}; dibuat otomatis dari default.")
     except Exception as e:
         write_log(f"Gagal membuat default {filename} di {scene_dir}: {e}", level="error")
+
+
+def _extract_last_frame_image(video_path: str, output_path: str):
+    reader = imageio.get_reader(video_path)
+    last_frame = None
+    try:
+        for frame in reader:
+            last_frame = frame
+    finally:
+        try:
+            reader.close()
+        except Exception:
+            pass
+    if last_frame is None:
+        raise RuntimeError(f"Tidak ada frame yang bisa diekstrak dari video: {video_path}")
+    Image.fromarray(last_frame).convert("RGB").save(output_path)
+    return output_path
+
+
+def _concat_video_segments(segment_paths: list[str], output_path: str):
+    valid_segments = [str(path) for path in segment_paths if str(path or "").strip() and os.path.exists(path)]
+    if len(valid_segments) < 2:
+        raise RuntimeError("Minimal dua video diperlukan untuk concat.")
+
+    base_fps = max(1, int(round(float(ffprobe_fps(valid_segments[0])))))
+    base_width, base_height = ffprobe_size(valid_segments[0])
+
+    with tempfile.TemporaryDirectory(prefix="wan22_concat_") as td:
+        normalized_paths = []
+        for idx, src in enumerate(valid_segments):
+            dst = os.path.join(td, f"norm_{idx:02d}.mp4")
+            run_ffmpeg(
+                f'ffmpeg -y -i "{src}" '
+                f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                f'-an -c:v libx264 -preset fast -pix_fmt yuv420p "{dst}"'
+            )
+            normalized_paths.append(dst)
+
+        list_path = os.path.join(td, "concat_list.txt")
+        with open(list_path, "w", encoding="utf-8") as f:
+            for path in normalized_paths:
+                escaped = path.replace("'", "'\\''")
+                f.write(f"file '{escaped}'\n")
+
+        try:
+            run_ffmpeg(f'ffmpeg -y -f concat -safe 0 -i "{list_path}" -c copy -an "{output_path}"')
+        except Exception:
+            run_ffmpeg(
+                f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
+                f'-c:v libx264 -preset fast -pix_fmt yuv420p -an "{output_path}"'
+            )
+    return output_path
 
 
 
@@ -326,6 +390,153 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             return None
 
     # Branch by scene_type
+    if scene_type == 'wan22_t2v_i2v':
+        try:
+            scene_duration = int(scene_meta.get('duration_seconds', 0))
+        except Exception:
+            scene_duration = 0
+        if scene_duration not in {5, 10, 15}:
+            write_log(f"wan22_t2v_i2v scene duration must be 5, 10, or 15 seconds: {scene_duration}")
+            return False
+
+        _ensure_scene_json(scene_dir, 'wan22_t2v_prompt.json', DEFAULT_WAN22_T2V_PROMPT)
+        _ensure_scene_json(scene_dir, 'wan22_i2v_prompt.json', DEFAULT_WAN_PROMPT)
+
+        try:
+            t2v_prompt = _read_scene_json(scene_dir, 'wan22_t2v_prompt.json', required=True)
+            t2v_workflow = build_wan_t2v_workflow(t2v_prompt, scene_meta)
+        except Exception as e:
+            write_log(f"Failed to build wan22_t2v workflow for {scene_dir}: {e}")
+            return False
+
+        t2v_result = send_wan22_t2v_workflow(
+            t2v_workflow,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'wan22_t2v_prompt.json'),
+        )
+        if not t2v_result:
+            write_log(f"send_wan22_t2v_workflow failed for {scene_dir}")
+            return False
+        prompt_id = t2v_result.get('prompt_id') or t2v_result.get('id')
+        write_log(f"Posted wan22_t2v workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+        if not video_out:
+            write_log(f"No T2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
+            return False
+        write_log(f"T2V video output info: {json.dumps(video_out)}")
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine T2V video filename from output: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
+        t2v_video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, t2v_video_out_path)
+        except Exception as e:
+            write_log(f"Failed to download T2V video {video_filename} from {video_url}: {e}")
+            return False
+        try:
+            if not os.path.exists(t2v_video_out_path) or os.path.getsize(t2v_video_out_path) == 0:
+                write_log(f"Downloaded T2V file missing or empty: {t2v_video_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking downloaded T2V file {t2v_video_out_path}: {e}")
+            return False
+
+        if scene_duration == 5:
+            if not _mix_scene_audio_to_video(t2v_video_out_path, is_s2v=False):
+                return False
+            if not _apply_caption_if_enabled(t2v_video_out_path):
+                return False
+            write_log(f"Completed wan22_t2v_i2v T2V-only processing for {scene_dir}")
+            return True
+
+        last_frame_path = os.path.join(scene_dir, 'wan22_t2v_last_frame.png')
+        try:
+            _extract_last_frame_image(t2v_video_out_path, last_frame_path)
+        except Exception as e:
+            write_log(f"Failed to extract last frame from T2V video for {scene_dir}: {e}")
+            return False
+
+        try:
+            wan_prompt = _read_scene_json(scene_dir, 'wan22_i2v_prompt.json', required=True)
+            wan_prompt = copy.deepcopy(wan_prompt) if isinstance(wan_prompt, dict) else {}
+            wan_prompt['duration_seconds'] = resolve_wan22_i2v_duration(scene_duration)
+        except Exception as e:
+            write_log(f"Failed to read wan22_i2v_prompt.json for {scene_dir}: {e}")
+            return False
+
+        uploaded_name = _upload_to_comfy(last_frame_path)
+        if not uploaded_name:
+            write_log(f"Failed to upload extracted last frame for {scene_dir}")
+            return False
+        try:
+            wan_workflow = build_wan_workflow(wan_prompt, scene_meta, uploaded_name=uploaded_name)
+        except Exception as e:
+            write_log(f"Failed to build wan22_i2v workflow for {scene_dir}: {e}")
+            return False
+        wan_result = send_wan_workflow(
+            wan_workflow,
+            uploaded_name,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'wan22_i2v_prompt.json'),
+        )
+        if not wan_result:
+            write_log(f"send_wan_workflow failed for wan22_t2v_i2v in {scene_dir}")
+            return False
+        prompt_id = wan_result.get('prompt_id') or wan_result.get('id')
+        write_log(f"Posted wan22_i2v workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+        if not video_out:
+            write_log(f"No WAN22_I2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
+            return False
+        write_log(f"WAN22_I2V video output info: {json.dumps(video_out)}")
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine WAN22_I2V video filename from output: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
+        i2v_video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, i2v_video_out_path)
+        except Exception as e:
+            write_log(f"Failed to download WAN22_I2V video {video_filename} from {video_url}: {e}")
+            return False
+        try:
+            if not os.path.exists(i2v_video_out_path) or os.path.getsize(i2v_video_out_path) == 0:
+                write_log(f"Downloaded WAN22_I2V file missing or empty: {i2v_video_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Error checking downloaded WAN22_I2V file {i2v_video_out_path}: {e}")
+            return False
+        try:
+            concat_tmp_path = os.path.join(scene_dir, "__wan22_t2v_i2v_concat_tmp__.mp4")
+            _concat_video_segments([t2v_video_out_path, i2v_video_out_path], concat_tmp_path)
+            os.replace(concat_tmp_path, i2v_video_out_path)
+            write_log(
+                f"Combined wan22_t2v_i2v stages into final video: {i2v_video_out_path} "
+                f"(T2V {os.path.basename(t2v_video_out_path)} + I2V {os.path.basename(i2v_video_out_path)})"
+            )
+        except Exception as e:
+            write_log(f"Failed to concat WAN22_T2V + WAN22_I2V for {scene_dir}: {e}")
+            return False
+        if not _mix_scene_audio_to_video(i2v_video_out_path, is_s2v=False):
+            return False
+        if not _apply_caption_if_enabled(i2v_video_out_path):
+            return False
+        write_log(f"Completed processing {scene_dir}")
+        return True
+
     if scene_type in {'wan22', 'wan22_i2v'}:
         img_path = _find_latest_root_image(scene_dir)
         if not img_path:

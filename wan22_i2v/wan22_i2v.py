@@ -9,8 +9,7 @@ logger = get_logger(__name__)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
-TEMPLATE_4 = "wan22_i2v_4steps_api.json"
-TEMPLATE_4_LORA = "wan22_i2v_4steps_lora_api.json"
+TEMPLATE_4 = "wan22_i2v_4steps_lora_api.json"
 SIZE_OPTIONS = [
     ("368x640", 368, 640),
     ("480x848", 480, 848),
@@ -34,12 +33,14 @@ DEFAULT_PROMPT = {
     "negative_prompt_two": "",
     "width": 368,
     "height": 640,
-    "use_lora": False,
-    "lora_high_name": "",
-    "lora_high_strength": 1.0,
-    "lora_low_name": "",
-    "lora_low_strength": 1.0,
-    "json_api": TEMPLATE_4,
+    "lora_high_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_high_strength": 0,
+    "lora_low_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "lora_low_strength": 0,
+    "lora_high_name_2": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_high_strength_2": 0,
+    "lora_low_name_2": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "lora_low_strength_2": 0,
 }
 
 
@@ -80,13 +81,25 @@ def _set_wan_loop_total(workflow, value):
     return False
 
 
+def _set_lora_node(workflow: dict, node_id: str | None, lora_name: str, strength_value, fallback_strength: float) -> bool:
+    if not node_id:
+        return False
+    node = workflow.get(str(node_id))
+    if not isinstance(node, dict):
+        return False
+    inputs = node.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    inputs["lora_name"] = str(lora_name or "")
+    try:
+        inputs["strength_model"] = float(strength_value)
+    except (TypeError, ValueError):
+        inputs["strength_model"] = float(fallback_strength)
+    return True
+
+
 def get_template_name(wan_prompt: dict | None = None) -> str:
-    wan_prompt = wan_prompt or {}
-    template_name = wan_prompt.get("json_api", TEMPLATE_4)
-    use_lora = bool(wan_prompt.get("use_lora"))
-    if template_name not in {TEMPLATE_4, TEMPLATE_4_LORA}:
-        template_name = TEMPLATE_4
-    return TEMPLATE_4_LORA if use_lora else TEMPLATE_4
+    return TEMPLATE_4
 
 
 def get_step_template_name(wan_prompt: dict | None = None) -> str:
@@ -94,16 +107,14 @@ def get_step_template_name(wan_prompt: dict | None = None) -> str:
 
 
 def build_workflow(wan_prompt, scene_meta, uploaded_name=None):
-    workflow = copy.deepcopy(_load_template(get_template_name(wan_prompt)))
+    wan_prompt = wan_prompt if isinstance(wan_prompt, dict) else {}
+    workflow = copy.deepcopy(_load_template(TEMPLATE_4))
     replace_map = {}
     for suffix in ["one", "two"]:
         pos_key = f"positive_prompt_{suffix}"
         neg_key = f"negative_prompt_{suffix}"
         replace_map[pos_key] = wan_prompt.get(pos_key, "")
         replace_map[neg_key] = wan_prompt.get(neg_key, "")
-    # Keep template compatibility without exposing prompt #3 in UI/JSON.
-    replace_map["positive_prompt_three"] = ""
-    replace_map["negative_prompt_three"] = ""
 
     _traverse_and_replace(workflow, replace_map)
 
@@ -135,23 +146,10 @@ def build_workflow(wan_prompt, scene_meta, uploaded_name=None):
         if isinstance(inputs, dict):
             inputs["value"] = height
 
-    if wan_prompt.get("use_lora"):
-        if "264" in workflow and isinstance(workflow["264"], dict):
-            inputs = workflow["264"].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["lora_name"] = wan_prompt.get("lora_high_name", "")
-                try:
-                    inputs["strength_model"] = float(wan_prompt.get("lora_high_strength", 1.5))
-                except (TypeError, ValueError):
-                    inputs["strength_model"] = 1.5
-        if "265" in workflow and isinstance(workflow["265"], dict):
-            inputs = workflow["265"].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["lora_name"] = wan_prompt.get("lora_low_name", "")
-                try:
-                    inputs["strength_model"] = float(wan_prompt.get("lora_low_strength", 0.5))
-                except (TypeError, ValueError):
-                    inputs["strength_model"] = 0.5
+    _set_lora_node(workflow, "264", wan_prompt.get("lora_high_name", ""), wan_prompt.get("lora_high_strength", 0), 0)
+    _set_lora_node(workflow, "265", wan_prompt.get("lora_low_name", ""), wan_prompt.get("lora_low_strength", 0), 0)
+    _set_lora_node(workflow, "266", wan_prompt.get("lora_high_name_2", ""), wan_prompt.get("lora_high_strength_2", 0), 0)
+    _set_lora_node(workflow, "267", wan_prompt.get("lora_low_name_2", ""), wan_prompt.get("lora_low_strength_2", 0), 0)
 
     return workflow
 
@@ -194,7 +192,7 @@ def prepare_and_send_workflow(scene_dir, uploaded_name, server, log_file=None):
     and send the modified workflow (without overwriting the original file).
     """
     wan_json_path = None
-    for fname in ['wan22_i2v_4steps_api.json']:
+    for fname in ['wan22_i2v_4steps_lora_api.json']:
         fpath = os.path.join(scene_dir, fname)
         if os.path.exists(fpath):
             wan_json_path = fpath

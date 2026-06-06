@@ -52,9 +52,8 @@ PROMPT_TOP_LEVEL_FIELDS = {
         "negative_prompt_one",
         "positive_prompt_two",
         "negative_prompt_two",
-        "positive_prompt_three",
-        "negative_prompt_three",
     ],
+    "wan22_t2v_prompt.json": ["positive_prompt", "negative_prompt"],
     "wan22_s2v_prompt.json": ["positive_prompt", "negative_prompt"],
     "project_settings_cover.json": ["positive_prompt", "negative_prompt"],
 }

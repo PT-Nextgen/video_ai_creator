@@ -229,7 +229,7 @@
     "inputs": {
       "shift": 5,
       "model": [
-        "265",
+        "267",
         0
       ]
     },
@@ -242,7 +242,7 @@
     "inputs": {
       "shift": 5,
       "model": [
-        "264",
+        "266",
         0
       ]
     },
@@ -475,8 +475,6 @@
   },
   "184": {
     "inputs": {
-      "preview": "",
-      "previewMode": false,
       "source": [
         "167",
         1
@@ -703,7 +701,7 @@
   "264": {
     "inputs": {
       "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
-      "strength_model": 1.5,
+      "strength_model": 0,
       "model": [
         "101",
         0
@@ -716,10 +714,38 @@
   },
   "265": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
-      "strength_model": 0.5,
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "strength_model": 0,
       "model": [
         "102",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "266": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "strength_model": 0,
+      "model": [
+        "264",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "267": {
+    "inputs": {
+      "lora_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "strength_model": 0,
+      "model": [
+        "265",
         0
       ]
     },

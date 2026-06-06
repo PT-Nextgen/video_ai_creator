@@ -14,11 +14,9 @@ from logging_config import setup_logging, get_logger, write_log
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from gemini.gemini_tts import (
-    GEMINI_TTS_MODE_DEFAULT,
     GEMINI_VOICE_NAME_BY_CHARACTER,
-    _build_tts_text,
     process_scene as process_gemini_tts_scene,
-    synthesize as synthesize_gemini,
+    synthesize_with_fallbacks as synthesize_gemini_with_fallbacks,
 )
 from scripts.elevenlabs_tts import find_elevenlabs_key, process_scene as process_elevenlabs_tts_scene
 from scripts.voice_profiles import (
@@ -469,9 +467,14 @@ def _generate_and_split_gemini_scene_group(project_dir: str, voice_key: str, sce
             combined_parts.append(separator_text)
     combined_text = preamble + "\n\n" + "\n\n".join(combined_parts)
 
-    prompt_text = _build_tts_text(voice_key, combined_text, mode=GEMINI_TTS_MODE_DEFAULT)
     try:
-        audio_bytes = synthesize_gemini(prompt_text, voice_name)
+        audio_bytes = synthesize_gemini_with_fallbacks(
+            combined_text,
+            voice_key,
+            voice_name,
+            logger=logger_obj,
+            write_log=write_log,
+        )
     except Exception as e:
         write_log(f"Gemini TTS gabungan gagal untuk voice `{voice_key}`: {e}", level="error")
         if logger_obj:

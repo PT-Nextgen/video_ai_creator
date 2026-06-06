@@ -21,7 +21,7 @@
 ## Referensi panduan untuk agent (lakukan secara berurutan)
 1. Lihat isi folder `AGENT-SKILLS`
 2. Baca `SCENE-GENERAL.md`
-3. Baca `SCENE-WAN22-I2V.md`, `SCENE-WAN22-S2V.md`, `SCENE-I2V.md`, `SCENE-IMAGE-PAN.md` dan `SCENE-IMAGE-ZOOM.md` dan baca juga file .md referensi pada setiap file tersebut
+3. Baca `SCENE-WAN22-T2V-I2V.md`, `SCENE-WAN22-I2V.md`, `SCENE-WAN22-S2V.md`, `SCENE-I2V.md`, `SCENE-IMAGE-PAN.md` dan `SCENE-IMAGE-ZOOM.md` dan baca juga file .md referensi pada setiap file tersebut
 4. Pahami semua file panduan (file .md) yang diberikan
 5. Jangan membuat eksekusi yang tidak sesuai dengan panduan (file .md) yang diberikan
 

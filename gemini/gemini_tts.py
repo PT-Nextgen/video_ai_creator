@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import time
 import wave
 from typing import Optional
@@ -62,6 +63,14 @@ def _build_tts_text(voice_key: str, raw_text: str, mode: str = GEMINI_TTS_MODE_D
     mode = str(mode or "").strip().lower()
     if mode == "consistent":
         return text
+    if mode == "minimal":
+        return (
+            "Bacakan teks berikut dalam Bahasa Indonesia dengan suara natural, jelas, "
+            "dan tanpa menambahkan kata lain.\n\n"
+            f"Teks:\n{text}"
+        )
+    if mode == "plain":
+        return text
     voice = get_voice_character(voice_key)
     profile_name = voice.get("display_name", "Voice Talent")
     profile_text = voice.get("gemini_profile_text", "")
@@ -85,6 +94,19 @@ def _build_tts_text(voice_key: str, raw_text: str, mode: str = GEMINI_TTS_MODE_D
         "{transcript}"
     )
     return prompt_template.format(transcript=text)
+
+
+def _normalize_tts_text(raw_text: str) -> str:
+    text = str(raw_text or "").strip()
+    text = text.replace("_", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _is_prohibited_content_error(exc: Exception) -> bool:
+    message = str(exc or "")
+    normalized = message.upper()
+    return "PROHIBITED_CONTENT" in normalized or '"BLOCKREASON": "PROHIBITED_CONTENT"' in normalized
 
 
 def _write_wav_from_pcm(pcm_bytes: bytes, out_path: str, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2):
@@ -127,6 +149,52 @@ def synthesize(text: str, voice_name: str, api_key: Optional[str] = None, langua
     return audio_bytes
 
 
+def synthesize_with_fallbacks(
+    raw_text: str,
+    voice_key: str,
+    voice_name: str,
+    api_key: Optional[str] = None,
+    language_code: str = GEMINI_TTS_LANGUAGE_CODE,
+    timeout: int = 180,
+    logger=None,
+    write_log=None,
+) -> bytes:
+    normalized_text = _normalize_tts_text(raw_text)
+    candidates = [
+        ("structured", _build_tts_text(voice_key, raw_text, mode="structured")),
+        ("minimal", _build_tts_text(voice_key, raw_text, mode="minimal")),
+    ]
+    if normalized_text and normalized_text != str(raw_text or "").strip():
+        candidates.append(("minimal_normalized", _build_tts_text(voice_key, normalized_text, mode="minimal")))
+    candidates.append(("plain", _build_tts_text(voice_key, normalized_text or raw_text, mode="plain")))
+
+    last_error = None
+    for idx, (mode_name, prompt_text) in enumerate(candidates):
+        try:
+            if idx > 0:
+                if write_log:
+                    write_log(
+                        f"Gemini TTS retry dengan mode `{mode_name}` untuk voice `{voice_key}`.",
+                        level="warning",
+                    )
+                if logger:
+                    logger.warning("Retrying Gemini TTS with mode `%s` for voice `%s`.", mode_name, voice_key)
+            return synthesize(
+                prompt_text,
+                voice_name,
+                api_key=api_key,
+                language_code=language_code,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            last_error = exc
+            if not _is_prohibited_content_error(exc):
+                raise
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Gemini TTS gagal tanpa detail error.")
+
+
 def process_scene(scene_dir, logger=None, write_log=None):
     meta_path = os.path.join(scene_dir, "scene_meta.json")
     if not os.path.exists(meta_path):
@@ -150,8 +218,13 @@ def process_scene(scene_dir, logger=None, write_log=None):
         return False
 
     try:
-        prompt_text = _build_tts_text(voice_key, text, mode=GEMINI_TTS_MODE_DEFAULT)
-        audio_bytes = synthesize(prompt_text, voice_name)
+        audio_bytes = synthesize_with_fallbacks(
+            text,
+            voice_key,
+            voice_name,
+            logger=logger,
+            write_log=write_log,
+        )
     except Exception as e:
         if write_log:
             write_log(f"Gemini TTS gagal untuk {scene_dir}: {e}", level="error")
