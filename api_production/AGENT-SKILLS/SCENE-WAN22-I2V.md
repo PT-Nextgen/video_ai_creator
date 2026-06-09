@@ -1,22 +1,9 @@
-# Petunjuk untuk pembuatan scene dengan tipe wan22_i2v
-
-## Pemahaman alur video
-1. Baca `SCENE-GENERAL.md`
-
 ## Flow scene
 1. Buat gambar awal
-   Baca `TEXT-TO-IMAGE.md`
-   CLI untuk membuat gambar awal:
-   ```powershell
-   ..\.venv\Scripts\python.exe ..\scripts\generate_initial_image.py --project <nama_project> --scene <nama_scene>
-   ```
+   Baca `Petunjuk pembuatan text menjadi image`
 2. Buat video dengan menggunakan gambar awal 
-   Baca `IMAGE-TO-VIDEO.md`
-   CLI untuk memproses scene dan membuat video:
-   ```powershell
-   ..\.venv\Scripts\python.exe ..\main.py --project <nama_project> --scene <nama_scene>
-   ```
-3. Tidak boleh mengubah setting apapun selain yang dijelaskan pada `TEXT-TO-IMAGE.md` dan `IMAGE-TO-VIDEO.md`
+   Baca `Petunjuk pembuatan image menjadi video`
+3. Tidak boleh mengubah setting apapun selain yang dijelaskan pada `Petunjuk pembuatan text menjadi image` dan `Petunjuk pembuatan image menjadi video`
 
 ## Panduan untuk pembuatan scene
 1. Scene ini tidak untuk membuat konsep teknis dengan nilai benar dan salah yang jelas

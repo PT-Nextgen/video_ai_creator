@@ -111,9 +111,7 @@ class GeminiPromptTranslator:
                     ]
                 }
             ],
-            "generationConfig": {
-                "temperature": 0.0,
-            },
+            "generationConfig": {},
         }
 
         start_time = time.perf_counter()
@@ -276,8 +274,329 @@ class GeminiPromptTranslator:
         return translated or text
 
 
+class PromptTranslator:
+    def __init__(
+        self,
+        prompt_generation_provider: str = "gemini",
+        prompt_generation_model_name: str = DEFAULT_PROMPT_GENERATION_MODEL,
+        prompt_generation_host: str = "nextgenserver",
+        prompt_generation_port: int = 11434,
+    ):
+        self._gemini = GeminiPromptTranslator(
+            translate_model_name=prompt_generation_model_name,
+            prompt_generation_model_name=prompt_generation_model_name,
+        )
+        self.prompt_generation_provider = (
+            str(prompt_generation_provider or "").strip().lower() or "gemini"
+        )
+        if self.prompt_generation_provider not in {"gemini", "ollama"}:
+            self.prompt_generation_provider = "gemini"
+        self.prompt_generation_model_name = (
+            str(prompt_generation_model_name or "").strip() or DEFAULT_PROMPT_GENERATION_MODEL
+        )
+        self.prompt_generation_host = str(prompt_generation_host or "").strip() or "nextgenserver"
+        try:
+            self.prompt_generation_port = int(prompt_generation_port)
+        except (TypeError, ValueError):
+            self.prompt_generation_port = 11434
+        if self.prompt_generation_port <= 0:
+            self.prompt_generation_port = 11434
+        self.translate_model_name = self.prompt_generation_model_name
+        self.last_call_metrics: dict | None = None
+
+    def _call_ollama_text_model(
+        self,
+        model_name: str,
+        prompt_text: str,
+        timeout: int = 90,
+        phase: str = "generate_prompt_to_english",
+    ) -> str:
+        host = self.prompt_generation_host
+        port = self.prompt_generation_port
+        base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
+        url = f"{base_url.rstrip('/')}:{port}/api/generate"
+        payload = {
+            "model": model_name,
+            "prompt": prompt_text,
+            "stream": False,
+            "think": True,
+            "options": {
+                "temperature": 1,
+                "top_k": 20,
+                "top_p": 0.95,
+                "presence_penalty": 1.5,
+                "repeat_penalty": 1,
+                "draft_num_predict": 4,
+            },
+        }
+        start_time = time.perf_counter()
+        try:
+            response = requests.post(url, json=payload, timeout=timeout)
+            elapsed_seconds = time.perf_counter() - start_time
+            if response.status_code >= 400:
+                self.last_call_metrics = {
+                    "provider": "ollama",
+                    "model": model_name,
+                    "elapsed_seconds": elapsed_seconds,
+                    "tok_per_sec": None,
+                    "ok": False,
+                    "status_code": response.status_code,
+                }
+                LOGGER.error(
+                    format_llm_runtime_log(
+                        "ollama",
+                        phase,
+                        model_name,
+                        elapsed_seconds,
+                        None,
+                        status="gagal",
+                        extra_parts=[f"status_code={response.status_code}", f"error={response.text[:600]}"],
+                    )
+                )
+                raise RuntimeError(f"Ollama error {response.status_code}: {response.text[:600]}")
+            response_payload = response.json()
+            generated_text = _extract_best_ollama_text(response_payload, prefer_json=(phase == "generate_prompt_multilang"))
+            eval_count = response_payload.get("eval_count")
+            eval_duration = response_payload.get("eval_duration")
+            tok_per_sec = None
+            if isinstance(eval_count, (int, float)) and isinstance(eval_duration, (int, float)) and eval_duration > 0:
+                tok_per_sec = float(eval_count) / (float(eval_duration) / 1_000_000_000.0)
+            self.last_call_metrics = {
+                "provider": "ollama",
+                "model": model_name,
+                "elapsed_seconds": elapsed_seconds,
+                "tok_per_sec": tok_per_sec,
+                "ok": True,
+                "status_code": response.status_code,
+            }
+            LOGGER.info(
+                format_llm_runtime_log(
+                    "ollama",
+                    phase,
+                    model_name,
+                    elapsed_seconds,
+                    tok_per_sec,
+                    extra_parts=[f"host={host}", f"port={port}"],
+                )
+            )
+            return generated_text
+        except requests.RequestException as exc:
+            elapsed_seconds = time.perf_counter() - start_time
+            self.last_call_metrics = {
+                "provider": "ollama",
+                "model": model_name,
+                "elapsed_seconds": elapsed_seconds,
+                "tok_per_sec": None,
+                "ok": False,
+                "status_code": None,
+                "error": str(exc),
+            }
+            LOGGER.error(
+                format_llm_runtime_log(
+                    "ollama",
+                    phase,
+                    model_name,
+                    elapsed_seconds,
+                    None,
+                    status="gagal",
+                    extra_parts=[f"error={exc}", f"host={host}", f"port={port}"],
+                )
+            )
+            raise
+
+    def translate_to_english(self, text: str) -> str:
+        text = _clean_text(text)
+        if not text:
+            return ""
+        if self.prompt_generation_provider == "gemini":
+            result = self._gemini.translate_to_english(text)
+            self.last_call_metrics = self._gemini.last_call_metrics
+            return result
+        instruction = (
+            "Translate the following prompt to natural English for AI generation.\n"
+            "Preserve intent, style, and detail.\n"
+            "Return only the translated text without extra explanation.\n\n"
+        )
+        result = self._call_ollama_text_model(
+            self.prompt_generation_model_name,
+            instruction + text,
+            timeout=90,
+            phase="translate_to_english",
+        )
+        return result or text
+
+    def translate_to_indonesian(self, text: str, context: str = "") -> str:
+        text = _clean_text(text)
+        if not text:
+            return ""
+        if self.prompt_generation_provider == "gemini":
+            result = self._gemini.translate_to_indonesian(text, context=context)
+            self.last_call_metrics = self._gemini.last_call_metrics
+            return result
+        instruction = (
+            "Translate the following prompt into natural Indonesian.\n"
+            "Preserve meaning, tone, and detail.\n"
+            "Return only the Indonesian prompt without explanation.\n\n"
+        )
+        payload_text = instruction + _compose_prompt_request_text(text, context)
+        result = self._call_ollama_text_model(
+            self.prompt_generation_model_name,
+            payload_text,
+            timeout=90,
+            phase="translate_to_indonesian",
+        )
+        return result
+
+    def generate_prompt_to_english(self, text: str, context: str = "") -> str:
+        text = _clean_text(text)
+        if not text:
+            return ""
+        if self.prompt_generation_provider == "gemini":
+            result = self._gemini.generate_prompt_to_english(text, context=context)
+            self.last_call_metrics = self._gemini.last_call_metrics
+            return result
+        instruction = (
+            "You are a senior AI prompt engineer.\n"
+            "Rewrite the prompt into a polished English prompt for image generation.\n"
+            "Preserve the subject, composition, style, lighting, atmosphere, and important details.\n"
+            "Use the provided context to improve the prompt.\n"
+            "Return only the English prompt without bullet points, quotes, or explanation.\n\n"
+        )
+        payload_text = instruction + _compose_prompt_request_text(text, context)
+        generated = self._call_ollama_text_model(
+            self.prompt_generation_model_name,
+            payload_text,
+            timeout=120,
+            phase="generate_prompt_to_english",
+        )
+        return generated or text
+
+    def generate_prompt_multilang(self, text: str, context: str = "") -> dict:
+        text = _clean_text(text)
+        if not text:
+            return {"en": "", "id_new": ""}
+        instruction = (
+            "You are a senior AI prompt engineer and bilingual writer.\n"
+            "Rewrite the prompt into a polished English prompt for image generation.\n"
+            "Then provide a natural Indonesian version with the same meaning and detail.\n"
+            "Preserve subject, composition, style, lighting, atmosphere, and important details.\n"
+            "Use the provided context to improve the prompt.\n"
+            "Return JSON only with exactly these keys: "
+            '{"en":"...", "id_new":"..."}'
+        )
+        payload_text = _compose_prompt_request_text(text, context)
+        if self.prompt_generation_provider == "gemini":
+            response_text = self._gemini._call_text_model(
+                self.prompt_generation_model_name,
+                instruction,
+                payload_text,
+                timeout=120,
+                phase="generate_prompt_multilang",
+            )
+            self.last_call_metrics = self._gemini.last_call_metrics
+        else:
+            response_text = self._call_ollama_text_model(
+                self.prompt_generation_model_name,
+                instruction + "\n\n" + payload_text,
+                timeout=120,
+                phase="generate_prompt_multilang",
+            )
+        parsed = _parse_multilang_prompt_response(response_text)
+        if not parsed["en"] and not parsed["id_new"]:
+            raise RuntimeError("LLM tidak mengembalikan JSON multibahasa yang valid.")
+        if not parsed["id_new"]:
+            parsed["id_new"] = parsed["en"]
+        if not parsed["en"]:
+            parsed["en"] = parsed["id_new"]
+        return parsed
+
+
 def _clean_text(value) -> str:
     return str(value or "").strip()
+
+
+def _strip_markdown_code_fences(text: str) -> str:
+    text = str(text or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
+
+
+def _parse_multilang_prompt_response(text: str) -> dict:
+    raw = _strip_markdown_code_fences(text)
+    payload = None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                payload = json.loads(raw[start:end + 1])
+            except Exception:
+                payload = None
+    if not isinstance(payload, dict):
+        return {"en": "", "id_new": ""}
+    return {
+        "en": _clean_text(payload.get("en", "")),
+        "id_new": _clean_text(payload.get("id_new", "")),
+    }
+
+
+def _extract_json_text_candidate(text: str) -> str:
+    raw = _strip_markdown_code_fences(text)
+    if not raw:
+        return ""
+    try:
+        json.loads(raw)
+        return raw
+    except Exception:
+        pass
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start >= 0 and end > start:
+        candidate = raw[start:end + 1].strip()
+        try:
+            json.loads(candidate)
+            return candidate
+        except Exception:
+            pass
+    return ""
+
+
+def _extract_best_ollama_text(payload: dict, prefer_json: bool = False) -> str:
+    candidates: list[str] = []
+
+    def add_candidate(value):
+        if not isinstance(value, str):
+            return
+        cleaned = _clean_text(value)
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+
+    add_candidate(payload.get("response", ""))
+    message = payload.get("message")
+    if isinstance(message, dict):
+        add_candidate(message.get("content", ""))
+    add_candidate(payload.get("thinking", ""))
+
+    response_text = _clean_text(payload.get("response", ""))
+    thinking_text = _clean_text(payload.get("thinking", ""))
+    if response_text and thinking_text:
+        add_candidate(f"{response_text}\n{thinking_text}")
+        add_candidate(f"{thinking_text}\n{response_text}")
+
+    if prefer_json:
+        for candidate in candidates:
+            json_candidate = _extract_json_text_candidate(candidate)
+            if json_candidate:
+                return json_candidate
+    return candidates[0] if candidates else ""
 
 
 def _compose_prompt_request_text(prompt_text: str, context: str = "") -> str:
@@ -343,8 +662,10 @@ def _guess_project_dir_from_path(path: str | None) -> Path | None:
 
 def get_prompt_translator(provider: str | None = None, project_dir: str | Path | None = None):
     _ = provider
-    translate_model = DEFAULT_TRANSLATE_MODEL
+    prompt_generation_provider = "gemini"
     prompt_generation_model = DEFAULT_PROMPT_GENERATION_MODEL
+    prompt_generation_host = "nextgenserver"
+    prompt_generation_port = 11434
 
     project_cfg = {}
     if project_dir:
@@ -354,33 +675,53 @@ def get_prompt_translator(provider: str | None = None, project_dir: str | Path |
             project_cfg = {}
 
     if isinstance(project_cfg, dict) and project_cfg:
-        translate_config = project_cfg.get("translate") if isinstance(project_cfg.get("translate"), dict) else {}
         prompt_generation_config = (
             project_cfg.get("prompt_generation")
             if isinstance(project_cfg.get("prompt_generation"), dict)
             else {}
         )
-        if isinstance(translate_config, dict):
-            translate_model = str(translate_config.get("model", translate_model)).strip() or translate_model
         if isinstance(prompt_generation_config, dict):
+            prompt_generation_provider = (
+                str(prompt_generation_config.get("provider", prompt_generation_provider)).strip().lower()
+                or prompt_generation_provider
+            )
             prompt_generation_model = (
                 str(prompt_generation_config.get("model", prompt_generation_model)).strip()
                 or prompt_generation_model
             )
+            prompt_generation_host = (
+                str(prompt_generation_config.get("host", prompt_generation_host)).strip()
+                or prompt_generation_host
+            )
+            try:
+                prompt_generation_port = int(prompt_generation_config.get("port", prompt_generation_port))
+            except (TypeError, ValueError):
+                prompt_generation_port = 11434
     else:
         config = load_server_config()
-        translate_config = config.get("translate") if isinstance(config, dict) else {}
         prompt_generation_config = config.get("prompt_generation") if isinstance(config, dict) else {}
-        if isinstance(translate_config, dict):
-            translate_model = str(translate_config.get("model", translate_model)).strip() or translate_model
         if isinstance(prompt_generation_config, dict):
+            prompt_generation_provider = (
+                str(prompt_generation_config.get("provider", prompt_generation_provider)).strip().lower()
+                or prompt_generation_provider
+            )
             prompt_generation_model = (
                 str(prompt_generation_config.get("model", prompt_generation_model)).strip()
                 or prompt_generation_model
             )
-    return GeminiPromptTranslator(
-        translate_model_name=translate_model,
+            prompt_generation_host = (
+                str(prompt_generation_config.get("host", prompt_generation_host)).strip()
+                or prompt_generation_host
+            )
+            try:
+                prompt_generation_port = int(prompt_generation_config.get("port", prompt_generation_port))
+            except (TypeError, ValueError):
+                prompt_generation_port = 11434
+    return PromptTranslator(
+        prompt_generation_provider=prompt_generation_provider,
         prompt_generation_model_name=prompt_generation_model,
+        prompt_generation_host=prompt_generation_host,
+        prompt_generation_port=prompt_generation_port,
     )
 
 

@@ -58,6 +58,7 @@ from scripts.project_settings import load_project_settings
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
+VRAM_CLEANER_API_PATH = os.path.join(os.path.dirname(__file__), 'api_template', 'vram-cleaner-api.json')
 POLL_INTERVAL = 10.0
 POLL_TIMEOUT = 600
 WAN22_S2V_POLL_TIMEOUT = 2400
@@ -228,6 +229,34 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to apply caption for {scene_dir}: {e}")
             return False
+
+    def _run_vram_cleaner():
+        try:
+            workflow = load_json(VRAM_CLEANER_API_PATH)
+        except Exception as e:
+            write_log(f"Failed to load VRAM cleaner workflow for {scene_dir}: {e}")
+            return False
+        try:
+            result = comfyui_api.post_workflow_api(workflow, server)
+            write_log(
+                f"Posted VRAM cleaner workflow for {scene_dir}: "
+                f"{json.dumps(result, ensure_ascii=False)}"
+            )
+            return True
+        except Exception as e:
+            write_log(f"Failed to post VRAM cleaner workflow for {scene_dir}: {e}")
+            return False
+
+    def _finalize_scene_success(video_path, *, is_s2v=False, success_message=None):
+        if not _mix_scene_audio_to_video(video_path, is_s2v=is_s2v):
+            return False
+        if not _apply_caption_if_enabled(video_path):
+            return False
+        if not _run_vram_cleaner():
+            return False
+        if success_message:
+            write_log(success_message)
+        return True
 
     def _mix_scene_audio_to_video(video_path, is_s2v=False):
         # Mix using the exact compose-scene pipeline, but target only this generated video.
@@ -449,12 +478,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             return False
 
         if scene_duration == 5:
-            if not _mix_scene_audio_to_video(t2v_video_out_path, is_s2v=False):
-                return False
-            if not _apply_caption_if_enabled(t2v_video_out_path):
-                return False
-            write_log(f"Completed wan22_t2v_i2v T2V-only processing for {scene_dir}")
-            return True
+            return _finalize_scene_success(
+                t2v_video_out_path,
+                is_s2v=False,
+                success_message=f"Completed wan22_t2v_i2v T2V-only processing for {scene_dir}",
+            )
 
         last_frame_path = os.path.join(scene_dir, 'wan22_t2v_last_frame.png')
         try:
@@ -530,12 +558,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to concat WAN22_T2V + WAN22_I2V for {scene_dir}: {e}")
             return False
-        if not _mix_scene_audio_to_video(i2v_video_out_path, is_s2v=False):
-            return False
-        if not _apply_caption_if_enabled(i2v_video_out_path):
-            return False
-        write_log(f"Completed processing {scene_dir}")
-        return True
+        return _finalize_scene_success(
+            i2v_video_out_path,
+            is_s2v=False,
+            success_message=f"Completed processing {scene_dir}",
+        )
 
     if scene_type in {'wan22', 'wan22_i2v'}:
         img_path = _find_latest_root_image(scene_dir)
@@ -592,12 +619,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Error checking downloaded file {video_out_path}: {e}")
             return False
-        if not _mix_scene_audio_to_video(video_out_path, is_s2v=False):
-            return False
-        if not _apply_caption_if_enabled(video_out_path):
-            return False
-        write_log(f"Completed processing {scene_dir}")
-        return True
+        return _finalize_scene_success(
+            video_out_path,
+            is_s2v=False,
+            success_message=f"Completed processing {scene_dir}",
+        )
 
     if scene_type == 'wan22_s2v':
         _ensure_scene_json(scene_dir, 'wan22_s2v_prompt.json', DEFAULT_WAN22_S2V_PROMPT)
@@ -689,12 +715,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to trim wan22_s2v video for {scene_dir}: {e}")
             return False
-        if not _mix_scene_audio_to_video(video_out_path, is_s2v=True):
-            return False
-        if not _apply_caption_if_enabled(video_out_path):
-            return False
-        write_log(f"Completed processing {scene_dir}")
-        return True
+        return _finalize_scene_success(
+            video_out_path,
+            is_s2v=True,
+            success_message=f"Completed processing {scene_dir}",
+        )
 
     if scene_type == 'i2v':
         imgs = _find_images(scene_dir)
@@ -729,12 +754,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Error checking composed i2v video {composed}: {e}")
             return False
-        if not _mix_scene_audio_to_video(composed, is_s2v=False):
-            return False
-        if not _apply_caption_if_enabled(composed):
-            return False
-        write_log(f"Completed i2v composition for {scene_dir}: {composed}")
-        return True
+        return _finalize_scene_success(
+            composed,
+            is_s2v=False,
+            success_message=f"Completed i2v composition for {scene_dir}: {composed}",
+        )
 
     if scene_type == 'web_scroll':
         _ensure_scene_json(scene_dir, 'web_scroll_prompt.json', DEFAULT_WEB_SCROLL_PROMPT)
@@ -782,12 +806,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Error checking composed web_scroll video {composed}: {e}")
             return False
-        if not _mix_scene_audio_to_video(composed, is_s2v=False):
-            return False
-        if not _apply_caption_if_enabled(composed):
-            return False
-        write_log(f"Completed web_scroll composition for {scene_dir}: {composed}")
-        return True
+        return _finalize_scene_success(
+            composed,
+            is_s2v=False,
+            success_message=f"Completed web_scroll composition for {scene_dir}: {composed}",
+        )
 
     if scene_type == 'image_pan':
         _ensure_scene_json(scene_dir, 'image_pan_prompt.json', DEFAULT_IMAGE_PAN_PROMPT)
@@ -842,12 +865,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Error checking composed image_pan video {composed}: {e}")
             return False
-        if not _mix_scene_audio_to_video(composed, is_s2v=False):
-            return False
-        if not _apply_caption_if_enabled(composed):
-            return False
-        write_log(f"Completed image_pan composition for {scene_dir}: {composed}")
-        return True
+        return _finalize_scene_success(
+            composed,
+            is_s2v=False,
+            success_message=f"Completed image_pan composition for {scene_dir}: {composed}",
+        )
 
     if scene_type == 'image_zoom':
         _ensure_scene_json(scene_dir, 'image_zoom_prompt.json', DEFAULT_IMAGE_ZOOM_PROMPT)
@@ -906,12 +928,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Error checking composed image_zoom video {composed}: {e}")
             return False
-        if not _mix_scene_audio_to_video(composed, is_s2v=False):
-            return False
-        if not _apply_caption_if_enabled(composed):
-            return False
-        write_log(f"Completed image_zoom composition for {scene_dir}: {composed}")
-        return True
+        return _finalize_scene_success(
+            composed,
+            is_s2v=False,
+            success_message=f"Completed image_zoom composition for {scene_dir}: {composed}",
+        )
 
     write_log(f"Unsupported scene_type `{scene_type}` for {scene_dir}.")
     return False

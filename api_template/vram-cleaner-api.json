@@ -1,0 +1,35 @@
+{
+  "1": {
+    "inputs": {
+      "offload_model": true,
+      "offload_cache": true,
+      "anything": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VRAMCleanup",
+    "_meta": {
+      "title": "🎈VRAM-Cleanup"
+    }
+  },
+  "2": {
+    "inputs": {
+      "source": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "3": {
+    "inputs": {},
+    "class_type": "ImpactDummyInput",
+    "_meta": {
+      "title": "ImpactDummyInput"
+    }
+  }
+}

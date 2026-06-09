@@ -18,6 +18,8 @@ DEFAULT_SERVER_CONFIG = {
     "prompt_generation": {
         "provider": "gemini",
         "model": "gemini-3.5-flash",
+        "host": "nextgenserver",
+        "port": 11434,
     },
 }
 
@@ -44,7 +46,19 @@ def _normalize_config(data: dict | None) -> dict:
         if not isinstance(sub_config, dict):
             sub_config = copy.deepcopy(DEFAULT_SERVER_CONFIG[key])
         provider = str(sub_config.get("provider", "gemini")).strip().lower()
-        sub_config["provider"] = "gemini" if provider != "gemini" else provider
+        if key == "prompt_generation":
+            sub_config["provider"] = provider if provider in {"gemini", "ollama"} else "gemini"
+            sub_config["host"] = str(sub_config.get("host", DEFAULT_SERVER_CONFIG[key]["host"])).strip() or DEFAULT_SERVER_CONFIG[key]["host"]
+            try:
+                sub_config["port"] = int(sub_config.get("port", DEFAULT_SERVER_CONFIG[key]["port"]))
+            except (TypeError, ValueError):
+                sub_config["port"] = DEFAULT_SERVER_CONFIG[key]["port"]
+            if sub_config["port"] <= 0:
+                sub_config["port"] = DEFAULT_SERVER_CONFIG[key]["port"]
+            sub_config.pop("temperature", None)
+            sub_config.pop("thinking_mode", None)
+        else:
+            sub_config["provider"] = "gemini" if provider != "gemini" else provider
         model_name = str(sub_config.get("model", DEFAULT_SERVER_CONFIG[key]["model"])).strip()
         sub_config["model"] = model_name or DEFAULT_SERVER_CONFIG[key]["model"]
         config[key] = sub_config

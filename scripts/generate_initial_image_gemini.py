@@ -8,6 +8,7 @@ if PROJECT_ROOT not in os.sys.path:
 
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 from logging_config import setup_logging, write_log
+from scripts import comfyui_api
 from scripts.workflow_builders import load_json
 from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
@@ -24,7 +25,7 @@ def _scene_sort_key(name: str):
         return (10**9, str(name))
 
 
-def process_scene(scene_dir: str):
+def process_scene(scene_dir: str, server: str):
     z_prompt_path = os.path.join(scene_dir, "z_image_prompt.json")
     if not os.path.exists(z_prompt_path):
         write_log(f"z_image_prompt.json not found in {scene_dir}", level="error")
@@ -46,6 +47,8 @@ def process_scene(scene_dir: str):
     try:
         out = generate_scene_image(scene_dir, z_prompt)
         write_log(f"Generated Gemini initial image: {out}")
+        if not comfyui_api.run_vram_cleaner(server):
+            return False
         return True
     except Exception as e:
         write_log(f"Gagal generate Gemini image untuk {scene_dir}: {e}", level="error")
@@ -54,6 +57,7 @@ def process_scene(scene_dir: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate initial Gemini images for scenes")
+    parser.add_argument("--server", "-s", default="nextgenserver:8188", help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", action="append", help="Scene name to process (e.g., scene_1). Repeatable")
     args = parser.parse_args()
@@ -78,7 +82,7 @@ def main():
     for scene in scenes:
         scene_dir = os.path.join(project_root, scene)
         print(f"Processing {scene_dir}")
-        ok = process_scene(scene_dir)
+        ok = process_scene(scene_dir, args.server)
         if not ok:
             print(f"Failed processing {scene}")
             return 1

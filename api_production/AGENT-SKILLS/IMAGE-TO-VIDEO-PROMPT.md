@@ -1,4 +1,4 @@
-# Pembuatan prompt untuk membuat image menjadi video
+# Petunjuk pembuatan prompt untuk membuat image menjadi video
 
 ## Konsep dasar
 1. Video dibuat dari gambar yang sudah ada

@@ -1,4 +1,4 @@
-# Menjelaskan proses untuk membuat text menjadi image
+# Petunjuk pembuatan text menjadi image
 
 ## Konfigurasi json
 File konfigurasi : z_image_prompt.json
@@ -17,4 +17,4 @@ File konfigurasi : z_image_prompt.json
 1. Gambar dibuat dengan menggunakan `positive_prompt` dan `negative_prompt`
 
 ### Petunjuk pembuatan prompt
-Sebagai petunjuk untuk pembuatan `positive_prompt` dan `negative_prompt` silahkan baca `IMAGE-PROMPT.md`
+Sebagai petunjuk untuk pembuatan `positive_prompt` dan `negative_prompt` silahkan baca `Petunjuk pembuatan prompt untuk membuat text menjadi image`

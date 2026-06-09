@@ -82,6 +82,8 @@ def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_i
         try:
             out_path = generate_scene_image(scene_dir, prompts)
             write_log(f"Saved image to {out_path}")
+            if not comfyui_api.run_vram_cleaner(server):
+                return False
             return True
         except Exception as e:
             write_log(f"Failed to generate Gemini image for {scene_dir}: {e}", level="error")
@@ -136,6 +138,8 @@ def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_i
         return False
 
     write_log(f"Saved image to {image_out_path}")
+    if not comfyui_api.run_vram_cleaner(server):
+        return False
     return True
 
 

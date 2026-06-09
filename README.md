@@ -54,13 +54,17 @@ Catatan format prompt:
   - `id_old`
   - `id_new`
   - `en`
-- `id_old` dipakai sebagai pembanding versi lama, `id_new` adalah versi terbaru dari UI, dan `en` adalah versi runtime yang dikirim ke API/ComfyUI
-- translasi ke bahasa Inggris memakai model project (`project_settings.json.translate.model`)
-- generate prompt ke bahasa Inggris memakai model project (`project_settings.json.prompt_generation.model`)
-- pilihan model di dialog `Konfigurasi Project`:
-  - `gemini-3.5-flash`
-  - `gemini-3.1-flash-lite` (default)
-- translasi berjalan saat runtime jika `id_old != id_new` atau `en` masih kosong
+- `id_old` dan `id_new` selalu disamakan oleh runtime; kalau salah satu kosong, yang ada akan disalin ke yang kosong
+- `en` adalah versi Inggris untuk runtime
+- prompt generation dan translate memakai konfigurasi yang sama di `project_settings.json.prompt_generation`
+- provider `gemini` memakai default model API tanpa setting `temperature`
+- provider `ollama` memakai mode thinking dengan parameter hardcoded:
+  - `temperature=1`
+  - `top_k=20`
+  - `top_p=0.95`
+  - `presence_penalty=1.5`
+  - `repeat_penalty=1`
+  - `draft_num_predict=4`
 - saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
 
 Field utama:
@@ -79,8 +83,7 @@ Field utama:
   - `video_size.height`
   - `prompt_generation.provider`
   - `prompt_generation.model`
-  - `translate.provider`
-  - `translate.model`
+  - `prompt_generation.host` dan `prompt_generation.port` untuk Ollama
   - `voice.voice_provider` (`gemini` / `elevenlabs`)
   - `caption.generate_caption`
   - `cover` (struktur sama seperti `z_image_prompt.json`)
@@ -266,7 +269,10 @@ Contoh:
 
 Pemakaian:
 - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, `scripts/generate_cover_image.py`, dan `scene_manager_ui.py`
-- model `translate` dan `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
+- model `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
+- jika provider `ollama` dipilih, UI akan membaca model yang tersimpan di JSON lalu mencoba mengambil daftar model dari server `host:port`
+- jika model tersimpan tersedia, dropdown akan memilih model itu
+- jika model tersimpan tidak tersedia, dropdown dibiarkan kosong dan user harus memilih ulang
 - di UI, konfigurasi ini diubah lewat dialog `Konfigurasi Project` (bukan dialog server terpisah)
 
 ## Project CLI
@@ -293,7 +299,9 @@ Subcommand:
     - `video_size.height`
     - `comfyui_server`
     - `prompt_generation.model`
-    - `translate.model`
+    - `prompt_generation.provider`
+    - `prompt_generation.host`
+    - `prompt_generation.port`
     - `voice.voice_provider`
     - `caption.generate_caption`
 - `create-scene`
@@ -318,7 +326,7 @@ Pilihan `scene_type`:
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project
-.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-model gemini-3.1-flash-lite --translate-model gemini-3.1-flash-lite --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider ollama --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 11434 --voice-provider gemini --generate-caption true
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
@@ -415,11 +423,16 @@ Fungsi utama:
   - `ComfyUI Server` (`<ip/host>:<port>`, wajib diisi, default `nextgenserver:8188`)
   - `Ukuran Video Project`
   - `Model Prompt Generation`
-    - pilihan: `gemini-3.5-flash` / `gemini-3.1-flash-lite`
-    - default: `gemini-3.1-flash-lite`
-  - `Model Translate`
-    - pilihan: `gemini-3.5-flash` / `gemini-3.1-flash-lite`
-    - default: `gemini-3.1-flash-lite`
+    - provider: `Gemini` atau `Ollama`
+    - model Gemini dibaca dari daftar model yang tersedia
+    - model Ollama dibaca dari server `host:port`
+    - jika model tersimpan di JSON tersedia, dropdown akan langsung memilihnya
+    - jika model tidak tersedia, dropdown dibiarkan kosong dan harus dipilih ulang
+    - provider `Gemini` memakai default API tanpa setting `temperature`
+    - provider `Ollama` selalu memakai `thinking` dan parameter hardcoded
+  - `Ollama Host / Port`
+    - berdampingan di satu baris
+    - default: `nextgenserver:11434`
   - `Voice Project`
   - `Caption Project`
   - `Cover`
@@ -434,6 +447,8 @@ Fungsi utama:
 - edit prompt WAN22 S2V
 - tab `Image Edit` untuk edit gambar berbasis prompt
 - tab `Web Search` untuk mencari gambar referensi dari web dan menyimpannya langsung ke folder scene aktif
+- dropdown `Variasi` di toolbar untuk melihat isi `variasiN` secara read-only
+- saat pindah scene, tampilan otomatis kembali ke `Root Scene`
 - untuk voice, tersedia field:
   - `Pilihan Suara Scene` (per scene): 8 karakter suara
 - group `Audio` berisi proses generate voice/sound untuk scene atau semua scene
@@ -482,6 +497,8 @@ Perilaku UI:
 - language TTS runtime dipaksa ke `id-ID`
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
+- `Generate Config Agentic` hanya membuat JSON variasi dan menyimpannya ke folder `variasiN`
+- `Execute Agentic` menjalankan variasi yang belum punya `status.done`
 - ukuran video project menjadi sumber ukuran tunggal untuk tab:
   - `WAN22_T2V`
   - `WAN22_I2V`
@@ -563,6 +580,50 @@ Perilaku UI:
   - informasi keberhasilan beserta file output yang terdeteksi
   - atau ringkasan error jika proses gagal
 
+## Agentic Variations
+
+Agentic dipakai untuk membuat dan menjalankan variasi per scene dalam dua tahap:
+
+1. `Generate Config Agentic`
+   - menjalankan LLM dulu untuk membuat JSON variasi saja
+   - hasil LLM disimpan ke folder `variasiN`
+   - setiap folder variasi juga menyimpan:
+     - `input-prompt.txt`
+     - `output-prompt.txt`
+   - isi file `.md` tidak dikirim sebagai attachment terpisah, melainkan ditempel langsung ke isi prompt
+   - prompt LLM berisi:
+     - deskripsi project
+     - daftar semua scene
+     - scene aktif
+     - special command
+     - file JSON/template input
+     - file `.md` referensi
+     - isi JSON root scene dan variasi yang sudah ada sebagai referensi anti-duplikasi
+   - pada section input JSON dan schema output, field prompt ditampilkan sebagai string kosong `""` agar LLM jelas mengisi bagian itu saja
+   - output JSON divalidasi ketat:
+     - struktur harus sama dengan input
+     - field prompt harus konsisten
+     - `id_old` dan `id_new` disamakan oleh runtime
+
+2. `Execute Agentic`
+   - mencari folder variasi yang belum punya `status.done`
+   - copy isi folder variasi ke root scene
+   - jalankan proses scene dari root
+   - copy hasil root scene kembali ke folder variasi
+   - buat `status.done`
+   - bersihkan file `.png` dan `.mp4` di root scene
+
+Perilaku `status.done`:
+- hanya mempengaruhi tahap `Execute Agentic`
+- folder variasi yang sudah punya `status.done` akan di-skip pada eksekusi berikutnya
+- `Generate Config Agentic` tetap bisa membuat variasi baru walaupun variasi lama sudah ada `status.done`
+- nomor variasi selalu lanjut dari indeks terbesar yang ada
+
+Catatan:
+- kalau ada variasi gagal karena prompt kosong atau output LLM tidak valid, proses akan skip variasi itu dan lanjut ke variasi berikutnya
+- untuk scene `wan22_t2v_i2v`, image awal tidak dibuat pada tahap execute
+- untuk scene `i2v` dengan `image_extra` atau `image_edit`, alur image tambahan mengikuti setting di tab `Agentic`
+
 Menjalankan UI:
 ```powershell
 .\.venv\Scripts\python.exe scene_manager_ui.py
@@ -578,6 +639,20 @@ Linux/macOS:
 Catatan:
 - `run_ui.bat` otomatis memakai Python dari `.venv` sehingga tidak perlu aktivasi manual virtual environment.
 - `run_ui.sh` otomatis memakai Python dari `.venv` dan menjalankan UI di background.
+
+## VRAM Cleanup
+
+Cleanup VRAM dijalankan otomatis setelah proses yang berhasil selesai:
+
+- setelah generate gambar awal
+- setelah generate image edit
+- setelah generate cover
+- setelah scene selesai diproses lewat `main.py`
+
+File workflow yang dikirim ke ComfyUI:
+- `api_template/vram-cleaner-api.json`
+
+Di UI juga tersedia tombol manual `Clear VRAM` pada toolbar untuk mengirim workflow ini secara langsung ke ComfyUI aktif.
 
 ## Image Models
 
@@ -755,7 +830,7 @@ Fungsi:
   - download hasil edit ke root folder scene
 - jika model `Gemini`:
   - kirim gambar sumber + prompt runtime ke Gemini API
-  - prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai model `project_settings.json.translate.model`
+  - prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai model `project_settings.json.prompt_generation`
   - request image size `1K`
   - simpan hasil akhir ke root folder scene dengan ukuran mengikuti orientasi/ukuran gambar sumber
 

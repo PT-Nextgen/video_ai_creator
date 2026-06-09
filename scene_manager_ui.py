@@ -51,6 +51,13 @@ from scripts.project_settings import (
     load_project_settings as load_project_settings_file,
     save_project_settings as save_project_settings_file,
 )
+from scripts import comfyui_api
+from agentic.agentic_config import (
+    DEFAULT_AGENERIC_CONFIG,
+    IMAGE_EXTRA_MODES,
+    load_agentic_config,
+    save_agentic_config,
+)
 from prompt_localization import convert_prompt_payload_for_ui, prepare_prompt_payload_for_save, read_json_for_runtime
 from prompt_localization import get_prompt_translator, update_generated_prompt_entry
 from logging_config import RunIdFilter, setup_logging
@@ -66,6 +73,7 @@ SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
 COVER_IMAGE_SCRIPT = ROOT / "scripts" / "generate_cover_image.py"
+AGENTIC_SCRIPT = ROOT / "agentic" / "agentic_cli.py"
 BACKUP_SCRIPT = ROOT / "backup_production.py"
 KEYS_CFG = ROOT / "keys.cfg"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -104,8 +112,6 @@ DEFAULT_WEB_SEARCH_PROMPT = {
     "search_term": "",
 }
 DEFAULT_IMAGE_EDIT_PROMPT = {
-    "image_model": MODEL_FLUX2,
-    "gemini_model_id": MODEL_GEMINI_FLASH_05K,
     "groups": [
         {"source_image": "", "prompt": ""},
         {"source_image": "", "prompt": ""},
@@ -158,6 +164,18 @@ def populate_duration_combo(combo: QComboBox, scene_type: str, selected_value: i
     combo.blockSignals(False)
 
 
+def agentic_create_initial_image_policy(scene_type: str) -> tuple[bool, bool | None]:
+    """Return (visible_in_ui, forced_value_or_none) for agentic create_initial_image."""
+    scene_type = str(scene_type or "").strip()
+    if scene_type in {"wan22", "wan22_i2v", "wan22_s2v"}:
+        return True, None
+    if scene_type in {"i2v", "image_pan", "image_zoom"}:
+        return False, True
+    if scene_type in {"web_scroll", WAN22_T2V_SCENE_TYPE}:
+        return False, False
+    return False, True
+
+
 def load_json(path: Path, default: dict):
     if not path.exists():
         return copy.deepcopy(default)
@@ -166,6 +184,14 @@ def load_json(path: Path, default: dict):
     merged = copy.deepcopy(default)
     merged.update(data)
     return convert_prompt_payload_for_ui(path.name, merged)
+
+
+def load_json_with_fallback(primary_path: Path, fallback_path: Path | None, default: dict):
+    if primary_path.exists():
+        return load_json(primary_path, default)
+    if fallback_path is not None and fallback_path.exists():
+        return load_json(fallback_path, default)
+    return copy.deepcopy(default)
 
 
 def write_json(path: Path, data: dict):
@@ -701,12 +727,15 @@ class PromptGenerationWorker(QObject):
         translator = None
         try:
             translator = get_prompt_translator(project_dir=self.project_dir or None)
-            self.progress.emit("Membuat prompt via gemini...")
-            english = translator.generate_prompt_to_english(self.prompt_text, context=self.context_text)
-            indonesian = translator.translate_to_indonesian(english, context=self.context_text)
+            provider_name = str(getattr(translator, "prompt_generation_provider", "gemini")).strip() or "gemini"
+            model_name = str(getattr(translator, "prompt_generation_model_name", "")).strip()
+            self.progress.emit(
+                f"Membuat prompt multibahasa via {provider_name}" + (f" ({model_name})..." if model_name else "...")
+            )
+            result = translator.generate_prompt_multilang(self.prompt_text, context=self.context_text)
             self.finished.emit({
-                "en": english.strip(),
-                "id_new": indonesian.strip(),
+                "en": str(result.get("en", "")).strip(),
+                "id_new": str(result.get("id_new", "")).strip(),
             })
         except Exception as e:
             self.failed.emit(str(e))
@@ -881,7 +910,14 @@ class ComposeMusicDialog(QDialog):
 
 
 class ProjectSettingsDialog(QDialog):
-    def __init__(self, settings_data: dict, parent=None, on_generate_cover=None):
+    def __init__(
+        self,
+        settings_data: dict,
+        parent=None,
+        on_generate_cover=None,
+        on_run_agentic_generate=None,
+        on_run_agentic_execute=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Konfigurasi Project")
         self.resize(760, 620)
@@ -889,6 +925,8 @@ class ProjectSettingsDialog(QDialog):
         self.setSizeGripEnabled(True)
         self.saved_data = None
         self.on_generate_cover = on_generate_cover
+        self.on_run_agentic_generate = on_run_agentic_generate
+        self.on_run_agentic_execute = on_run_agentic_execute
 
         self.description_input = QTextEdit(self)
         self.description_input.setMaximumHeight(90)
@@ -897,15 +935,35 @@ class ProjectSettingsDialog(QDialog):
         for label, width, height in Z_IMAGE_SIZES:
             self.video_size_input.addItem(label, (width, height))
 
+        self.prompt_provider_input = QComboBox(self)
+        self.prompt_provider_input.addItem("Gemini", "gemini")
+        self.prompt_provider_input.addItem("Ollama", "ollama")
+        self._gemini_prompt_models = [
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash",
+        ]
+        self._pending_prompt_model_value = ""
+        self._is_loading_project_settings = False
+        self._ollama_models_refresh_timer = QTimer(self)
+        self._ollama_models_refresh_timer.setSingleShot(True)
+        self._ollama_models_refresh_timer.setInterval(450)
+        self._ollama_models_refresh_timer.timeout.connect(self._refresh_ollama_models)
+
         self.prompt_model_input = QComboBox(self)
         self.prompt_model_input.setEditable(False)
-        self.prompt_model_input.addItem("gemini-3.1-flash-lite", "gemini-3.1-flash-lite")
-        self.prompt_model_input.addItem("gemini-3.5-flash", "gemini-3.5-flash")
-
-        self.translate_model_input = QComboBox(self)
-        self.translate_model_input.setEditable(False)
-        self.translate_model_input.addItem("gemini-3.1-flash-lite", "gemini-3.1-flash-lite")
-        self.translate_model_input.addItem("gemini-3.5-flash", "gemini-3.5-flash")
+        self.prompt_model_input.setPlaceholderText("Pilih model...")
+        for model_name in self._gemini_prompt_models:
+            self.prompt_model_input.addItem(model_name, model_name)
+        self.prompt_ollama_host_input = QLineEdit(self)
+        self.prompt_ollama_port_input = QSpinBox(self)
+        self.prompt_ollama_port_input.setRange(1, 65535)
+        self.prompt_ollama_port_input.setValue(11434)
+        self.prompt_ollama_server_widget = QWidget(self)
+        prompt_ollama_server_layout = QHBoxLayout(self.prompt_ollama_server_widget)
+        prompt_ollama_server_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_ollama_server_layout.setSpacing(8)
+        prompt_ollama_server_layout.addWidget(self.prompt_ollama_host_input, 1)
+        prompt_ollama_server_layout.addWidget(self.prompt_ollama_port_input, 0)
 
         self.voice_provider_input = QComboBox(self)
         for provider_label, provider_key in VOICE_PROVIDER_OPTIONS:
@@ -942,8 +1000,9 @@ class ProjectSettingsDialog(QDialog):
         self.form_layout.addRow("Deskripsi Project", self.description_input)
         self.form_layout.addRow("ComfyUI Server", self.comfyui_server_input)
         self.form_layout.addRow("Ukuran Video Project", self.video_size_input)
+        self.form_layout.addRow("Provider Prompt Generation", self.prompt_provider_input)
         self.form_layout.addRow("Model Prompt Generation", self.prompt_model_input)
-        self.form_layout.addRow("Model Translate", self.translate_model_input)
+        self.form_layout.addRow("Ollama Host / Port", self.prompt_ollama_server_widget)
         self.form_layout.addRow("Voice Project", self.voice_provider_input)
         self.form_layout.addRow("Caption Project", self.caption_enabled_input)
 
@@ -964,12 +1023,20 @@ class ProjectSettingsDialog(QDialog):
         self.generate_cover_button = QToolButton(self)
         self.generate_cover_button.setText("Generate Cover")
         self.generate_cover_button.clicked.connect(self._on_generate_cover_clicked)
+        self.run_agentic_generate_button = QToolButton(self)
+        self.run_agentic_generate_button.setText("Generate Config Agentic")
+        self.run_agentic_generate_button.clicked.connect(self._on_run_agentic_generate_clicked)
+        self.run_agentic_execute_button = QToolButton(self)
+        self.run_agentic_execute_button.setText("Execute Agentic")
+        self.run_agentic_execute_button.clicked.connect(self._on_run_agentic_execute_clicked)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         self.buttons.accepted.connect(self._on_save_clicked)
         self.buttons.rejected.connect(self.reject)
         button_row = QHBoxLayout()
         button_row.addWidget(self.generate_cover_button)
+        button_row.addWidget(self.run_agentic_generate_button)
+        button_row.addWidget(self.run_agentic_execute_button)
         button_row.addStretch(1)
         button_row.addWidget(self.buttons)
         root_layout.addLayout(button_row, 0)
@@ -978,19 +1045,28 @@ class ProjectSettingsDialog(QDialog):
         self.cover_use_lora_input.toggled.connect(self._update_cover_lora_enabled)
         self.cover_model_input.currentIndexChanged.connect(self._update_cover_model_fields)
         self.video_size_input.currentIndexChanged.connect(self._sync_cover_size_with_project_size)
+        self.prompt_provider_input.currentIndexChanged.connect(self._update_prompt_generation_fields)
+        self.prompt_model_input.currentIndexChanged.connect(self._remember_prompt_model_selection)
+        self.prompt_ollama_host_input.textChanged.connect(self._schedule_ollama_model_refresh)
+        self.prompt_ollama_port_input.valueChanged.connect(self._schedule_ollama_model_refresh)
 
         self._load_data(settings_data)
         self._sync_cover_size_with_project_size()
         self._update_cover_seed_enabled()
         self._update_cover_lora_enabled()
         self._update_cover_model_fields()
+        self._update_prompt_generation_fields()
 
     def _set_model_combo_value(self, combo: QComboBox, value: str):
         value = str(value or "").strip()
         index = combo.findData(value)
-        combo.setCurrentIndex(max(index, 0))
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        else:
+            combo.setCurrentIndex(0 if combo.count() > 0 else -1)
 
     def _load_data(self, data: dict):
+        self._is_loading_project_settings = True
         self.description_input.setPlainText(str(data.get("project_description", "")))
         self.comfyui_server_input.setText(
             str(data.get("comfyui_server", DEFAULT_PROJECT_SETTINGS["comfyui_server"])).strip()
@@ -1008,15 +1084,20 @@ class ProjectSettingsDialog(QDialog):
         self.video_size_input.setCurrentIndex(max(index, 0))
 
         prompt_generation = data.get("prompt_generation", {})
-        translate = data.get("translate", {})
-        self._set_model_combo_value(
-            self.prompt_model_input,
-            str(prompt_generation.get("model", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"])),
+        self.prompt_ollama_host_input.setText(
+            str(prompt_generation.get("host", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"])).strip()
         )
-        self._set_model_combo_value(
-            self.translate_model_input,
-            str(translate.get("model", DEFAULT_PROJECT_SETTINGS["translate"]["model"])),
+        self.prompt_ollama_port_input.setValue(
+            int(prompt_generation.get("port", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["port"]))
         )
+        prompt_provider = str(
+            prompt_generation.get("provider", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"])
+        ).strip().lower() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
+        self._pending_prompt_model_value = str(
+            prompt_generation.get("model", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"])
+        ).strip()
+        prompt_provider_index = self.prompt_provider_input.findData(prompt_provider)
+        self.prompt_provider_input.setCurrentIndex(max(prompt_provider_index, 0))
 
         voice = data.get("voice", {})
         voice_provider = normalize_provider(voice.get("voice_provider", VOICE_PROVIDER_GEMINI))
@@ -1052,6 +1133,8 @@ class ProjectSettingsDialog(QDialog):
         self.cover_lora_strength_input.setText(str(cover.get("strength_model", 1.0)))
         self.cover_positive_input.setPlainText(str(cover.get("positive_prompt", "")))
         self.cover_negative_input.setPlainText(str(cover.get("negative_prompt", "")))
+        self._is_loading_project_settings = False
+        self._update_prompt_generation_fields()
 
     def _sync_cover_size_with_project_size(self):
         size_data = self.video_size_input.currentData() or (
@@ -1069,6 +1152,102 @@ class ProjectSettingsDialog(QDialog):
 
     def _update_cover_seed_enabled(self):
         self.cover_seed_input.setEnabled(not self.cover_use_random_seed_input.isChecked())
+
+    def _update_prompt_generation_fields(self):
+        provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower()
+        is_ollama = provider == "ollama"
+        self.prompt_ollama_server_widget.setVisible(is_ollama)
+        label = self.form_layout.labelForField(self.prompt_ollama_server_widget) if hasattr(self, "form_layout") else None
+        if label is not None:
+            label.setVisible(is_ollama)
+        if is_ollama:
+            self._schedule_ollama_model_refresh()
+        else:
+            selected_value = self._pending_prompt_model_value or str(self.prompt_model_input.currentData() or "").strip()
+            self._set_prompt_model_choices(self._gemini_prompt_models, selected_value)
+
+    def _set_prompt_model_choices(self, model_names: list[str], selected_value: str = ""):
+        selected_value = str(selected_value or "").strip()
+        current_value = (
+            str(self.prompt_model_input.currentData() or "").strip()
+            or str(self.prompt_model_input.currentText() or "").strip()
+        )
+        target_value = selected_value or current_value
+        normalized_models = []
+        seen = set()
+        for raw_name in model_names:
+            name = str(raw_name or "").strip()
+            if not name or name in seen:
+                continue
+            normalized_models.append(name)
+            seen.add(name)
+        self.prompt_model_input.blockSignals(True)
+        self.prompt_model_input.clear()
+        for name in normalized_models:
+            self.prompt_model_input.addItem(name, name)
+        self.prompt_model_input.blockSignals(False)
+        if normalized_models:
+            index = self.prompt_model_input.findData(target_value)
+            if index >= 0:
+                self.prompt_model_input.setCurrentIndex(index)
+                self._pending_prompt_model_value = (
+                    str(self.prompt_model_input.currentData() or "").strip()
+                    or str(self.prompt_model_input.currentText() or "").strip()
+                )
+            else:
+                self.prompt_model_input.setCurrentIndex(-1)
+                self._pending_prompt_model_value = target_value
+        else:
+            self.prompt_model_input.setCurrentIndex(-1)
+            self._pending_prompt_model_value = target_value
+
+    def _remember_prompt_model_selection(self):
+        if self._is_loading_project_settings:
+            return
+        self._pending_prompt_model_value = (
+            str(self.prompt_model_input.currentData() or "").strip()
+            or str(self.prompt_model_input.currentText() or "").strip()
+        )
+
+    def _schedule_ollama_model_refresh(self):
+        provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower()
+        if provider != "ollama":
+            return
+        current_value = (
+            str(self.prompt_model_input.currentData() or "").strip()
+            or str(self.prompt_model_input.currentText() or "").strip()
+        )
+        self._pending_prompt_model_value = current_value or self._pending_prompt_model_value
+        if self._is_loading_project_settings:
+            return
+        self._ollama_models_refresh_timer.start()
+
+    def _refresh_ollama_models(self):
+        provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower()
+        if provider != "ollama":
+            return
+        host = self.prompt_ollama_host_input.text().strip()
+        port = int(self.prompt_ollama_port_input.value())
+        if not host or port <= 0:
+            self._set_prompt_model_choices([], self._pending_prompt_model_value)
+            return
+        base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
+        url = f"{base_url.rstrip('/')}:{port}/api/tags"
+        model_names = []
+        try:
+            response = requests.get(url, timeout=3)
+            response.raise_for_status()
+            payload = response.json() if response.content else {}
+            models = payload.get("models", []) if isinstance(payload, dict) else []
+            if isinstance(models, list):
+                for item in models:
+                    if isinstance(item, dict):
+                        model_name = str(item.get("name", "")).strip()
+                        if model_name:
+                            model_names.append(model_name)
+        except Exception:
+            model_names = []
+        self._set_prompt_model_choices(model_names, self._pending_prompt_model_value)
 
     def _update_cover_lora_enabled(self):
         enabled = self.cover_use_lora_input.isChecked()
@@ -1096,8 +1275,8 @@ class ProjectSettingsDialog(QDialog):
         self._update_cover_lora_enabled()
 
     def get_data(self):
+        prompt_provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower() or "gemini"
         prompt_model = str(self.prompt_model_input.currentText() or "").strip()
-        translate_model = str(self.translate_model_input.currentText() or "").strip()
         project_description = self.description_input.toPlainText().strip()
         comfyui_server = self.comfyui_server_input.text().strip()
         if not project_description:
@@ -1117,8 +1296,13 @@ class ProjectSettingsDialog(QDialog):
             raise ValueError("Port ComfyUI harus lebih besar dari 0.")
         if not prompt_model:
             raise ValueError("Model Prompt Generation wajib diisi.")
-        if not translate_model:
-            raise ValueError("Model Translate wajib diisi.")
+        prompt_ollama_host = self.prompt_ollama_host_input.text().strip()
+        prompt_ollama_port = int(self.prompt_ollama_port_input.value())
+        if prompt_provider == "ollama":
+            if not prompt_ollama_host:
+                raise ValueError("Host Ollama wajib diisi.")
+            if prompt_ollama_port <= 0:
+                raise ValueError("Port Ollama harus lebih besar dari 0.")
         size_data = self.video_size_input.currentData() or (
             DEFAULT_PROJECT_SETTINGS["video_size"]["width"],
             DEFAULT_PROJECT_SETTINGS["video_size"]["height"],
@@ -1173,8 +1357,16 @@ class ProjectSettingsDialog(QDialog):
             "project_description": project_description,
             "comfyui_server": f"{host_part.strip()}:{port_value}",
             "video_size": {"width": int(size_data[0]), "height": int(size_data[1])},
-            "prompt_generation": {"provider": "gemini", "model": prompt_model},
-            "translate": {"provider": "gemini", "model": translate_model},
+            "prompt_generation": {
+                "provider": prompt_provider,
+                "model": prompt_model,
+                "host": prompt_ollama_host or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"],
+                "port": prompt_ollama_port,
+            },
+            "translate": {
+                "provider": prompt_provider,
+                "model": prompt_model,
+            },
             "voice": {"voice_provider": normalize_provider(self.voice_provider_input.currentData() or VOICE_PROVIDER_GEMINI)},
             "caption": {"generate_caption": bool(self.caption_enabled_input.isChecked())},
             "cover": cover_data,
@@ -1196,6 +1388,24 @@ class ProjectSettingsDialog(QDialog):
             return
         if callable(self.on_generate_cover):
             self.on_generate_cover(data)
+
+    def _on_run_agentic_generate_clicked(self):
+        try:
+            data = self.get_data()
+        except ValueError as e:
+            QMessageBox.warning(self, "Konfigurasi Project Tidak Valid", str(e))
+            return
+        if callable(self.on_run_agentic_generate):
+            self.on_run_agentic_generate(data)
+
+    def _on_run_agentic_execute_clicked(self):
+        try:
+            data = self.get_data()
+        except ValueError as e:
+            QMessageBox.warning(self, "Konfigurasi Project Tidak Valid", str(e))
+            return
+        if callable(self.on_run_agentic_execute):
+            self.on_run_agentic_execute(data)
 
 
 class MediaPreviewLabel(QLabel):
@@ -1284,6 +1494,7 @@ class SceneEditorWindow(QMainWindow):
         self.resize(1700, 980)
         self.current_project_name = ""
         self.current_scene_dir = None
+        self.current_scene_view_dir = None
         self.project_voice_config = copy.deepcopy(DEFAULT_PROJECT_VOICE_CONFIG)
         self.project_caption_config = copy.deepcopy(DEFAULT_PROJECT_CAPTION_CONFIG)
         self.project_settings = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
@@ -1299,6 +1510,7 @@ class SceneEditorWindow(QMainWindow):
         self.web_tab = None
         self.web_search_tab = None
         self.image_edit_tab = None
+        self.agentic_tab = None
         self.assets_tab = None
         self.generate_initial_image_button = None
         self.duration_label = None
@@ -1312,6 +1524,15 @@ class SceneEditorWindow(QMainWindow):
         self.prompt_generation_context = None
         self.web_search_thread = None
         self.web_search_worker = None
+        self._loading_variation_view = False
+        self.project_action_group_widget = None
+        self.scene_action_group_widget = None
+        self.variation_action_group_widget = None
+        self.run_action_group_widget = None
+        self.audio_action_group_widget = None
+        self.backup_action_group_widget = None
+        self.compose_action_group_widget = None
+        self.vram_action_group_widget = None
 
         self.scene_title_input = QLineEdit()
         self.scene_description_input = QTextEdit()
@@ -1494,6 +1715,16 @@ class SceneEditorWindow(QMainWindow):
         self.image_edit_clipboard_buttons = []
         self.image_edit_generate_prompt_buttons = []
         self.image_edit_buttons = []
+        self.agentic_number_of_variations_input = QSpinBox()
+        self.agentic_number_of_variations_input.setRange(0, 999)
+        self.agentic_special_command_input = QTextEdit()
+        self.agentic_special_command_input.setFixedHeight(88)
+        self.agentic_special_command_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.agentic_create_initial_image_input = QCheckBox("Buat image awal", self)
+        self.agentic_create_initial_image_input.setChecked(bool(DEFAULT_AGENERIC_CONFIG.get("create_initial_image", True)))
+        self.agentic_image_extra_mode_input = QComboBox()
+        for label, mode in IMAGE_EXTRA_MODES:
+            self.agentic_image_extra_mode_input.addItem(label, mode)
         for slot_index in range(3):
             image_input = QComboBox()
             prompt_input = QTextEdit()
@@ -1516,6 +1747,8 @@ class SceneEditorWindow(QMainWindow):
 
         self.status_label = QPlainTextEdit()
         self.status_label.setReadOnly(True)
+        self.variation_view_input = QComboBox()
+        self.variation_view_input.currentIndexChanged.connect(self.on_variation_view_changed)
         self.status_label.setPlainText("Belum ada adegan yang dipilih.")
         self.status_label.setFixedHeight(96)
         self.image_preview = MediaPreviewLabel("Klik ganda file pada tab Aset untuk melihat media.")
@@ -1573,6 +1806,7 @@ class SceneEditorWindow(QMainWindow):
         self.update_lora_fields_enabled()
         self.update_wan_lora_fields_enabled()
         self.update_image_edit_model_fields_enabled()
+        self.sync_image_edit_model_from_initial_image()
         self.update_scene_type_tabs()
         self.update_scene_type_specific_fields()
         self.update_run_action_buttons_state()
@@ -1602,6 +1836,9 @@ class SceneEditorWindow(QMainWindow):
             self.image_edit_model_input.currentIndexChanged,
             self.image_edit_gemini_model_input.currentIndexChanged,
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
+            self.agentic_number_of_variations_input.valueChanged,
+            self.agentic_create_initial_image_input.checkStateChanged,
+            self.agentic_image_extra_mode_input.currentIndexChanged,
         ]:
             signal.connect(self.refresh_scene_status)
         for widget in [
@@ -1619,11 +1856,14 @@ class SceneEditorWindow(QMainWindow):
             self.s2v_positive_input, self.s2v_negative_input,
             *self.wan_prompt_inputs.values(),
             *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
+            self.agentic_special_command_input,
         ]:
             widget.textChanged.connect(self.refresh_scene_status)
         self.z_use_lora_input.toggled.connect(self.update_lora_fields_enabled)
         self.z_use_random_seed_input.toggled.connect(self.update_seed_fields_enabled)
         self.z_model_input.currentIndexChanged.connect(self.update_image_model_fields_enabled)
+        self.z_model_input.currentIndexChanged.connect(self.sync_image_edit_model_from_initial_image)
+        self.z_gemini_model_input.currentIndexChanged.connect(self.sync_image_edit_model_from_initial_image)
         self.image_edit_model_input.currentIndexChanged.connect(self.update_image_edit_model_fields_enabled)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
@@ -1859,6 +2099,17 @@ class SceneEditorWindow(QMainWindow):
         assets_layout.addWidget(self.asset_list)
         assets_layout.addWidget(self.asset_info_label)
         tabs.addTab(self.assets_tab, "Aset")
+
+        self.agentic_tab = QWidget()
+        agentic_layout = QFormLayout(self.agentic_tab)
+        agentic_layout.setContentsMargins(12, 12, 12, 12)
+        agentic_layout.setHorizontalSpacing(12)
+        agentic_layout.setVerticalSpacing(8)
+        agentic_layout.addRow("Jumlah Variasi", self.agentic_number_of_variations_input)
+        agentic_layout.addRow("Buat Image Awal", self.agentic_create_initial_image_input)
+        agentic_layout.addRow("Mode Variasi Tambahan", self.agentic_image_extra_mode_input)
+        agentic_layout.addRow("Perintah Khusus", self.agentic_special_command_input)
+        tabs.addTab(self.agentic_tab, "Agentic")
         return tabs
 
     def update_scene_type_tabs(self):
@@ -1878,6 +2129,7 @@ class SceneEditorWindow(QMainWindow):
             self.image_zoom_tab: scene_type == "image_zoom",
             self.web_search_tab: scene_type in {"i2v", "image_pan", "image_zoom"},
             self.image_edit_tab: scene_type != "web_scroll" and not is_wan22_t2v,
+            self.agentic_tab: scene_type != "web_scroll",
             self.assets_tab: scene_type != "web_scroll",
         }
         current_widget = self.editor_tabs.currentWidget()
@@ -1939,6 +2191,16 @@ class SceneEditorWindow(QMainWindow):
         if self.s2v_negative_label is not None:
             self.s2v_negative_label.setVisible(is_wan22_s2v)
         self.s2v_negative_input.setVisible(is_wan22_s2v)
+        agentic_visible, forced_agentic_value = agentic_create_initial_image_policy(scene_type)
+        if self.agentic_tab is not None:
+            layout = self.agentic_tab.layout()
+            self._set_form_field_visible(layout, self.agentic_create_initial_image_input, agentic_visible)
+            self._set_form_field_visible(layout, self.agentic_image_extra_mode_input, scene_type == "i2v")
+        if forced_agentic_value is not None:
+            self.agentic_create_initial_image_input.setChecked(bool(forced_agentic_value))
+        if scene_type != "i2v":
+            default_mode_index = self.agentic_image_extra_mode_input.findData("image_extra")
+            self.agentic_image_extra_mode_input.setCurrentIndex(default_mode_index if default_mode_index >= 0 else 0)
         self._apply_z_size_constraint_by_scene_type()
 
     def build_viewer_group(self):
@@ -1962,12 +2224,23 @@ class SceneEditorWindow(QMainWindow):
         if self.toolbar is None:
             return
         self.toolbar.clear()
-        self.toolbar.addWidget(self.build_project_action_group())
-        self.toolbar.addWidget(self.build_scene_action_group())
-        self.toolbar.addWidget(self.build_run_action_group())
-        self.toolbar.addWidget(self.build_audio_action_group())
-        self.toolbar.addWidget(self.build_backup_action_group())
-        self.toolbar.addWidget(self.build_compose_action_group())
+        self.project_action_group_widget = self.build_project_action_group()
+        self.scene_action_group_widget = self.build_scene_action_group()
+        self.variation_action_group_widget = self.build_variation_action_group()
+        self.run_action_group_widget = self.build_run_action_group()
+        self.audio_action_group_widget = self.build_audio_action_group()
+        self.backup_action_group_widget = self.build_backup_action_group()
+        self.compose_action_group_widget = self.build_compose_action_group()
+        self.vram_action_group_widget = self.build_vram_action_group()
+        self.toolbar.addWidget(self.project_action_group_widget)
+        self.toolbar.addWidget(self.scene_action_group_widget)
+        self.toolbar.addWidget(self.variation_action_group_widget)
+        self.toolbar.addWidget(self.run_action_group_widget)
+        self.toolbar.addWidget(self.audio_action_group_widget)
+        self.toolbar.addWidget(self.backup_action_group_widget)
+        self.toolbar.addWidget(self.compose_action_group_widget)
+        self.toolbar.addWidget(self.vram_action_group_widget)
+        self._apply_scene_view_mode()
 
     def build_project_action_group(self):
         frame = QFrame(self)
@@ -2034,6 +2307,162 @@ class SceneEditorWindow(QMainWindow):
         add_button("Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
         add_button("Tambahkan file aset ke folder adegan yang sedang dipilih.", QStyle.SP_FileIcon, self.add_asset_to_scene)
         return frame
+
+    def build_variation_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #fff7ed; border: 1px solid #fdba74; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+
+        title = QLabel("Variasi", frame)
+        title.setStyleSheet("font-weight: 600; color: #9a3412;")
+        layout.addWidget(title)
+
+        self.variation_view_input.setMinimumWidth(190)
+        self.variation_view_input.addItem("Root Scene", "")
+        self.variation_view_input.setEnabled(False)
+        self.variation_view_input.setToolTip("Pilih root scene atau salah satu folder variasi untuk dilihat.")
+        layout.addWidget(self.variation_view_input)
+        return frame
+
+    def _scene_paths_equal(self, left: Path | None, right: Path | None) -> bool:
+        if left is None or right is None:
+            return left is right
+        try:
+            return left.resolve() == right.resolve()
+        except Exception:
+            return Path(left) == Path(right)
+
+    def active_scene_dir(self) -> Path | None:
+        return self.current_scene_view_dir or self.current_scene_dir
+
+    def is_viewing_variation(self) -> bool:
+        return (
+            self.current_scene_dir is not None
+            and self.current_scene_view_dir is not None
+            and not self._scene_paths_equal(self.current_scene_dir, self.current_scene_view_dir)
+        )
+
+    def _variation_dirs_for_scene(self, scene_dir: Path | None) -> list[Path]:
+        if scene_dir is None or not scene_dir.exists():
+            return []
+        variations = []
+        for child in scene_dir.iterdir():
+            if child.is_dir() and child.name.lower().startswith("variasi"):
+                variations.append(child)
+        return sorted(
+            variations,
+            key=lambda p: int("".join(ch for ch in p.name if ch.isdigit()) or "999999"),
+        )
+
+    def _refresh_variation_view_options(self, scene_dir: Path | None, selected_path: Path | None = None):
+        self._loading_variation_view = True
+        try:
+            self.variation_view_input.clear()
+            self.variation_view_input.addItem("Root Scene", "")
+            for variation_dir in self._variation_dirs_for_scene(scene_dir):
+                self.variation_view_input.addItem(variation_dir.name, str(variation_dir))
+            target_path = selected_path if selected_path is not None else scene_dir
+            index = 0
+            if scene_dir is not None and target_path is not None and not self._scene_paths_equal(target_path, scene_dir):
+                found = self.variation_view_input.findData(str(target_path))
+                if found >= 0:
+                    index = found
+            self.variation_view_input.setCurrentIndex(index)
+            self.variation_view_input.setEnabled(self.variation_view_input.count() > 1)
+        finally:
+            self._loading_variation_view = False
+
+    def _reset_variation_view_for_scene(self, scene_dir: Path | None):
+        self.current_scene_view_dir = scene_dir
+        self._refresh_variation_view_options(scene_dir, selected_path=scene_dir)
+        self._apply_scene_view_mode()
+        if scene_dir is not None:
+            self.load_scene(scene_dir)
+        else:
+            self.refresh_scene_status()
+            self.refresh_assets_and_previews()
+
+    def on_variation_view_changed(self, _index: int):
+        if self._loading_variation_view or self.loading_scene:
+            return
+        if not self.current_scene_dir:
+            return
+        target_data = self.variation_view_input.currentData()
+        target_path = self.current_scene_dir if not target_data else Path(str(target_data))
+        previous_view = self.current_scene_view_dir
+        if self._scene_paths_equal(previous_view, target_path):
+            return
+        if previous_view is not None and self._scene_paths_equal(previous_view, self.current_scene_dir):
+            if not self.save_current_scene(silent=True, reload_list=False):
+                self._refresh_variation_view_options(self.current_scene_dir, selected_path=previous_view)
+                return
+        self.release_media_locks()
+        self.current_scene_view_dir = target_path
+        self._apply_scene_view_mode()
+        self.load_scene(target_path)
+
+    def _capture_widget_view_base_state(self, widget: QWidget):
+        if widget is self.status_label or widget is self.asset_list:
+            return
+        if isinstance(widget, (QPlainTextEdit, QTextEdit, QLineEdit)):
+            widget.setProperty("_view_base_read_only_state", widget.isReadOnly())
+            return
+        if isinstance(widget, (QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QToolButton)):
+            widget.setProperty("_view_base_enabled_state", widget.isEnabled())
+
+    def _capture_scene_view_mode_baseline(self):
+        if self.editor_tabs is None or self.is_viewing_variation():
+            return
+        for widget in self.editor_tabs.findChildren(QWidget):
+            self._capture_widget_view_base_state(widget)
+
+    def _set_widget_view_only_state(self, widget: QWidget, read_only: bool):
+        if widget is self.status_label or widget is self.asset_list:
+            return
+        if isinstance(widget, QPlainTextEdit):
+            if widget.property("_view_base_read_only_state") is None:
+                self._capture_widget_view_base_state(widget)
+            widget.setReadOnly(True if read_only else bool(widget.property("_view_base_read_only_state")))
+            return
+        if isinstance(widget, (QTextEdit, QLineEdit)):
+            if widget.property("_view_base_read_only_state") is None:
+                self._capture_widget_view_base_state(widget)
+            widget.setReadOnly(True if read_only else bool(widget.property("_view_base_read_only_state")))
+            return
+        if isinstance(widget, (QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QToolButton)):
+            if widget.property("_view_base_enabled_state") is None:
+                self._capture_widget_view_base_state(widget)
+            widget.setEnabled(False if read_only else bool(widget.property("_view_base_enabled_state")))
+
+    def _apply_scene_view_mode(self):
+        read_only = self.is_viewing_variation()
+        active_dir = self.active_scene_dir()
+
+        if self.editor_tabs is not None:
+            for widget in self.editor_tabs.findChildren(QWidget):
+                self._set_widget_view_only_state(widget, read_only)
+
+        for group_widget in (
+            self.scene_action_group_widget,
+            self.run_action_group_widget,
+            self.audio_action_group_widget,
+            self.compose_action_group_widget,
+        ):
+            if group_widget is not None:
+                group_widget.setEnabled(not read_only)
+
+        if self.variation_action_group_widget is not None:
+            self.variation_action_group_widget.setEnabled(self.current_scene_dir is not None)
+            self.variation_view_input.setEnabled(self.variation_view_input.count() > 1)
+
+        if read_only and active_dir is not None:
+            self.statusBar().showMessage(
+                f"Mode lihat variasi aktif: {active_dir.name}. Edit hanya tersedia untuk root scene.",
+                5000,
+            )
 
     def project_dir(self) -> Path | None:
         name = str(self.current_project_name or "").strip()
@@ -2197,6 +2626,8 @@ class SceneEditorWindow(QMainWindow):
             current_settings,
             self,
             on_generate_cover=self.generate_cover_from_project_settings_dialog,
+            on_run_agentic_generate=self.run_agentic_generate_from_project_settings_dialog,
+            on_run_agentic_execute=self.run_agentic_execute_from_project_settings_dialog,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -2225,6 +2656,27 @@ class SceneEditorWindow(QMainWindow):
             f"Membuat cover project {self.current_project_name}",
             watch_dirs=watch_dirs,
         )
+
+    def _start_agentic_mode(self, settings: dict, mode: str, action_label: str):
+        if not self.ensure_project_selected():
+            return
+        self.apply_project_settings_and_refresh(settings, notify=False)
+        if self.current_scene_dir:
+            self.save_current_scene(silent=True, reload_list=False)
+        project_dir = self.project_dir()
+        watch_dirs = self.list_scene_dirs_current() if project_dir else []
+        self.start_process(
+            AGENTIC_SCRIPT,
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--mode", mode],
+            f"{action_label} untuk project {self.current_project_name}",
+            watch_dirs=watch_dirs,
+        )
+
+    def run_agentic_generate_from_project_settings_dialog(self, settings: dict):
+        self._start_agentic_mode(settings, "generate", "Generate konfigurasi agentic")
+
+    def run_agentic_execute_from_project_settings_dialog(self, settings: dict):
+        self._start_agentic_mode(settings, "execute", "Execute agentic")
 
     def refresh_project_state(self):
         project_label = self.current_project_name if self.current_project_name else "(tidak ada project)"
@@ -2312,11 +2764,14 @@ class SceneEditorWindow(QMainWindow):
 
     def close_project(self):
         window_snapshot = self.snapshot_window_state()
-        if self.current_scene_dir:
+        if self.current_scene_dir and not self.is_viewing_variation():
             self.save_current_scene(silent=True, reload_list=False)
         self.release_media_locks()
         self.current_project_name = ""
         self.current_scene_dir = None
+        self.current_scene_view_dir = None
+        self._refresh_variation_view_options(None)
+        self._apply_scene_view_mode()
         self.refresh_project_state()
         QTimer.singleShot(0, lambda snap=window_snapshot: self.restore_window_state(snap))
 
@@ -2433,6 +2888,26 @@ class SceneEditorWindow(QMainWindow):
             layout.addWidget(button)
 
         add_button("Gabungkan video dan audio untuk semua adegan.", QStyle.SP_DialogYesButton, self.compose_all_scenes)
+        return frame
+
+    def build_vram_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        title = QLabel("VRAM", frame)
+        title.setStyleSheet("font-weight: 600; color: #991b1b;")
+        layout.addWidget(title)
+
+        button = QToolButton(frame)
+        button.setIcon(self.style().standardIcon(QStyle.SP_BrowserStop))
+        button.setToolTip("Jalankan VRAM cleaner di ComfyUI.")
+        button.setStatusTip("Jalankan VRAM cleaner di ComfyUI.")
+        button.clicked.connect(self.run_clear_vram)
+        layout.addWidget(button)
         return frame
 
     def append_log(self, text: str):
@@ -2584,7 +3059,9 @@ class SceneEditorWindow(QMainWindow):
     def update_image_edit_model_fields_enabled(self):
         model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2)
         is_gemini = model_key == MODEL_GEMINI_IMAGE
+        self.image_edit_model_input.setEnabled(False)
         self.image_edit_gemini_model_input.setVisible(is_gemini)
+        self.image_edit_gemini_model_input.setEnabled(False)
         if self.image_edit_tab is not None:
             layout = self.image_edit_tab.layout()
             if isinstance(layout, QVBoxLayout) and layout.count() > 0:
@@ -2644,6 +3121,9 @@ class SceneEditorWindow(QMainWindow):
         if not self.ensure_project_selected(notify=False):
             self.scene_list.clear()
             self.current_scene_dir = None
+            self.current_scene_view_dir = None
+            self._refresh_variation_view_options(None)
+            self._apply_scene_view_mode()
             return
         current_name = self.current_scene_dir.name if self.current_scene_dir else None
         was_loading = self.loading_scene
@@ -2681,6 +3161,9 @@ class SceneEditorWindow(QMainWindow):
         self.loading_scene = was_loading
         selected = self.current_scene_path_from_ui()
         self.current_scene_dir = selected
+        self.current_scene_view_dir = selected
+        self._refresh_variation_view_options(selected, selected_path=selected)
+        self._apply_scene_view_mode()
         if selected and not self.loading_scene:
             self.load_scene(selected)
         elif not selected:
@@ -2693,12 +3176,16 @@ class SceneEditorWindow(QMainWindow):
     def on_scene_changed(self, current, previous):
         if self.loading_scene:
             return
-        if previous and self.current_scene_dir:
+        if previous and self.current_scene_dir and not self.is_viewing_variation():
             self.save_current_scene(silent=True, reload_list=False)
         self.release_media_locks()
         self.current_scene_dir = self.item_scene_path(current)
         if self.current_scene_dir:
-            self.load_scene(self.current_scene_dir)
+            self._reset_variation_view_for_scene(self.current_scene_dir)
+        else:
+            self.current_scene_view_dir = None
+            self._refresh_variation_view_options(None)
+            self._apply_scene_view_mode()
 
     def on_scene_reordered(self):
         if self.loading_scene:
@@ -2728,19 +3215,26 @@ class SceneEditorWindow(QMainWindow):
 
     def load_scene(self, scene_dir: Path):
         self.loading_scene = True
+        preferred_tab = self.editor_tabs.currentWidget() if self.editor_tabs is not None else None
         try:
-            meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
-            z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
-            wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
-            wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
-            s2v_prompt = load_json(scene_dir / "wan22_s2v_prompt.json", DEFAULT_WAN22_S2V_PROMPT)
-            web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
-            image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
-            image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
-            web_search_prompt = load_json(scene_dir / "web_search_prompt.json", DEFAULT_WEB_SEARCH_PROMPT)
+            root_scene_dir = self.current_scene_dir if self.current_scene_dir else scene_dir
+            fallback_dir = None if self._scene_paths_equal(scene_dir, root_scene_dir) else root_scene_dir
+            meta = load_json_with_fallback(scene_dir / "scene_meta.json", (fallback_dir / "scene_meta.json") if fallback_dir else None, DEFAULT_SCENE_META)
+            z_prompt = load_json_with_fallback(scene_dir / "z_image_prompt.json", (fallback_dir / "z_image_prompt.json") if fallback_dir else None, DEFAULT_Z_IMAGE_PROMPT)
+            wan_t2v_prompt = load_json_with_fallback(scene_dir / "wan22_t2v_prompt.json", (fallback_dir / "wan22_t2v_prompt.json") if fallback_dir else None, DEFAULT_WAN22_T2V_PROMPT)
+            wan_prompt = load_json_with_fallback(scene_dir / "wan22_i2v_prompt.json", (fallback_dir / "wan22_i2v_prompt.json") if fallback_dir else None, DEFAULT_WAN_PROMPT)
+            s2v_prompt = load_json_with_fallback(scene_dir / "wan22_s2v_prompt.json", (fallback_dir / "wan22_s2v_prompt.json") if fallback_dir else None, DEFAULT_WAN22_S2V_PROMPT)
+            web_prompt = load_json_with_fallback(scene_dir / "web_scroll_prompt.json", (fallback_dir / "web_scroll_prompt.json") if fallback_dir else None, DEFAULT_WEB_SCROLL_PROMPT)
+            image_pan_prompt = load_json_with_fallback(scene_dir / "image_pan_prompt.json", (fallback_dir / "image_pan_prompt.json") if fallback_dir else None, DEFAULT_IMAGE_PAN_PROMPT)
+            image_zoom_prompt = load_json_with_fallback(scene_dir / "image_zoom_prompt.json", (fallback_dir / "image_zoom_prompt.json") if fallback_dir else None, DEFAULT_IMAGE_ZOOM_PROMPT)
+            web_search_prompt = load_json_with_fallback(scene_dir / "web_search_prompt.json", (fallback_dir / "web_search_prompt.json") if fallback_dir else None, DEFAULT_WEB_SEARCH_PROMPT)
             self.scene_title_input.setText(str(meta.get("scene_title", "")))
             self.scene_description_input.setPlainText(str(meta.get("scene_description", "")))
-            self.scene_type_combo.setCurrentText(str(meta.get("scene_type", "wan22_i2v")))
+            self.scene_type_combo.blockSignals(True)
+            try:
+                self.scene_type_combo.setCurrentText(str(meta.get("scene_type", "wan22_i2v")))
+            finally:
+                self.scene_type_combo.blockSignals(False)
             self.update_scene_type_tabs()
             self.update_scene_type_specific_fields()
             duration_value = str(meta.get("duration_seconds", ""))
@@ -2923,8 +3417,15 @@ class SceneEditorWindow(QMainWindow):
             self.web_search_result_label.setText("Hasil akan langsung disimpan ke folder scene dan terlihat di tab Aset.")
             self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_image_edit_into_ui(scene_dir)
+            self.load_agentic_config_into_ui(scene_dir)
         finally:
             self.loading_scene = False
+        self._capture_scene_view_mode_baseline()
+        if preferred_tab is not None and self.editor_tabs is not None:
+            preferred_index = self.editor_tabs.indexOf(preferred_tab)
+            if preferred_index >= 0 and self.editor_tabs.isTabVisible(preferred_index):
+                self.editor_tabs.setCurrentWidget(preferred_tab)
+        self._apply_scene_view_mode()
         self.refresh_scene_status()
         self.refresh_assets_and_previews()
 
@@ -3318,10 +3819,6 @@ class SceneEditorWindow(QMainWindow):
 
     def load_image_edit_prompt(self, scene_dir: Path):
         data = load_json(scene_dir / "image_edit_prompt.json", DEFAULT_IMAGE_EDIT_PROMPT)
-        model_key = str(data.get("image_model", MODEL_FLUX2)).strip().lower()
-        if model_key not in {MODEL_FLUX2, MODEL_GEMINI_IMAGE}:
-            model_key = MODEL_FLUX2
-        gemini_model_id = str(data.get("gemini_model_id", MODEL_GEMINI_FLASH_05K)).strip()
         groups = data.get("groups")
         if not isinstance(groups, list):
             groups = []
@@ -3334,7 +3831,7 @@ class SceneEditorWindow(QMainWindow):
                     "prompt": str(item.get("prompt", "")).strip(),
                 }
             )
-        return {"image_model": model_key, "gemini_model_id": gemini_model_id, "groups": normalized_groups}
+        return {"groups": normalized_groups}
 
     def load_z_image_extra_prompts(self, scene_dir: Path):
         data = load_json(scene_dir / "z_image_extra_prompts.json", DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
@@ -3374,19 +3871,16 @@ class SceneEditorWindow(QMainWindow):
                     "prompt": prompt_input.toPlainText().strip(),
                 }
             )
-        return {
-            "image_model": str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip(),
-            "gemini_model_id": str(self.image_edit_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip(),
-            "groups": groups,
-        }
+        return {"groups": groups}
 
     def refresh_image_edit_source_options(self, preferred_images=None):
         preferred_images = preferred_images or ["", "", ""]
         image_names = []
-        if self.current_scene_dir and self.current_scene_dir.exists():
+        scene_dir = self.active_scene_dir()
+        if scene_dir and scene_dir.exists():
             image_names = sorted(
                 [
-                    p.name for p in self.current_scene_dir.iterdir()
+                    p.name for p in scene_dir.iterdir()
                     if p.is_file() and p.suffix.lower() in IMAGE_EXTS
                 ],
                 key=lambda name: name.lower(),
@@ -3407,14 +3901,7 @@ class SceneEditorWindow(QMainWindow):
 
     def load_image_edit_into_ui(self, scene_dir: Path):
         data = self.load_image_edit_prompt(scene_dir)
-        model_index = self.image_edit_model_input.findData(str(data.get("image_model", MODEL_FLUX2)))
-        self.image_edit_model_input.setCurrentIndex(model_index if model_index >= 0 else 0)
-        selected_gemini_model = str(data.get("gemini_model_id", MODEL_GEMINI_FLASH_05K)).strip()
-        gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
-        if gemini_index < 0 and selected_gemini_model:
-            self.image_edit_gemini_model_input.addItem(selected_gemini_model, selected_gemini_model)
-            gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
-        self.image_edit_gemini_model_input.setCurrentIndex(gemini_index if gemini_index >= 0 else 0)
+        self.sync_image_edit_model_from_initial_image()
         self.update_image_edit_model_fields_enabled()
         groups = data.get("groups", [])
         preferred_images = [str(group.get("source_image", "")).strip() for group in groups[:3]]
@@ -3422,6 +3909,18 @@ class SceneEditorWindow(QMainWindow):
         for index, prompt_input in enumerate(self.image_edit_prompt_inputs):
             group_data = groups[index] if index < len(groups) else {}
             prompt_input.setPlainText(str(group_data.get("prompt", "")))
+
+    def sync_image_edit_model_from_initial_image(self):
+        model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+        model_index = self.image_edit_model_input.findData(model_key)
+        self.image_edit_model_input.setCurrentIndex(model_index if model_index >= 0 else 0)
+
+        selected_gemini_model = str(self.z_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
+        gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
+        if gemini_index < 0 and selected_gemini_model:
+            self.image_edit_gemini_model_input.addItem(selected_gemini_model, selected_gemini_model)
+            gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
+        self.image_edit_gemini_model_input.setCurrentIndex(gemini_index if gemini_index >= 0 else 0)
 
     def load_z_image_extra_prompts_into_ui(self, scene_dir: Path):
         data = self.load_z_image_extra_prompts(scene_dir)
@@ -3431,8 +3930,39 @@ class SceneEditorWindow(QMainWindow):
             self.z_extra_positive_inputs[index].setPlainText(str(group_data.get("positive_prompt", "")))
             self.z_extra_negative_inputs[index].setPlainText(str(group_data.get("negative_prompt", "")))
 
+    def load_agentic_config_into_ui(self, scene_dir: Path):
+        data = load_agentic_config(scene_dir)
+        self.agentic_number_of_variations_input.setValue(int(data.get("number_of_variations", 0)))
+        self.agentic_special_command_input.setPlainText(str(data.get("special_command", "")))
+        scene_type = self.scene_type_combo.currentText().strip()
+        visible_in_ui, forced_value = agentic_create_initial_image_policy(scene_type)
+        resolved_create_initial_image = bool(data.get("create_initial_image", True)) if forced_value is None else bool(forced_value)
+        self.agentic_create_initial_image_input.setChecked(resolved_create_initial_image)
+        if self.agentic_tab is not None:
+            layout = self.agentic_tab.layout()
+            self._set_form_field_visible(layout, self.agentic_create_initial_image_input, visible_in_ui)
+        mode = str(data.get("image_extra_mode", DEFAULT_AGENERIC_CONFIG.get("image_extra_mode", "image_extra"))).strip()
+        mode_index = self.agentic_image_extra_mode_input.findData(mode)
+        self.agentic_image_extra_mode_input.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+
+    def gather_agentic_config(self):
+        scene_type = self.scene_type_combo.currentText().strip()
+        _, forced_create_initial_image = agentic_create_initial_image_policy(scene_type)
+        create_initial_image = (
+            bool(self.agentic_create_initial_image_input.isChecked())
+            if forced_create_initial_image is None
+            else bool(forced_create_initial_image)
+        )
+        return {
+            "number_of_variations": int(self.agentic_number_of_variations_input.value()),
+            "special_command": self.agentic_special_command_input.toPlainText().strip(),
+            "create_initial_image": create_initial_image,
+            "image_extra_mode": str(self.agentic_image_extra_mode_input.currentData() or "image_extra").strip(),
+        }
+
     def refresh_scene_status(self):
-        if not self.current_scene_dir:
+        scene_dir = self.active_scene_dir()
+        if not scene_dir:
             self.status_label.setPlainText("Belum ada adegan yang dipilih.")
             return
         try:
@@ -3446,15 +3976,17 @@ class SceneEditorWindow(QMainWindow):
                 web_prompt,
                 image_pan_prompt,
                 image_zoom_prompt,
-                self.current_scene_dir,
+                scene_dir,
             )
         except ValueError as e:
             issues = [str(e)]
         if issues:
-            self.status_label.setPlainText("Masalah:\n- " + "\n- ".join(issues))
+            prefix = "Mode lihat variasi (read-only).\n" if self.is_viewing_variation() else ""
+            self.status_label.setPlainText(prefix + "Masalah:\n- " + "\n- ".join(issues))
             self.status_label.setStyleSheet("padding: 6px; background: #fef2f2; border: 1px solid #ef4444; color: #991b1b;")
         else:
-            self.status_label.setPlainText("Status: Siap")
+            suffix = " (lihat variasi, read-only)" if self.is_viewing_variation() else ""
+            self.status_label.setPlainText(f"Status: Siap{suffix}")
             self.status_label.setStyleSheet("padding: 6px; background: #ecfdf5; border: 1px solid #10b981; color: #065f46;")
 
     def get_scene_issues(self, scene_dir: Path):
@@ -3505,13 +4037,14 @@ class SceneEditorWindow(QMainWindow):
         return True
 
     def refresh_assets_and_previews(self):
-        if not self.current_scene_dir:
+        scene_dir = self.active_scene_dir()
+        if not scene_dir:
             self.refresh_image_edit_source_options()
             return
         self.clear_viewer()
         assets = sorted(
             [
-                p for p in self.current_scene_dir.iterdir()
+                p for p in scene_dir.iterdir()
                 if p.is_file() and p.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS)
             ],
             key=lambda p: p.name.lower(),
@@ -3528,6 +4061,14 @@ class SceneEditorWindow(QMainWindow):
 
     def save_current_scene(self, silent=False, reload_list=True):
         if not self.current_scene_dir:
+            return False
+        if self.is_viewing_variation():
+            if not silent:
+                QMessageBox.information(
+                    self,
+                    "Mode Lihat Variasi",
+                    "Variasi hanya bisa dilihat. Pilih `Root Scene` di dropdown Variasi untuk mengedit dan menyimpan.",
+                )
             return False
         try:
             meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
@@ -3557,6 +4098,7 @@ class SceneEditorWindow(QMainWindow):
         scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
         image_edit_prompt = self.gather_image_edit_prompt()
         z_image_extra_prompts = self.gather_z_image_extra_prompts()
+        agentic_config = self.gather_agentic_config()
         self.save_project_voice_settings()
         write_prompt_json(self.current_scene_dir / "scene_meta.json", meta)
         sync_scene_prompt_files(
@@ -3573,6 +4115,7 @@ class SceneEditorWindow(QMainWindow):
             image_edit_prompt=image_edit_prompt,
             z_image_extra_prompts=z_image_extra_prompts,
         )
+        save_agentic_config(self.current_scene_dir, agentic_config)
         self.refresh_scene_status()
         if reload_list:
             self.reload_scene_list()
@@ -3662,22 +4205,46 @@ class SceneEditorWindow(QMainWindow):
         reply = QMessageBox.question(self, "Hapus Adegan", f"Hapus {current.name}?", QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        shutil.rmtree(current)
-        # renumber after delete to keep contiguous scene folder names
+        if not current.exists():
+            self.reload_scene_list()
+            QMessageBox.information(
+                self,
+                "Adegan Tidak Ditemukan",
+                f"Folder {current.name} sudah tidak ada. Daftar adegan telah dimuat ulang.",
+            )
+            return
+
+        current_index = int(current.name.split("_", 1)[1])
         project_dir = self.project_dir()
         if project_dir is None:
             QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
             return
+
         scenes = self.list_scene_dirs_current()
-        temp_paths = []
-        for idx, path in enumerate(scenes, start=1):
-            temp = project_dir / f"__delete_tmp_{idx}"
+        max_index = max((int(scene.name.split("_", 1)[1]) for scene in scenes), default=current_index)
+
+        shutil.rmtree(current)
+
+        # If deleting the last scene, nothing else needs renumbering.
+        if current_index >= max_index:
+            self.reload_scene_list()
+            return
+
+        # Only shift scenes after the deleted index down by one.
+        temp_moves = []
+        for old_index in range(current_index + 1, max_index + 1):
+            src = project_dir / scene_dir_name(old_index)
+            if not src.exists():
+                continue
+            temp = project_dir / f"__delete_tmp_{old_index}"
             if temp.exists():
                 shutil.rmtree(temp)
-            path.rename(temp)
-            temp_paths.append(temp)
-        for idx, temp in enumerate(temp_paths, start=1):
-            temp.rename(project_dir / scene_dir_name(idx))
+            src.rename(temp)
+            temp_moves.append((old_index, temp))
+
+        for old_index, temp in temp_moves:
+            temp.rename(project_dir / scene_dir_name(old_index - 1))
+
         self.reload_scene_list()
 
     def add_asset_to_scene(self):
@@ -3948,17 +4515,18 @@ class SceneEditorWindow(QMainWindow):
         self.ensure_process_dialog()
         self.log_output.clear()
         self.append_log(f"Membuat prompt {prompt_label} untuk {scene_dir.name}")
-        translate_model = str(
-            self.project_settings.get("translate", {}).get("model", DEFAULT_PROJECT_SETTINGS["translate"]["model"])
-        ).strip() or DEFAULT_PROJECT_SETTINGS["translate"]["model"]
+        prompt_provider = str(
+            self.project_settings.get("prompt_generation", {}).get(
+                "provider", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
+            )
+        ).strip().lower() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
         prompt_model = str(
             self.project_settings.get("prompt_generation", {}).get(
                 "model", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
             )
         ).strip() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
-        self.append_log(f"Provider translate: gemini ({translate_model})")
-        self.append_log(f"Provider prompt generation: gemini ({prompt_model})")
-        self.append_log("LLM diminta menyusun ulang prompt lalu menyimpan `en` dan `id_new`.")
+        self.append_log(f"Provider prompt generation: {prompt_provider} ({prompt_model})")
+        self.append_log("LLM dipanggil sekali untuk mengembalikan `en` dan `id_new`; `id_old` akan disamakan dengan `id_new`.")
 
         if self.prompt_generation_thread is not None and self.prompt_generation_thread.isRunning():
             self.append_log("[warning] Proses buat prompt sebelumnya masih berjalan. Tunggu selesai dulu.")
@@ -4261,8 +4829,8 @@ class SceneEditorWindow(QMainWindow):
         except Exception as e:
             self.append_log(f"[warning] Gagal sinkronisasi prompt image edit runtime: {e}")
 
-        model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip()
-        gemini_model_id = str(self.image_edit_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
+        model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+        gemini_model_id = str(self.z_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
         args = [
             "--server", self.comfyui_server_address(),
             "--project", self.current_project_name,
@@ -4407,6 +4975,23 @@ class SceneEditorWindow(QMainWindow):
             f"Menyimpan backup ZIP project {self.current_project_name}",
             watch_dirs=[ROOT / "backup_production"],
         )
+
+    def run_clear_vram(self):
+        if not self.ensure_project_selected():
+            return
+        if not self.confirm_run_action("Clear VRAM", "Jalankan VRAM cleaner di ComfyUI sekarang?"):
+            return
+        self.ensure_process_dialog()
+        self.log_output.clear()
+        server = self.comfyui_server_address()
+        self.append_log(f"Menjalankan VRAM cleaner di {server}")
+        ok = comfyui_api.run_vram_cleaner(server)
+        if ok:
+            self.append_log("[sukses] VRAM cleaner berhasil dikirim ke ComfyUI.")
+            self.statusBar().showMessage("VRAM cleaner berhasil dijalankan.", 4000)
+        else:
+            self.append_log("[gagal] VRAM cleaner gagal dikirim ke ComfyUI.")
+            self.statusBar().showMessage("VRAM cleaner gagal dijalankan.", 4000)
 
     def on_asset_selected(self, current, previous):
         if not current:

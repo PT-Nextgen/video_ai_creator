@@ -29,6 +29,10 @@ PROJECT_MODEL_CHOICES = [
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
 ]
+PROMPT_PROVIDER_CHOICES = [
+    "gemini",
+    "ollama",
+]
 VOICE_PROVIDER_CHOICES = [
     "gemini",
     "elevenlabs",
@@ -53,12 +57,14 @@ def build_project_settings(args) -> dict:
     }
     settings["comfyui_server"] = str(args.comfyui_server or settings["comfyui_server"]).strip()
     settings["prompt_generation"] = {
-        "provider": "gemini",
+        "provider": str(args.prompt_generation_provider or settings["prompt_generation"]["provider"]).strip().lower(),
         "model": str(args.prompt_generation_model or settings["prompt_generation"]["model"]).strip(),
+        "host": str(args.prompt_generation_host or settings["prompt_generation"]["host"]).strip(),
+        "port": int(args.prompt_generation_port or settings["prompt_generation"]["port"]),
     }
     settings["translate"] = {
-        "provider": "gemini",
-        "model": str(args.translate_model or settings["translate"]["model"]).strip(),
+        "provider": settings["prompt_generation"]["provider"],
+        "model": settings["prompt_generation"]["model"],
     }
     settings["voice"] = {
         "voice_provider": str(args.voice_provider or settings["voice"]["voice_provider"]).strip(),
@@ -119,10 +125,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Alamat ComfyUI server, contoh: nextgenserver:8188",
     )
     create_project_parser.add_argument(
+        "--prompt-generation-provider",
+        choices=PROMPT_PROVIDER_CHOICES,
+        default=DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"],
+        help="Provider untuk prompt generation project.",
+    )
+    create_project_parser.add_argument(
         "--prompt-generation-model",
-        choices=PROJECT_MODEL_CHOICES,
         default=DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"],
         help="Model untuk prompt generation project.",
+    )
+    create_project_parser.add_argument(
+        "--prompt-generation-host",
+        default=DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"],
+        help="Host Ollama untuk prompt generation.",
+    )
+    create_project_parser.add_argument(
+        "--prompt-generation-port",
+        type=int,
+        default=DEFAULT_PROJECT_SETTINGS["prompt_generation"]["port"],
+        help="Port Ollama untuk prompt generation.",
     )
     create_project_parser.add_argument(
         "--translate-model",

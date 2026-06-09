@@ -1,11 +1,9 @@
-# Petunjuk untuk pembuatan scene untuk semua tipa
+# Petunjuk untuk pembuatan scene
 
 ## Pemahaman alur video
-1. Baca field `project_description` pada `project_settings.json` untuk memahami deskripsi video secara keseluruhan
-2. Baca field `scene_description` pada `scene_meta.json` di dalam setiap folder scene secara berurutan untuk memahami alur scene video
-3. Baca field `voice_text` pada `scene_meta.json` di dalam setiap folder scene secara berurutan untuk memahami alur cerita video
-4. Wajib menjalankan ketiga point di atas untuk pemahaman membuat scene 
+1. Baca `deskripsi project`
+2. Baca bagian `DAFTAR SEMUA SCENE DALAM PROYEK`
+3. Baca bagian `PERINTAH KHUSUS`
 
 ## Pemahaman scene yang akan dibuat
-1. Baca field `scene_description` pada `scene_meta.json` di dalam folder scene yang akan dibuat
-2. Baca field `voice_text` pada `scene_meta.json` di dalam folder scene yang akan dibuat
+1. Baca bagian `SCENE YANG AKAN DIVARIASIKAN`

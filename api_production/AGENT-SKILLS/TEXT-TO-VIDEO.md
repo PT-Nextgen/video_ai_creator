@@ -1,4 +1,4 @@
-# Menjelaskan proses untuk membuat text menjadi video
+# Petunjuk pembuatan text menjadi video
 
 ## Konfigurasi json
 File konfigurasi :
@@ -54,5 +54,5 @@ File konfigurasi :
 6. Video pertama, video kedua dan video ketiga digabungkan menjadi video dengan durasi 15s
 
 ## Petunjuk pembuatan prompt
-1. Sebagai petunjuk untuk pembuatan `positive_prompt`, `negative_prompt` silahkan baca `TEXT-TO-VIDEO-PROMPT.md`
-2. Sebagai petunjuk untuk pembuatan `positive_prompt_one`, `positive_prompt_two`, `negative_prompt_one` dan `negative_prompt_two` silahkan baca `IMAGE-TO-VIDEO-PROMPT.md`
+1. Sebagai petunjuk untuk pembuatan `positive_prompt`, `negative_prompt` silahkan baca `Petunjuk pembuatan prompt untuk membuat text menjadi video`
+2. Sebagai petunjuk untuk pembuatan `positive_prompt_one`, `positive_prompt_two`, `negative_prompt_one` dan `negative_prompt_two` silahkan baca `Petunjuk pembuatan prompt untuk membuat image menjadi video`

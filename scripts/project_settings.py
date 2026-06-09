@@ -22,6 +22,8 @@ DEFAULT_PROJECT_SETTINGS = {
     "prompt_generation": {
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
+        "host": "nextgenserver",
+        "port": 11434,
     },
     "translate": {
         "provider": "gemini",
@@ -78,10 +80,26 @@ def _normalize_settings(data: dict | None) -> dict:
     for key in ("prompt_generation", "translate"):
         sub = merged.get(key) if isinstance(merged.get(key), dict) else {}
         provider = str(sub.get("provider", "gemini")).strip().lower()
-        sub["provider"] = "gemini" if provider != "gemini" else provider
+        if key == "prompt_generation":
+            sub["provider"] = provider if provider in {"gemini", "ollama"} else "gemini"
+            sub["host"] = str(sub.get("host", DEFAULT_PROJECT_SETTINGS[key]["host"])).strip() or DEFAULT_PROJECT_SETTINGS[key]["host"]
+            try:
+                sub["port"] = int(sub.get("port", DEFAULT_PROJECT_SETTINGS[key]["port"]))
+            except (TypeError, ValueError):
+                sub["port"] = DEFAULT_PROJECT_SETTINGS[key]["port"]
+            if sub["port"] <= 0:
+                sub["port"] = DEFAULT_PROJECT_SETTINGS[key]["port"]
+            sub.pop("temperature", None)
+            sub.pop("thinking_mode", None)
+        else:
+            sub["provider"] = "gemini" if provider != "gemini" else provider
         model = str(sub.get("model", DEFAULT_PROJECT_SETTINGS[key]["model"])).strip()
         sub["model"] = model or DEFAULT_PROJECT_SETTINGS[key]["model"]
         merged[key] = sub
+    merged["translate"] = {
+        "provider": merged["prompt_generation"]["provider"],
+        "model": merged["prompt_generation"]["model"],
+    }
 
     voice = merged.get("voice") if isinstance(merged.get("voice"), dict) else {}
     caption = merged.get("caption") if isinstance(merged.get("caption"), dict) else {}

@@ -1,4 +1,4 @@
-# Menjelaskan proses untuk membuat image menjadi video
+# Petunjuk pembuatan image menjadi video
 
 ## Konfigurasi json 
 File konfigurasi : wan22_i2v_prompt.json
@@ -30,4 +30,4 @@ File konfigurasi : wan22_i2v_prompt.json
 5. Video pertama dan video kedua digabungkan menjadi output video durasi 10s
 
 ## Petunjuk pembuatan prompt
-Sebagai petunjuk untuk pembuatan `positive_prompt_one`, `positive_prompt_two`, `negative_prompt_one` dan `negative_prompt_two` silahkan baca `IMAGE-TO-VIDEO-PROMPT.md` 
+Sebagai petunjuk untuk pembuatan `positive_prompt_one`, `positive_prompt_two`, `negative_prompt_one` dan `negative_prompt_two` silahkan baca `Petunjuk pembuatan prompt untuk membuat image menjadi video` 

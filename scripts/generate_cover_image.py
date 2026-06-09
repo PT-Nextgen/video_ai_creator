@@ -68,6 +68,8 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
             if os.path.abspath(tmp_out) != os.path.abspath(final_cover_path):
                 _replace_or_copy(tmp_out, final_cover_path)
             write_log(f"Saved cover image to {final_cover_path}")
+            if not comfyui_api.run_vram_cleaner(server):
+                return False
             return True
         except Exception as e:
             write_log(f"Failed to generate Gemini cover image for {project_dir}: {e}", level="error")
@@ -117,6 +119,8 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
             return False
         _replace_or_copy(tmp_out_path, final_cover_path)
     write_log(f"Saved cover image to {final_cover_path}")
+    if not comfyui_api.run_vram_cleaner(server):
+        return False
     return True
 
 

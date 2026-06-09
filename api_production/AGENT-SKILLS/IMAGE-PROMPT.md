@@ -1,4 +1,4 @@
-# Pembuatan prompt untuk membuat gambar
+# Petunjuk pembuatan prompt untuk membuat text menjadi image
 
 ## Struktur prompt positive wajib seperti di bawah ini
 
@@ -29,7 +29,6 @@ Gaya visual, pencahayaan, warna, kualitas, lensa, detail teknis.
 Contoh: cinematic lighting, ultra detailed, anime style, 35mm lens, soft shadows
 
 ## Struktur prompt negative wajib seperti di bawah ini
-
 1. Gunakan kata-kata pendek yang jelaskan  
    Contoh : blur, kelebihan tangan, posisi kaki tidak natural
 2. Prompt negative isinya adalah hal-hal yang harus dihindari terjadi dalam gambar  

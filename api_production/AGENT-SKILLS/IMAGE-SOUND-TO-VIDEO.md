@@ -1,4 +1,4 @@
-# Menjelaskan proses untuk membuat image dan sound menjadi video
+# Petunjuk pembuatan image dan voice menjadi video
 
 ## Konfigurasi json 
 File konfigurasi : wan22_s2v_prompt.json
@@ -19,4 +19,4 @@ File konfigurasi : wan22_s2v_prompt.json
 3. Wajah manusia pada gambar awal akan terlihat berbicara pada video sesuai dengan voice file yang diberikan
 
 ## Petunjuk pembuatan prompt
-Sebagai petunjuk untuk pembuatan `positive_prompt` dan `negative_prompt` silahkan baca `VIDEO-PROMPT.md` 
+Sebagai petunjuk untuk pembuatan `positive_prompt` dan `negative_prompt` silahkan baca `Petunjuk pembuatan prompt untuk membuat image menjadi video` 

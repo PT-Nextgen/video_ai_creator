@@ -81,15 +81,26 @@ def _resolve_prompt_slot(scene_dir: str, prompt_file: str, prompt_index: int) ->
 
     source_image = str(group.get("source_image", "")).strip()
     prompt_text = str(group.get("prompt", "")).strip()
-    model_name = str(payload.get("image_model", "")).strip()
-    gemini_model_id = str(payload.get("gemini_model_id", "")).strip()
 
-    if not source_image:
-        raise RuntimeError(f"source_image pada slot {slot_index} kosong.")
     if not prompt_text:
         raise RuntimeError(f"prompt pada slot {slot_index} kosong.")
 
-    return source_image, prompt_text, model_name, gemini_model_id
+    return source_image, prompt_text, "", ""
+
+
+def _resolve_scene_image_model(scene_dir: str) -> tuple[str, str]:
+    """Resolve the shared scene image model from z_image_prompt.json."""
+    z_prompt_path = os.path.join(scene_dir, "z_image_prompt.json")
+    if not os.path.exists(z_prompt_path):
+        return MODEL_FLUX2, ""
+
+    payload = read_json_for_runtime(z_prompt_path, required=True, log_fn=write_log)
+    if not isinstance(payload, dict):
+        return MODEL_FLUX2, ""
+
+    model_name = str(payload.get("image_model", MODEL_FLUX2)).strip().lower() or MODEL_FLUX2
+    gemini_model_id = str(payload.get("gemini_model_id", "")).strip()
+    return model_name, gemini_model_id
 
 
 def process_scene(
@@ -121,6 +132,8 @@ def process_scene(
             gemini_model_id=gemini_model_id,
         )
         write_log(f"Gemini image edit selesai: {output_path}")
+        if not comfyui_api.run_vram_cleaner(server):
+            raise RuntimeError("Gagal menjalankan VRAM cleaner setelah image edit.")
         return output_path
 
     upload_info = comfyui_api.upload_file(server, source_path, file_type="image")
@@ -142,6 +155,8 @@ def process_scene(
         raise RuntimeError(f"Output image tidak ditemukan (prompt_id={prompt_id})")
     output_path = _download_comfy_image(server, image_out, scene_dir)
     write_log(f"Flux2 image edit selesai: {output_path}")
+    if not comfyui_api.run_vram_cleaner(server):
+        raise RuntimeError("Gagal menjalankan VRAM cleaner setelah image edit.")
     return output_path
 
 
@@ -178,15 +193,19 @@ def main():
                 args.prompt_file,
                 args.prompt_index,
             )
-            source_image = slot_source_image
-            prompt_text = slot_prompt_text
+            if slot_source_image:
+                source_image = slot_source_image
+            if slot_prompt_text:
+                prompt_text = slot_prompt_text
             if slot_model_name:
                 model_name = slot_model_name
             if slot_gemini_model_id:
                 gemini_model_id = slot_gemini_model_id
 
         if not model_name:
-            model_name = MODEL_FLUX2
+            model_name, default_gemini_model_id = _resolve_scene_image_model(str(scene_dir))
+            if not gemini_model_id:
+                gemini_model_id = default_gemini_model_id
         if not source_image:
             raise RuntimeError("Gambar awal belum dipilih.")
         if not prompt_text:

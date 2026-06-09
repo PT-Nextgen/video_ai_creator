@@ -1,4 +1,4 @@
-# Pembuatan prompt untuk membuat text prompt menjadi video
+# Petunjuk pembuatan prompt untuk membuat text menjadi video
 
 ## Konsep dasar
 1. Video dibuat dari prompt yang berupa text
