@@ -449,7 +449,39 @@ def create_scene_in_project(
 def duplicate_directory(src: Path, dst: Path):
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns("variasi*", "__pycache__", "*.pyc"),
+    )
+
+
+def clear_scene_root_contents(scene_dir: Path):
+    if not scene_dir.exists():
+        return
+    for item in scene_dir.iterdir():
+        if item.is_dir() and item.name.lower().startswith("variasi"):
+            continue
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+
+def copy_scene_contents_to_root(src: Path, dst: Path):
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.is_dir() and item.name.lower().startswith("variasi"):
+            continue
+        if item.is_file() and item.name == "status.done":
+            continue
+        target = dst / item.name
+        if item.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
 
 
 def find_latest_asset(scene_dir: Path, exts: set[str]):
@@ -1749,6 +1781,7 @@ class SceneEditorWindow(QMainWindow):
         self.status_label.setReadOnly(True)
         self.variation_view_input = QComboBox()
         self.variation_view_input.currentIndexChanged.connect(self.on_variation_view_changed)
+        self.copy_variation_to_root_button = None
         self.status_label.setPlainText("Belum ada adegan yang dipilih.")
         self.status_label.setFixedHeight(96)
         self.image_preview = MediaPreviewLabel("Klik ganda file pada tab Aset untuk melihat media.")
@@ -2303,6 +2336,7 @@ class SceneEditorWindow(QMainWindow):
 
         add_button("Tambahkan adegan baru di akhir daftar.", QStyle.SP_FileDialogNewFolder, self.add_scene)
         add_button("Sisipkan adegan baru sebelum adegan yang sedang dipilih.", QStyle.SP_ArrowDown, self.insert_scene)
+        add_button("Gandakan adegan yang sedang dipilih dan sisipkan setelahnya.", QStyle.SP_FileDialogDetailedView, self.duplicate_scene)
         add_button("Hapus adegan yang sedang dipilih.", QStyle.SP_DialogCloseButton, self.delete_scene)
         add_button("Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
         add_button("Tambahkan file aset ke folder adegan yang sedang dipilih.", QStyle.SP_FileIcon, self.add_asset_to_scene)
@@ -2325,6 +2359,14 @@ class SceneEditorWindow(QMainWindow):
         self.variation_view_input.setEnabled(False)
         self.variation_view_input.setToolTip("Pilih root scene atau salah satu folder variasi untuk dilihat.")
         layout.addWidget(self.variation_view_input)
+
+        self.copy_variation_to_root_button = QToolButton(frame)
+        self.copy_variation_to_root_button.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        self.copy_variation_to_root_button.setToolTip("Kopikan isi folder variasi yang dipilih ke root scene untuk diproses combine all.")
+        self.copy_variation_to_root_button.setStatusTip(self.copy_variation_to_root_button.toolTip())
+        self.copy_variation_to_root_button.setEnabled(False)
+        self.copy_variation_to_root_button.clicked.connect(self.copy_selected_variation_to_root)
+        layout.addWidget(self.copy_variation_to_root_button)
         return frame
 
     def _scene_paths_equal(self, left: Path | None, right: Path | None) -> bool:
@@ -2372,6 +2414,7 @@ class SceneEditorWindow(QMainWindow):
                     index = found
             self.variation_view_input.setCurrentIndex(index)
             self.variation_view_input.setEnabled(self.variation_view_input.count() > 1)
+            self._update_copy_variation_button_state()
         finally:
             self._loading_variation_view = False
 
@@ -2380,7 +2423,7 @@ class SceneEditorWindow(QMainWindow):
         self._refresh_variation_view_options(scene_dir, selected_path=scene_dir)
         self._apply_scene_view_mode()
         if scene_dir is not None:
-            self.load_scene(scene_dir)
+            self.load_scene(scene_dir, root_scene_dir=scene_dir)
         else:
             self.refresh_scene_status()
             self.refresh_assets_and_previews()
@@ -2402,7 +2445,69 @@ class SceneEditorWindow(QMainWindow):
         self.release_media_locks()
         self.current_scene_view_dir = target_path
         self._apply_scene_view_mode()
-        self.load_scene(target_path)
+        self.load_scene(target_path, root_scene_dir=self.current_scene_dir)
+
+    def _selected_variation_dir(self) -> Path | None:
+        if not self.current_scene_dir:
+            return None
+        target_data = self.variation_view_input.currentData()
+        if not target_data:
+            return None
+        target_path = Path(str(target_data))
+        if self._scene_paths_equal(target_path, self.current_scene_dir):
+            return None
+        return target_path
+
+    def _update_copy_variation_button_state(self):
+        if self.copy_variation_to_root_button is None:
+            return
+        selected_variation = self._selected_variation_dir()
+        self.copy_variation_to_root_button.setEnabled(
+            self.current_scene_dir is not None
+            and selected_variation is not None
+            and selected_variation.exists()
+        )
+
+    def copy_selected_variation_to_root(self):
+        if not self.current_scene_dir:
+            return
+        variation_dir = self._selected_variation_dir()
+        if variation_dir is None:
+            QMessageBox.information(
+                self,
+                "Pilih Variasi",
+                "Pilih salah satu folder variasi di dropdown terlebih dahulu.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Kopikan Variasi ke Root",
+            (
+                f"Isi root scene {self.current_scene_dir.name} akan diganti dengan isi {variation_dir.name}.\n\n"
+                "Folder variasi tidak akan dihapus. Lanjutkan?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            self.release_media_locks()
+            clear_scene_root_contents(self.current_scene_dir)
+            copy_scene_contents_to_root(variation_dir, self.current_scene_dir)
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Copy Variasi", f"Gagal menyalin variasi ke root:\n{e}")
+            return
+
+        self.current_scene_view_dir = self.current_scene_dir
+        self._refresh_variation_view_options(self.current_scene_dir, selected_path=self.current_scene_dir)
+        self._apply_scene_view_mode()
+        self.load_scene(self.current_scene_dir, root_scene_dir=self.current_scene_dir)
+        self.statusBar().showMessage(
+            f"Isi {variation_dir.name} dikopikan ke root scene {self.current_scene_dir.name}.",
+            5000,
+        )
 
     def _capture_widget_view_base_state(self, widget: QWidget):
         if widget is self.status_label or widget is self.asset_list:
@@ -2457,6 +2562,7 @@ class SceneEditorWindow(QMainWindow):
         if self.variation_action_group_widget is not None:
             self.variation_action_group_widget.setEnabled(self.current_scene_dir is not None)
             self.variation_view_input.setEnabled(self.variation_view_input.count() > 1)
+            self._update_copy_variation_button_state()
 
         if read_only and active_dir is not None:
             self.statusBar().showMessage(
@@ -2639,7 +2745,7 @@ class SceneEditorWindow(QMainWindow):
     def apply_project_settings_and_refresh(self, settings: dict, notify: bool = False):
         self.save_project_settings(settings, sync_scene_sizes=True)
         if self.current_scene_dir:
-            self.load_scene(self.current_scene_dir)
+            self.load_scene(self.current_scene_dir, root_scene_dir=self.current_scene_dir)
         self.refresh_scene_status()
         if notify:
             self.statusBar().showMessage("Konfigurasi project disimpan.", 3000)
@@ -3165,7 +3271,7 @@ class SceneEditorWindow(QMainWindow):
         self._refresh_variation_view_options(selected, selected_path=selected)
         self._apply_scene_view_mode()
         if selected and not self.loading_scene:
-            self.load_scene(selected)
+            self.load_scene(selected, root_scene_dir=selected)
         elif not selected:
             self.refresh_image_edit_source_options()
 
@@ -3213,11 +3319,11 @@ class SceneEditorWindow(QMainWindow):
         if 0 <= current_row < self.scene_list.count():
             self.scene_list.setCurrentRow(current_row)
 
-    def load_scene(self, scene_dir: Path):
+    def load_scene(self, scene_dir: Path, root_scene_dir: Path | None = None):
         self.loading_scene = True
         preferred_tab = self.editor_tabs.currentWidget() if self.editor_tabs is not None else None
         try:
-            root_scene_dir = self.current_scene_dir if self.current_scene_dir else scene_dir
+            root_scene_dir = root_scene_dir if root_scene_dir is not None else scene_dir
             fallback_dir = None if self._scene_paths_equal(scene_dir, root_scene_dir) else root_scene_dir
             meta = load_json_with_fallback(scene_dir / "scene_meta.json", (fallback_dir / "scene_meta.json") if fallback_dir else None, DEFAULT_SCENE_META)
             z_prompt = load_json_with_fallback(scene_dir / "z_image_prompt.json", (fallback_dir / "z_image_prompt.json") if fallback_dir else None, DEFAULT_Z_IMAGE_PROMPT)
@@ -4194,6 +4300,45 @@ class SceneEditorWindow(QMainWindow):
         temp_root.rmdir()
         self.reload_scene_list()
         self.select_scene_by_name(scene_dir_name(insert_index))
+
+    def duplicate_scene(self):
+        if not self.ensure_project_selected():
+            return
+        current = self.current_scene_path_from_ui()
+        if current is None:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan yang akan digandakan terlebih dahulu.")
+            return
+        if self.is_viewing_variation():
+            QMessageBox.information(
+                self,
+                "Mode Lihat Variasi",
+                "Gandakan scene hanya bisa dilakukan saat melihat Root Scene.",
+            )
+            return
+
+        project_dir = self.project_dir()
+        if project_dir is None:
+            QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
+            return
+
+        current_index = int(current.name.split("_", 1)[1])
+        new_index = current_index + 1
+        target = project_dir / scene_dir_name(new_index)
+        while target.exists():
+            new_index += 1
+            target = project_dir / scene_dir_name(new_index)
+
+        if not self.save_current_scene(silent=True, reload_list=False):
+            return
+
+        try:
+            duplicate_directory(current, target)
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Gandakan", f"Gagal menggandakan scene:\n{e}")
+            return
+
+        self.reload_scene_list()
+        self.select_scene_by_name(current.name)
 
     def delete_scene(self):
         if not self.ensure_project_selected():
