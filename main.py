@@ -83,6 +83,13 @@ DEFAULT_IMAGE_ZOOM_PROMPT = {
     "focal_point": "center",
     "zoom_strength": 1.3,
 }
+DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS = {
+    "groups": [
+        {"positive_prompt": "", "negative_prompt": ""},
+        {"positive_prompt": "", "negative_prompt": ""},
+        {"positive_prompt": "", "negative_prompt": ""},
+    ],
+}
 
 # initialize logging for the process (idempotent)
 setup_logging()
@@ -562,6 +569,117 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             i2v_video_out_path,
             is_s2v=False,
             success_message=f"Completed processing {scene_dir}",
+        )
+
+    if scene_type == 'wan22_t2v_batch':
+        try:
+            scene_duration = int(scene_meta.get('duration_seconds', 0))
+        except Exception:
+            scene_duration = 0
+        if scene_duration not in {5, 10}:
+            write_log(f"wan22_t2v_batch scene duration must be 5 or 10 seconds: {scene_duration}")
+            return False
+
+        _ensure_scene_json(scene_dir, 'wan22_t2v_prompt.json', DEFAULT_WAN22_T2V_PROMPT)
+        _ensure_scene_json(scene_dir, 'wan22_t2v_batch_extra_prompts.json', DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS)
+
+        try:
+            t2v_prompt = _read_scene_json(scene_dir, 'wan22_t2v_prompt.json', required=True)
+            extra_prompts_data = _read_scene_json(scene_dir, 'wan22_t2v_batch_extra_prompts.json', required=True)
+        except Exception as e:
+            write_log(f"Failed to read prompt files for {scene_dir}: {e}")
+            return False
+
+        # Build list of prompts: main + filled extras
+        prompts_to_process = [t2v_prompt]
+        groups = extra_prompts_data.get("groups", []) if isinstance(extra_prompts_data, dict) else []
+        for group in groups:
+            if isinstance(group, dict) and group.get("positive_prompt", "").strip():
+                prompts_to_process.append(group)
+
+        total_videos = len(prompts_to_process)
+        if total_videos < 1:
+            write_log(f"wan22_t2v_batch has no prompts to process in {scene_dir}")
+            return False
+
+        # Calculate frames per video: ceil((duration * 16) / total_videos)
+        frames_per_video = math.ceil((scene_duration * 16) / total_videos)
+        write_log(f"wan22_t2v_batch: {total_videos} videos, {frames_per_video} frames each (duration={scene_duration}s)")
+
+        # Process each prompt sequentially
+        video_paths = []
+        for idx, prompt_data in enumerate(prompts_to_process):
+            write_log(f"Processing wan22_t2v_batch video {idx + 1}/{total_videos} for {scene_dir}")
+            try:
+                # Extra prompts only override the prompt text; inherit the base T2V config
+                # so LoRA, size, and other workflow inputs remain valid.
+                merged_prompt_data = copy.deepcopy(t2v_prompt)
+                if isinstance(prompt_data, dict):
+                    merged_prompt_data.update(prompt_data)
+                workflow = build_wan_t2v_workflow(merged_prompt_data, scene_meta, length_override=frames_per_video)
+            except Exception as e:
+                write_log(f"Failed to build wan22_t2v workflow for batch video {idx + 1} in {scene_dir}: {e}")
+                return False
+
+            result = send_wan22_t2v_workflow(
+                workflow,
+                server,
+                log_file=LOG_FILE,
+                source_label=os.path.join(scene_dir, f'batch_video_{idx + 1}'),
+            )
+            if not result:
+                write_log(f"send_wan22_t2v_workflow failed for batch video {idx + 1} in {scene_dir}")
+                return False
+
+            prompt_id = result.get('prompt_id') or result.get('id')
+            write_log(f"Posted wan22_t2v_batch video {idx + 1} for {scene_dir}, prompt_id={prompt_id}")
+
+            video_out = None
+            if prompt_id:
+                video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+            if not video_out:
+                write_log(f"No video found for batch video {idx + 1} in {scene_dir} (prompt_id={prompt_id}); stopping run")
+                return False
+
+            video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+            video_subfolder = video_out.get('subfolder')
+            video_type = video_out.get('type')
+            if not video_filename:
+                write_log(f"Cannot determine video filename from output for batch video {idx + 1}: {json.dumps(video_out)}")
+                return False
+
+            video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
+            video_out_path = os.path.join(scene_dir, f'batch_video_{idx + 1}_{video_filename}')
+            try:
+                comfyui_api.download_file_url(video_url, video_out_path)
+            except Exception as e:
+                write_log(f"Failed to download video {video_filename} for batch video {idx + 1}: {e}")
+                return False
+
+            if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
+                write_log(f"Downloaded batch video missing or empty: {video_out_path}")
+                return False
+
+            video_paths.append(video_out_path)
+            write_log(f"Downloaded batch video {idx + 1}/{total_videos}: {video_out_path}")
+
+        # Concat all videos
+        final_video_path = os.path.join(scene_dir, "wan22_t2v_batch_final.mp4")
+        if len(video_paths) == 1:
+            final_video_path = video_paths[0]
+        else:
+            concat_tmp_path = os.path.join(scene_dir, "__wan22_t2v_batch_concat_tmp__.mp4")
+            try:
+                _concat_video_segments(video_paths, concat_tmp_path)
+                os.replace(concat_tmp_path, final_video_path)
+            except Exception as e:
+                write_log(f"Failed to concat wan22_t2v_batch videos for {scene_dir}: {e}")
+                return False
+
+        return _finalize_scene_success(
+            final_video_path,
+            is_s2v=False,
+            success_message=f"Completed wan22_t2v_batch processing for {scene_dir} ({total_videos} videos merged)",
         )
 
     if scene_type in {'wan22', 'wan22_i2v'}:

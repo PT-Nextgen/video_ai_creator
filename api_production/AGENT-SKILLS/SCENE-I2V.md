@@ -52,3 +52,9 @@ Ada dua tujuan scene ini apabila menggunakan beberapa gambar, pertama untuk visu
    - slot 1 mengedit gambar awal pertama menjadi gambar kedua
    - slot 2 mengedit gambar kedua menjadi gambar ketiga
    - slot 3 mengedit gambar ketiga menjadi gambar keempat
+
+## Aturan jumlah image
+1. Apabila diminta membuat satu image saja, maka cukup isi `z_image_prompt.json`
+2. Apabila diminta membuat dua image, maka isi `z_image_prompt.json` dan satu slot tambahan di `z_image_extra_prompts.json` atau di `image_edit_prompt.json` 
+3. Apabila diminta membuat tiga image, maka isi `z_image_prompt.json` dan dua slot tambahan di `z_image_extra_prompts.json` atau di `image_edit_prompt.json` 
+4. Apabila diminta membuat empat image, maka isi `z_image_prompt.json` dan tiga slot tambahan di `z_image_extra_prompts.json` atau di `image_edit_prompt.json` 

@@ -61,6 +61,7 @@ PROMPT_TOP_LEVEL_FIELDS = {
 GROUP_PROMPT_FIELDS = {
     "z_image_extra_prompts.json": ["positive_prompt", "negative_prompt"],
     "image_edit_prompt.json": ["prompt"],
+    "wan22_t2v_batch_extra_prompts.json": ["positive_prompt", "negative_prompt"],
 }
 
 
@@ -533,18 +534,35 @@ def _parse_multilang_prompt_response(text: str) -> dict:
     try:
         payload = json.loads(raw)
     except Exception:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start >= 0 and end > start:
+        # Try to extract JSON from markdown code blocks
+        import re
+        json_match = re.search(r'\{[^{}]*"en"[^{}]*\}[^{}]*\{[^{}]*"id_new"[^{}]*\}', raw, re.IGNORECASE)
+        if json_match:
             try:
-                payload = json.loads(raw[start:end + 1])
+                payload = json.loads(json_match.group(0))
             except Exception:
-                payload = None
+                pass
+        # Fallback: try to find JSON object
+        if payload is None:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    payload = json.loads(raw[start:end + 1])
+                except Exception:
+                    payload = None
     if not isinstance(payload, dict):
         return {"en": "", "id_new": ""}
+    en = _clean_text(payload.get("en", ""))
+    id_new = _clean_text(payload.get("id_new", ""))
+    # Additional fallback: try alternative keys
+    if not en:
+        en = _clean_text(payload.get("english", "") or payload.get("en_prompt", ""))
+    if not id_new:
+        id_new = _clean_text(payload.get("indonesian", "") or payload.get("id_new_prompt", "") or payload.get("id", ""))
     return {
-        "en": _clean_text(payload.get("en", "")),
-        "id_new": _clean_text(payload.get("id_new", "")),
+        "en": en,
+        "id_new": id_new,
     }
 
 

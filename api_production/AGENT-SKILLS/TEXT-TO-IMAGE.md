@@ -1,7 +1,7 @@
 # Petunjuk pembuatan text menjadi image
 
 ## Konfigurasi json
-File konfigurasi : z_image_prompt.json
+File konfigurasi : `z_image_prompt.json`
 
 ## Penjelasan z_image_prompt.json
 

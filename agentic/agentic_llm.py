@@ -460,6 +460,15 @@ SCENE_TYPE_FILES = {
             "IMAGE-TO-VIDEO-PROMPT.md",
         ],
     ),
+    "wan22_t2v_batch": (
+        ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
+        [
+            "SCENE-GENERAL.md",
+            "SCENE-WAN22-T2V-BATCH.md",
+            "TEXT-TO-VIDEO-BATCH.md",
+            "TEXT-TO-VIDEO-PROMPT.md",
+        ],
+    ),
     "wan22_s2v": (
         ["wan22_s2v_prompt.json", "z_image_prompt.json"],
         [
@@ -504,6 +513,7 @@ SCENE_TYPE_FILES = {
 SCENE_TYPE_OUTPUTS = {
     "wan22_i2v": ["z_image_prompt.json", "wan22_i2v_prompt.json"],
     "wan22_t2v_i2v": ["wan22_t2v_prompt.json", "wan22_i2v_prompt.json"],
+    "wan22_t2v_batch": ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
     "wan22_s2v": ["wan22_s2v_prompt.json", "z_image_prompt.json"],
     "i2v": ["z_image_prompt.json"],
     "image_pan": ["z_image_prompt.json"],
@@ -697,6 +707,17 @@ def build_agentic_prompt(
                 "TEXT-TO-VIDEO-PROMPT.md",
                 "IMAGE-TO-VIDEO-PROMPT.md",
             ],
+        )
+    elif scene_type == "wan22_t2v_batch":
+        append_md_group(
+            "2. Scene wan22_t2v_batch",
+            [
+                "SCENE-GENERAL.md",
+                "SCENE-WAN22-T2V-BATCH.md",
+                "TEXT-TO-VIDEO-BATCH.md",
+                "TEXT-TO-VIDEO-PROMPT.md",
+            ],
+            "CATATAN: scene ini hanya memakai T2V utama dan 3 slot Prompt Tambahan; tidak ada tahap I2V.",
         )
     elif scene_type == "wan22_s2v":
         if agentic_config.get("create_initial_image", True):

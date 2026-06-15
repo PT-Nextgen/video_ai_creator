@@ -125,8 +125,16 @@ DEFAULT_Z_IMAGE_EXTRA_PROMPTS = {
         {"positive_prompt": "", "negative_prompt": ""},
     ],
 }
+DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS = {
+    "groups": [
+        {"positive_prompt": "", "negative_prompt": ""},
+        {"positive_prompt": "", "negative_prompt": ""},
+        {"positive_prompt": "", "negative_prompt": ""},
+    ],
+}
 
 WAN22_T2V_SCENE_TYPE = "wan22_t2v_i2v"
+WAN22_T2V_BATCH_SCENE_TYPE = "wan22_t2v_batch"
 DEFAULT_DURATION_OPTIONS = [5, 10]
 WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
 
@@ -135,6 +143,8 @@ def duration_options_for_scene_type(scene_type: str) -> list[int]:
     scene_type = str(scene_type or "").strip()
     if scene_type == WAN22_T2V_SCENE_TYPE:
         return list(WAN22_T2V_DURATION_OPTIONS)
+    if scene_type == WAN22_T2V_BATCH_SCENE_TYPE:
+        return [5, 10]
     return list(DEFAULT_DURATION_OPTIONS)
 
 
@@ -171,7 +181,7 @@ def agentic_create_initial_image_policy(scene_type: str) -> tuple[bool, bool | N
         return True, None
     if scene_type in {"i2v", "image_pan", "image_zoom"}:
         return False, True
-    if scene_type in {"web_scroll", WAN22_T2V_SCENE_TYPE}:
+    if scene_type in {"web_scroll", WAN22_T2V_SCENE_TYPE, WAN22_T2V_BATCH_SCENE_TYPE}:
         return False, False
     return False, True
 
@@ -276,6 +286,7 @@ def create_scene_files(
     web_search_prompt=None,
     image_edit_prompt=None,
     z_image_extra_prompts=None,
+    t2v_batch_extra_prompts=None,
 ):
     scene_dir.mkdir(parents=True, exist_ok=True)
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
@@ -296,6 +307,7 @@ def create_scene_files(
         web_search_prompt=web_search_prompt or DEFAULT_WEB_SEARCH_PROMPT,
         image_edit_prompt=image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT,
         z_image_extra_prompts=z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS,
+        t2v_batch_extra_prompts=t2v_batch_extra_prompts or DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
     )
 
 
@@ -312,6 +324,7 @@ def sync_scene_prompt_files(
     web_search_prompt: dict | None = None,
     image_edit_prompt: dict | None = None,
     z_image_extra_prompts: dict | None = None,
+    t2v_batch_extra_prompts: dict | None = None,
 ):
     """Ensure prompt JSON files exist according to selected scene type.
 
@@ -331,6 +344,7 @@ def sync_scene_prompt_files(
     write_prompt_json(scene_dir / "web_search_prompt.json", web_search_prompt or DEFAULT_WEB_SEARCH_PROMPT)
     write_prompt_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
     write_prompt_json(scene_dir / "z_image_extra_prompts.json", z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
+    write_prompt_json(scene_dir / "wan22_t2v_batch_extra_prompts.json", t2v_batch_extra_prompts or DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS)
 
 
 def validate_project_name(project_name: str) -> str:
@@ -422,6 +436,8 @@ def create_scene_in_project(
     duration = int(duration)
     if scene_type == WAN22_T2V_SCENE_TYPE and duration not in WAN22_T2V_DURATION_OPTIONS:
         raise ValueError("Durasi untuk scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
+    if scene_type == WAN22_T2V_BATCH_SCENE_TYPE and duration not in (5, 10):
+        raise ValueError("Durasi untuk scene wan22_t2v_batch hanya boleh 5 atau 10 detik.")
     new_dir = project_dir / scene_dir_name(len(list_scene_dirs_in_project(project_dir)) + 1)
     meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(
         scene_title,
@@ -441,6 +457,7 @@ def create_scene_in_project(
         image_pan_prompt=image_pan_prompt,
         image_zoom_prompt=image_zoom_prompt,
         web_search_prompt=web_search_prompt,
+        t2v_batch_extra_prompts=DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
     )
     sync_project_size_to_scene_files(project_dir)
     return new_dir
@@ -574,6 +591,15 @@ def validate_scene_data(
             issues.append("Durasi scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
         if not str(wan_t2v_prompt.get("positive_prompt", "")).strip():
             issues.append("Prompt positif WAN22 T2V wajib diisi.")
+    if scene_type == WAN22_T2V_BATCH_SCENE_TYPE:
+        try:
+            duration_value = int(meta.get("duration_seconds", 0))
+        except Exception:
+            duration_value = 0
+        if duration_value not in (5, 10):
+            issues.append("Durasi scene wan22_t2v_batch hanya boleh 5 atau 10 detik.")
+        if not str(wan_t2v_prompt.get("positive_prompt", "")).strip():
+            issues.append("Prompt positif WAN22 T2V wajib diisi.")
     if scene_type in {"wan22", "wan22_i2v"}:
         if not str(wan_prompt.get("positive_prompt_one", "")).strip():
             issues.append("Prompt positif WAN pertama wajib diisi.")
@@ -691,7 +717,7 @@ class SceneTemplateDialog(QDialog):
         self.setWindowTitle(title)
         self.title_input = QLineEdit()
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["wan22_i2v", WAN22_T2V_SCENE_TYPE, "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
+        self.type_combo.addItems(["wan22_i2v", WAN22_T2V_SCENE_TYPE, WAN22_T2V_BATCH_SCENE_TYPE, "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
         self.duration_combo = QComboBox()
         populate_duration_combo(self.duration_combo, self.type_combo.currentText(), selected_value=10)
         form = QFormLayout(self)
@@ -1542,6 +1568,7 @@ class SceneEditorWindow(QMainWindow):
         self.web_tab = None
         self.web_search_tab = None
         self.image_edit_tab = None
+        self.t2v_batch_extra_tab = None
         self.agentic_tab = None
         self.assets_tab = None
         self.generate_initial_image_button = None
@@ -1573,7 +1600,7 @@ class SceneEditorWindow(QMainWindow):
         self.duration_input = QComboBox()
         populate_duration_combo(self.duration_input, "wan22_i2v", selected_value=10)
         self.scene_type_combo = QComboBox()
-        self.scene_type_combo.addItems(["wan22_i2v", WAN22_T2V_SCENE_TYPE, "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
+        self.scene_type_combo.addItems(["wan22_i2v", WAN22_T2V_SCENE_TYPE, WAN22_T2V_BATCH_SCENE_TYPE, "wan22_s2v", "i2v", "web_scroll", "image_pan", "image_zoom"])
         self.scene_voice_character_input = QComboBox()
         for voice_label, voice_key in SCENE_VOICE_OPTIONS:
             self.scene_voice_character_input.addItem(voice_label, voice_key)
@@ -1662,6 +1689,19 @@ class SceneEditorWindow(QMainWindow):
         self.wan_t2v_generate_prompt_button.clicked.connect(
             lambda _checked=False: self.generate_wan_prompt_from_ui("positive_prompt", prompt_kind="wan_t2v")
         )
+        # wan22_t2v_batch extra prompt widgets
+        self.t2v_batch_positive_inputs = []
+        self.t2v_batch_negative_inputs = []
+        self.t2v_batch_generate_prompt_buttons = []
+        for slot_index in range(3):
+            positive_input = QTextEdit()
+            negative_input = QTextEdit()
+            generate_button = QToolButton()
+            generate_button.setText("Buat Prompt")
+            generate_button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_t2v_batch_prompt_generation(idx))
+            self.t2v_batch_positive_inputs.append(positive_input)
+            self.t2v_batch_negative_inputs.append(negative_input)
+            self.t2v_batch_generate_prompt_buttons.append(generate_button)
         self.wan_prompt_inputs = {}
         self.wan_generate_prompt_buttons = {}
         for key in [
@@ -2063,6 +2103,18 @@ class SceneEditorWindow(QMainWindow):
             row += 1
         tabs.addTab(self.wan_tab, "WAN22_I2V")
 
+        self.t2v_batch_extra_tab = QWidget()
+        t2v_batch_extra_layout = QVBoxLayout(self.t2v_batch_extra_tab)
+        for idx in range(3):
+            group = QGroupBox(f"Prompt Tambahan {idx + 1}")
+            group_layout = QFormLayout(group)
+            group_layout.addRow("Prompt Positif", self.t2v_batch_positive_inputs[idx])
+            group_layout.addRow("", self.t2v_batch_generate_prompt_buttons[idx])
+            group_layout.addRow("Prompt Negatif", self.t2v_batch_negative_inputs[idx])
+            t2v_batch_extra_layout.addWidget(group)
+        t2v_batch_extra_layout.addStretch(1)
+        tabs.addTab(self.t2v_batch_extra_tab, "Prompt Tambahan")
+
         self.s2v_tab = QWidget()
         s2v_layout = QFormLayout(self.s2v_tab)
         s2v_layout.addRow("Ukuran", self.s2v_size_input)
@@ -2150,20 +2202,22 @@ class SceneEditorWindow(QMainWindow):
             return
         scene_type = self.scene_type_combo.currentText().strip()
         is_wan22_t2v = scene_type == WAN22_T2V_SCENE_TYPE
+        is_t2v_batch = scene_type == WAN22_T2V_BATCH_SCENE_TYPE
         visible_map = {
             self.meta_tab: True,
-            self.z_tab: scene_type != "web_scroll" and not is_wan22_t2v,
+            self.z_tab: scene_type not in {"web_scroll"} and not is_wan22_t2v and not is_t2v_batch,
             self.z_extra_tab: scene_type == "i2v",
-            self.wan_t2v_tab: is_wan22_t2v,
+            self.wan_t2v_tab: is_wan22_t2v or is_t2v_batch,
             self.wan_tab: scene_type in {"wan22", "wan22_i2v", WAN22_T2V_SCENE_TYPE},
             self.s2v_tab: scene_type == "wan22_s2v",
             self.web_tab: scene_type == "web_scroll",
             self.image_pan_tab: scene_type == "image_pan",
             self.image_zoom_tab: scene_type == "image_zoom",
             self.web_search_tab: scene_type in {"i2v", "image_pan", "image_zoom"},
-            self.image_edit_tab: scene_type != "web_scroll" and not is_wan22_t2v,
+            self.image_edit_tab: scene_type not in {"web_scroll", "wan22_s2v"} and not is_wan22_t2v and not is_t2v_batch,
+            self.t2v_batch_extra_tab: is_t2v_batch,
             self.agentic_tab: scene_type != "web_scroll",
-            self.assets_tab: scene_type != "web_scroll",
+            self.assets_tab: True,
         }
         current_widget = self.editor_tabs.currentWidget()
         if self.image_edit_tab is not None:
@@ -2657,6 +2711,7 @@ class SceneEditorWindow(QMainWindow):
             self.web_size_input,
             self.image_pan_size_input,
             self.image_zoom_size_input,
+            self.web_search_size_input,
         ):
             self._set_locked_size_combo(combo, width, height)
         self._apply_z_size_constraint_by_scene_type()
@@ -3524,8 +3579,10 @@ class SceneEditorWindow(QMainWindow):
             self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_image_edit_into_ui(scene_dir)
             self.load_agentic_config_into_ui(scene_dir)
+            self.load_t2v_batch_extra_prompts_into_ui(scene_dir)
         finally:
             self.loading_scene = False
+        self.apply_project_size_constraints_to_ui()
         self._capture_scene_view_mode_baseline()
         if preferred_tab is not None and self.editor_tabs is not None:
             preferred_index = self.editor_tabs.indexOf(preferred_tab)
@@ -3979,6 +4036,17 @@ class SceneEditorWindow(QMainWindow):
             )
         return {"groups": groups}
 
+    def gather_t2v_batch_extra_prompts(self):
+        groups = []
+        for positive_input, negative_input in zip(self.t2v_batch_positive_inputs, self.t2v_batch_negative_inputs):
+            groups.append(
+                {
+                    "positive_prompt": positive_input.toPlainText().strip(),
+                    "negative_prompt": negative_input.toPlainText().strip(),
+                }
+            )
+        return {"groups": groups}
+
     def refresh_image_edit_source_options(self, preferred_images=None):
         preferred_images = preferred_images or ["", "", ""]
         image_names = []
@@ -4204,6 +4272,7 @@ class SceneEditorWindow(QMainWindow):
         scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
         image_edit_prompt = self.gather_image_edit_prompt()
         z_image_extra_prompts = self.gather_z_image_extra_prompts()
+        t2v_batch_extra_prompts = self.gather_t2v_batch_extra_prompts()
         agentic_config = self.gather_agentic_config()
         self.save_project_voice_settings()
         write_prompt_json(self.current_scene_dir / "scene_meta.json", meta)
@@ -4220,6 +4289,7 @@ class SceneEditorWindow(QMainWindow):
             web_search_prompt=self.gather_web_search_prompt(),
             image_edit_prompt=image_edit_prompt,
             z_image_extra_prompts=z_image_extra_prompts,
+            t2v_batch_extra_prompts=t2v_batch_extra_prompts,
         )
         save_agentic_config(self.current_scene_dir, agentic_config)
         self.refresh_scene_status()
@@ -4292,6 +4362,7 @@ class SceneEditorWindow(QMainWindow):
             image_pan_prompt=image_pan_prompt,
             image_zoom_prompt=image_zoom_prompt,
             web_search_prompt=web_search_prompt,
+            t2v_batch_extra_prompts=DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
         )
         for scene in scenes:
             shutil.rmtree(scene)
@@ -4593,6 +4664,9 @@ class SceneEditorWindow(QMainWindow):
             if prompt_key == "negative_prompt":
                 self.wan_t2v_negative_input.setPlainText(text)
                 return
+        if prompt_kind == "t2v_batch" and slot_index is not None and 0 <= slot_index < len(self.t2v_batch_positive_inputs):
+            self.t2v_batch_positive_inputs[slot_index].setPlainText(text)
+            return
         if prompt_kind == "wan_i2v" and prompt_key in self.wan_prompt_inputs:
             self.wan_prompt_inputs[prompt_key].setPlainText(text)
             return
@@ -4612,6 +4686,8 @@ class SceneEditorWindow(QMainWindow):
             return self.current_scene_dir / "image_edit_prompt.json", "prompt", None
         if prompt_kind == "wan_t2v":
             return self.current_scene_dir / "wan22_t2v_prompt.json", str(prompt_key or "").strip(), None
+        if prompt_kind == "t2v_batch":
+            return self.current_scene_dir / "wan22_t2v_batch_extra_prompts.json", "positive_prompt", None
         if prompt_kind == "wan_i2v":
             return self.current_scene_dir / "wan22_i2v_prompt.json", str(prompt_key or "").strip(), None
         if prompt_kind == "wan_s2v":
@@ -4619,7 +4695,7 @@ class SceneEditorWindow(QMainWindow):
         raise ValueError(f"prompt_kind tidak dikenal: {prompt_kind}")
 
     def _prompt_group_index(self, prompt_kind: str, slot_index: int | None):
-        if prompt_kind in {"z_extra", "image_edit"} and slot_index is not None:
+        if prompt_kind in {"z_extra", "image_edit", "t2v_batch"} and slot_index is not None:
             return slot_index
         return None
 
@@ -4939,6 +5015,156 @@ class SceneEditorWindow(QMainWindow):
             f"Membuat image tambahan {slot_index + 1} untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
+
+    def run_t2v_batch_prompt_generation(self, slot_index: int):
+        self.append_log(f"[debug] run_t2v_batch_prompt_generation called, slot={slot_index}")
+        if slot_index < 0 or slot_index >= len(self.t2v_batch_positive_inputs):
+            self.append_log(f"[debug] Invalid slot_index={slot_index}")
+            return
+        if not self.ensure_project_selected():
+            self.append_log("[debug] ensure_project_selected failed")
+            return
+        if not self.current_scene_dir:
+            self.append_log("[debug] current_scene_dir is None")
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        positive_text = self.t2v_batch_positive_inputs[slot_index].toPlainText().strip()
+        self.append_log(f"[debug] positive_text len={len(positive_text)}")
+        if not positive_text:
+            QMessageBox.warning(self, "Data Tidak Valid", f"Prompt Positif pada Prompt Tambahan {slot_index + 1} wajib diisi.")
+            return
+        # Read context from wan_t2v_prompt and scene_meta
+        try:
+            wan_t2v_prompt = load_json(self.current_scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
+            scene_meta = load_json(self.current_scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
+            project_settings = load_project_settings_file(self.project_dir())
+            context = f"Project: {project_settings.get('project_description', '')}\nScene: {scene_meta.get('scene_description', '')}"
+            self.append_log(f"[debug] Context built, calling _start_prompt_generation...")
+        except Exception as e:
+            self.append_log(f"[debug] Error reading context: {e}")
+            return
+        # Store slot_index so _handle_prompt_generation_finished can update the correct field
+        self._pending_t2v_batch_slot = slot_index
+        self._start_prompt_generation("t2v_batch", slot_index, positive_text, context_text=context)
+
+    def _start_prompt_generation(
+        self,
+        prompt_kind: str,
+        slot_index: int | None = None,
+        prompt_text: str | None = None,
+        prompt_key: str | None = None,
+        context_text: str | None = None,
+    ):
+        # Support both old signature (prompt_kind, slot_index, prompt_text, prompt_key)
+        # and new signature with explicit context_text for t2v_batch
+        if context_text is not None and prompt_text is not None:
+            # t2v_batch mode: use provided context_text directly
+            pass
+        elif prompt_text is not None:
+            # Standard mode: build context from prompt_kind
+            context_text = self._build_prompt_generation_context(
+                prompt_kind,
+                slot_index=slot_index,
+                prompt_key=prompt_key,
+            )
+        else:
+            raise TypeError("_start_prompt_generation requires valid arguments")
+
+        scene_dir = Path(self.current_scene_dir)
+        prompt_label = {
+            "z_image": "Gambar Awal",
+            "z_extra": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
+            "image_edit": f"Edit Gambar {slot_index + 1 if slot_index is not None else 1}",
+            "wan_t2v": f"WAN T2V ({prompt_key or 'prompt'})",
+            "wan_i2v": f"WAN I2V ({prompt_key or 'prompt'})",
+            "wan_s2v": f"WAN22 S2V ({prompt_key or 'prompt'})",
+            "t2v_batch": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
+        }.get(prompt_kind, prompt_kind)
+
+        self.ensure_process_dialog()
+        self.log_output.clear()
+        self.append_log(f"Membuat prompt {prompt_label} untuk {scene_dir.name}")
+        prompt_provider = str(
+            self.project_settings.get("prompt_generation", {}).get(
+                "provider", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
+            )
+        ).strip().lower() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
+        prompt_model = str(
+            self.project_settings.get("prompt_generation", {}).get(
+                "model", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
+            )
+        ).strip() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
+        self.append_log(f"Provider prompt generation: {prompt_provider} ({prompt_model})")
+        self.append_log("LLM dipanggil sekali untuk mengembalikan `en` dan `id_new`; `id_old` akan disamakan dengan `id_new`.")
+
+        if self.prompt_generation_thread is not None and self.prompt_generation_thread.isRunning():
+            self.append_log("[warning] Proses buat prompt sebelumnya masih berjalan. Tunggu selesai dulu.")
+            self.statusBar().showMessage("Proses buat prompt masih berjalan.", 4000)
+            return
+
+        self.prompt_generation_context = {
+            "prompt_kind": prompt_kind,
+            "slot_index": slot_index,
+            "scene_dir": scene_dir,
+            "prompt_key": str(prompt_key or "").strip(),
+        }
+
+        self.prompt_generation_thread = QThread(self)
+        self.prompt_generation_worker = PromptGenerationWorker(
+            str(prompt_text or ""),
+            context_text,
+            project_dir=str(self.project_dir() or ""),
+        )
+        self.prompt_generation_worker.moveToThread(self.prompt_generation_thread)
+        self.prompt_generation_worker.progress.connect(self.append_log)
+        self.prompt_generation_thread.started.connect(self.prompt_generation_worker.run)
+        self.prompt_generation_worker.finished.connect(self._on_prompt_generation_finished)
+        self.prompt_generation_worker.failed.connect(self._on_prompt_generation_failed)
+        self.prompt_generation_worker.finished.connect(self.prompt_generation_thread.quit)
+        self.prompt_generation_worker.failed.connect(self.prompt_generation_thread.quit)
+        self.prompt_generation_thread.finished.connect(self._cleanup_prompt_generation_thread)
+        self.statusBar().showMessage("Membuat prompt dengan LLM...", 3000)
+        self.prompt_generation_thread.start()
+
+    def _handle_prompt_generation_finished(self, result: dict):
+        self._on_prompt_generation_finished(result)
+
+    def _handle_prompt_generation_failed(self, error: str):
+        self._on_prompt_generation_failed(error)
+
+    def _save_t2v_batch_extra_prompts(self):
+        """Save t2v_batch extra prompts from UI widgets to the JSON file."""
+        if not self.current_scene_dir:
+            return
+        groups = []
+        for idx in range(min(3, len(self.t2v_batch_positive_inputs))):
+            groups.append(
+                {
+                    "positive_prompt": self.t2v_batch_positive_inputs[idx].toPlainText(),
+                    "negative_prompt": self.t2v_batch_negative_inputs[idx].toPlainText(),
+                }
+            )
+        payload = {"groups": groups}
+        target = Path(self.current_scene_dir) / "wan22_t2v_batch_extra_prompts.json"
+        try:
+            write_prompt_json(target, payload)
+        except Exception as e:
+            self.append_log(f"[warning] Gagal menyimpan extra prompts: {e}")
+
+    def load_t2v_batch_extra_prompts_into_ui(self, scene_dir: Path):
+        """Load t2v_batch extra prompts from JSON file into UI widgets."""
+        extra_path = Path(scene_dir) / "wan22_t2v_batch_extra_prompts.json"
+        try:
+            data = load_json(extra_path, DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS)
+        except Exception:
+            data = DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS
+        groups = data.get("groups", []) if isinstance(data, dict) else []
+        for idx in range(min(3, len(self.t2v_batch_positive_inputs))):
+            group = groups[idx] if idx < len(groups) and isinstance(groups[idx], dict) else {}
+            positive = group.get("positive_prompt", "")
+            negative = group.get("negative_prompt", "")
+            self.t2v_batch_positive_inputs[idx].setPlainText(str(positive))
+            self.t2v_batch_negative_inputs[idx].setPlainText(str(negative))
 
     def run_image_edit_slot(self, slot_index: int):
         if slot_index < 0 or slot_index >= len(self.image_edit_image_inputs):

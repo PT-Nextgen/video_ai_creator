@@ -65,6 +65,16 @@ def _set_size_inputs(workflow: dict, width: int, height: int):
     inputs["height"] = int(height)
 
 
+def _set_length_override(workflow: dict, length: int):
+    node = workflow.get("74")
+    if not isinstance(node, dict):
+        return
+    inputs = node.get("inputs")
+    if not isinstance(inputs, dict):
+        return
+    inputs["length"] = int(length)
+
+
 def _set_lora_node(workflow: dict, node_id: str | None, lora_name: str, strength_value, fallback_strength: float) -> bool:
     if not node_id:
         return False
@@ -116,7 +126,7 @@ def resolve_wan22_i2v_duration(scene_duration) -> int:
     return 5
 
 
-def build_workflow(t2v_prompt: dict, scene_meta: dict | None = None) -> dict:
+def build_workflow(t2v_prompt: dict, scene_meta: dict | None = None, length_override: int | None = None) -> dict:
     t2v_prompt = t2v_prompt if isinstance(t2v_prompt, dict) else {}
     workflow = copy.deepcopy(_load_template(TEMPLATE_4))
 
@@ -135,6 +145,9 @@ def build_workflow(t2v_prompt: dict, scene_meta: dict | None = None) -> dict:
         height = DEFAULT_PROMPT["height"]
     _set_size_inputs(workflow, width, height)
 
+    if length_override is not None:
+        _set_length_override(workflow, int(length_override))
+
     _set_lora_node(workflow, "114", t2v_prompt.get("lora_high_name", ""), t2v_prompt.get("lora_high_strength", 0), 0)
     _set_lora_node(workflow, "115", t2v_prompt.get("lora_low_name", ""), t2v_prompt.get("lora_low_strength", 0), 0)
     _set_lora_node(workflow, "133", t2v_prompt.get("lora_high_name_2", ""), t2v_prompt.get("lora_high_strength_2", 0), 0)
@@ -144,8 +157,12 @@ def build_workflow(t2v_prompt: dict, scene_meta: dict | None = None) -> dict:
     return workflow
 
 
-def build_wan_t2v_workflow(t2v_prompt: dict, scene_meta: dict | None = None) -> dict:
-    return build_workflow(t2v_prompt, scene_meta=scene_meta)
+def build_wan_t2v_workflow(
+    t2v_prompt: dict,
+    scene_meta: dict | None = None,
+    length_override: int | None = None,
+) -> dict:
+    return build_workflow(t2v_prompt, scene_meta=scene_meta, length_override=length_override)
 
 
 def send_workflow(workflow, server, log_file=None, source_label="in-memory workflow"):

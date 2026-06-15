@@ -36,7 +36,8 @@ File utama:
 - `z_image_prompt.json`
 - `z_image_extra_prompts.json`
 - `image_edit_prompt.json`
-- `wan22_t2v_prompt.json` (untuk `wan22_t2v_i2v`)
+- `wan22_t2v_prompt.json` (untuk `wan22_t2v_i2v` dan `wan22_t2v_batch`)
+- `wan22_t2v_batch_extra_prompts.json` (untuk `wan22_t2v_batch`)
 - `wan22_s2v_prompt.json`
 - `wan22_i2v_prompt.json` (untuk `wan22_i2v` dan stage 2 `wan22_t2v_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
@@ -131,6 +132,11 @@ Nilai `image_model` yang didukung:
   - `lora_high_strength_2`
   - `lora_low_name_2`
   - `lora_low_strength_2`
+- `wan22_t2v_batch_extra_prompts.json`
+  - `groups` berisi 3 item
+  - setiap item:
+    - `positive_prompt`
+    - `negative_prompt`
 - `wan22_s2v_prompt.json`
   - `positive_prompt`
   - `negative_prompt`
@@ -169,6 +175,13 @@ Kebutuhan prompt per `scene_type`:
   - durasi scene hanya `5`, `10`, atau `15`
   - jika durasi `5`, hanya stage `WAN22_T2V` yang dijalankan
   - jika durasi `10` atau `15`, stage `WAN22_T2V` dijalankan dulu lalu frame terakhir (frame ke 81) dipakai sebagai input untuk stage `WAN22_I2V`
+- `wan22_t2v_batch`
+  - membutuhkan `scene_meta.json`, `wan22_t2v_prompt.json`, dan `wan22_t2v_batch_extra_prompts.json`
+  - durasi scene hanya `5` atau `10`
+  - stage `WAN22_T2V` dijalankan satu per satu untuk prompt utama dan setiap prompt tambahan yang terisi
+  - jumlah video total = prompt utama + jumlah slot `Prompt Tambahan` yang terisi
+  - jumlah frame per video dihitung dengan `ceil((duration * 16) / total_video)`
+  - seluruh video hasil stage `WAN22_T2V` digabung menjadi satu video final
 - `wan22_s2v`
   - membutuhkan `scene_meta.json`, `wan22_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_` di root folder scene
   - `voice_text` wajib diisi
@@ -203,6 +216,11 @@ Catatan sumber image:
   - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
   - jika durasi scene `10` atau `15`, frame terakhir dari video T2V (frame ke 81) dipakai sebagai input image untuk stage `WAN22_I2V`
   - durasi stage `WAN22_I2V` otomatis menjadi `5` untuk scene `10` detik dan `10` untuk scene `15` detik
+- `wan22_t2v_batch`
+  - stage `WAN22_T2V` dijalankan untuk prompt utama dan setiap prompt tambahan yang terisi
+  - frame per video dihitung dengan `ceil((duration * 16) / total_video)`
+  - semua hasil video digabung menjadi video final
+  - prompt tambahan yang kosong dilewati
 - `wan22_s2v`
   - memakai satu gambar terbaru dan satu file audio speech terbaru dari root folder scene
   - file speech harus berawalan `speech_`
@@ -317,6 +335,7 @@ Subcommand:
 Pilihan `scene_type`:
 - `wan22_i2v`
 - `wan22_t2v_i2v`
+- `wan22_t2v_batch`
 - `wan22_s2v`
 - `i2v`
 - `web_scroll`
@@ -330,6 +349,7 @@ Contoh:
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_batch --title "Intro Batch" --scene-description "T2V utama dengan prompt tambahan." --voice-text "Halo teman-teman! Hari ini kita buat video utama lalu beberapa variasi prompt tambahan." --duration 10
 ```
 
 Contoh dari folder `api_production`:
@@ -337,6 +357,7 @@ Contoh dari folder `api_production`:
 .\project_cli.bat create-project --project demo_project
 .\project_cli.bat create-scene --project demo_project --scene-type image_zoom --title "Zoom Intro" --scene-description "Close-up magnet merah biru." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
 .\project_cli.bat create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
+.\project_cli.bat create-scene --project demo_project --scene-type wan22_t2v_batch --title "Intro Batch" --scene-description "T2V utama dengan prompt tambahan." --voice-text "Halo teman-teman! Hari ini kita buat video utama lalu beberapa variasi prompt tambahan." --duration 10
 ```
 
 ## Main Runner
@@ -349,6 +370,11 @@ Fungsi:
   - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
   - jika durasi scene `10` atau `15`, frame terakhir dari video T2V (frame ke 81) dipakai sebagai input image untuk stage `WAN22_I2V`
   - stage `WAN22_I2V` tetap memakai script yang sudah ada di repo
+- `scene_type=wan22_t2v_batch`
+  - ambil video dari stage `WAN22_T2V` untuk prompt utama dan setiap prompt tambahan yang terisi
+  - jumlah frame per video dihitung dengan `ceil((duration * 16) / total_video)`
+  - semua hasil video digabung jadi satu video final
+  - prompt tambahan yang kosong dilewati
 - `scene_type=wan22_i2v`
   - ambil satu gambar terbaru dari root folder scene
   - upload image ke ComfyUI
@@ -503,6 +529,8 @@ Perilaku UI:
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
 - `Generate Config Agentic` hanya membuat JSON variasi dan menyimpannya ke folder `variasiN`
 - `Execute Agentic` menjalankan variasi yang belum punya `status.done`
+- untuk `wan22_t2v_batch`, agentic memakai panduan khusus `SCENE-WAN22-T2V-BATCH.md`
+- output agentic untuk scene ini mencakup `wan22_t2v_prompt.json` dan `wan22_t2v_batch_extra_prompts.json`
 - ukuran video project menjadi sumber ukuran tunggal untuk tab:
   - `WAN22_T2V`
   - `WAN22_I2V`
@@ -517,6 +545,12 @@ Perilaku UI:
   - `WAN22_T2V`
   - `WAN22_I2V`
   - `Aset`
+- scene type `wan22_t2v_batch` menampilkan:
+  - `Meta`
+  - `WAN22_T2V`
+  - `Prompt Tambahan`
+  - `Aset`
+  - tab `WAN22_I2V` disembunyikan
 - khusus tab `Gambar Awal` pada scene type `image_pan` dan `image_zoom`, dropdown ukuran tetap aktif (tidak mengikuti ukuran project)
 - tab `WAN22_I2V` selalu memakai Lora dan tidak lagi menampilkan checkbox `Pakai Lora`
 - tab `WAN22_T2V` juga selalu memakai Lora dan tidak menampilkan checkbox `Pakai Lora`
@@ -580,6 +614,7 @@ Perilaku UI:
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
+- untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup
 - setelah proses selesai dari UI, akan muncul popup:
   - informasi keberhasilan beserta file output yang terdeteksi
   - atau ringkasan error jika proses gagal
@@ -602,6 +637,7 @@ Agentic dipakai untuk membuat dan menjalankan variasi per scene dalam dua tahap:
      - special command
      - file JSON/template input
      - file `.md` referensi
+     - untuk `wan22_t2v_batch`, referensi markdown yang ditempel adalah `SCENE-GENERAL.md`, `SCENE-WAN22-T2V-BATCH.md`, `TEXT-TO-VIDEO-BATCH.md`, dan `TEXT-TO-VIDEO-PROMPT.md`
      - isi JSON root scene dan variasi yang sudah ada sebagai referensi anti-duplikasi
    - pada section input JSON dan schema output, field prompt ditampilkan sebagai string kosong `""` agar LLM jelas mengisi bagian itu saja
    - output JSON divalidasi ketat:

@@ -19,6 +19,7 @@ from scene_manager_ui import (
 SCENE_TYPE_CHOICES = [
     "wan22_i2v",
     "wan22_t2v_i2v",
+    "wan22_t2v_batch",
     "wan22_s2v",
     "i2v",
     "web_scroll",
