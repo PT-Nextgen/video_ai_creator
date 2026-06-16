@@ -13,7 +13,7 @@ if PROJECT_ROOT not in os.sys.path:
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
 from scripts.server_config import get_server_address
-from scripts.project_settings import load_project_settings
+from scripts.project_settings import load_project_settings, save_project_settings
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 from prompt_localization import resolve_prompt_payload_for_runtime
@@ -50,12 +50,18 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
         write_log(f"Konfigurasi cover tidak ditemukan di project_settings.json: {project_dir}", level="error")
         return False
 
-    prompts, _, _ = resolve_prompt_payload_for_runtime(
+    prompts, stored_prompts, changed = resolve_prompt_payload_for_runtime(
         "project_settings_cover.json",
         cover_prompt,
         project_dir=Path(project_dir),
         log_fn=write_log,
     )
+    if changed and isinstance(project_settings, dict):
+        project_settings["cover"] = stored_prompts
+        try:
+            save_project_settings(Path(project_dir), project_settings)
+        except Exception as e:
+            write_log(f"Gagal menyimpan sinkronisasi cover prompt: {e}", level="warning")
     model_name = get_model_display_name(prompts)
 
     cover_dir = os.path.join(project_dir, "cover")

@@ -290,7 +290,7 @@ Pemakaian:
 - model `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
 - jika provider `ollama` dipilih, UI akan membaca model yang tersimpan di JSON lalu mencoba mengambil daftar model dari server `host:port`
 - jika model tersimpan tersedia, dropdown akan memilih model itu
-- jika model tersimpan tidak tersedia, dropdown dibiarkan kosong dan user harus memilih ulang
+- jika model tersimpan tidak tersedia, nilai tersimpan tetap ditampilkan sebagai opsi supaya konfigurasi lama tidak hilang
 - di UI, konfigurasi ini diubah lewat dialog `Konfigurasi Project` (bukan dialog server terpisah)
 
 ## Project CLI
@@ -889,7 +889,11 @@ Script: `scripts/generate_cover_image.py`
 
 Fungsi:
 - membaca konfigurasi cover dari `project_settings.json.cover`
-- prompt cover mengikuti aturan bilingual yang sama: UI menulis `id_new`, runtime memakai `en` atau menerjemahkan `id_new` saat perlu
+- saat tombol `Generate Cover` dijalankan, prompt cover disinkronkan dulu:
+  - jika `id_new != id_old`, runtime menyamakan `id_old = id_new`
+  - `en` diisi hasil translate dari `id_new`
+  - untuk ComfyUI, yang dikirim adalah nilai `en`
+- perilaku ini berlaku sama untuk `positive_prompt` dan `negative_prompt`
 - generate image cover sesuai model image (`ComfyUI` atau `Gemini`)
 - menyimpan hasil final sebagai `api_production/<project_name>/cover/cover.png`
 

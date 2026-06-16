@@ -28,7 +28,7 @@ from wan22_s2v.wan22_s2v import DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT
 from wan22_s2v.wan22_s2v import MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION
 from wan22_s2v.wan22_s2v import SIZE_OPTIONS as WAN22_S2V_SIZE_OPTIONS
 from wan22_s2v.wan22_s2v import get_audio_duration as get_wan22_s2v_audio_duration
-from flux2.flux2 import MODEL_FLUX2
+from flux2.flux2 import MODEL_FLUX2, MODEL_FLUX2_K9
 from z_image.z_image import IMAGE_MODEL_OPTIONS, MODEL_Z_IMAGE_TURBO
 from z_image.z_image import DEFAULT_PROMPT as DEFAULT_Z_IMAGE_PROMPT
 from z_image.z_image import SIZE_OPTIONS as Z_IMAGE_SIZES
@@ -58,7 +58,11 @@ from agentic.agentic_config import (
     load_agentic_config,
     save_agentic_config,
 )
-from prompt_localization import convert_prompt_payload_for_ui, prepare_prompt_payload_for_save, read_json_for_runtime
+from prompt_localization import (
+    convert_prompt_payload_for_ui,
+    prepare_prompt_payload_for_save,
+    read_json_for_runtime,
+)
 from prompt_localization import get_prompt_translator, update_generated_prompt_entry
 from logging_config import RunIdFilter, setup_logging
 
@@ -132,6 +136,282 @@ DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS = {
         {"positive_prompt": "", "negative_prompt": ""},
     ],
 }
+
+LORA_PREFIX_Z_IMAGE = "Z-IMAGE"
+LORA_PREFIX_FLUX2 = "FLUX.2"
+LORA_PREFIX_FLUX2_K9 = "FLUX.2.K9"
+LORA_PREFIX_WAN_HIGH = "WAN2.2/HIGH"
+LORA_PREFIX_WAN_LOW = "WAN2.2/LOW"
+
+_COMFYUI_LORA_OPTIONS_CACHE: dict[str, list[str]] = {}
+
+
+def _normalize_server_url(server: str) -> str:
+    server = str(server or "").strip()
+    if not server:
+        return ""
+    if not server.startswith(("http://", "https://")):
+        server = f"http://{server}"
+    return server.rstrip("/")
+
+
+def _normalize_lora_option_name(value: str) -> str:
+    name = str(value or "").strip().replace("\\", "/")
+    while "//" in name:
+        name = name.replace("//", "/")
+    if name.endswith("/"):
+        name = name[:-1]
+    return name
+
+
+def _normalize_lora_option_key(value: str) -> str:
+    return _normalize_lora_option_name(value).casefold()
+
+
+def _lora_basename(value: str) -> str:
+    name = _normalize_lora_option_name(value)
+    if not name:
+        return ""
+    return name.rsplit("/", 1)[-1].casefold()
+
+
+def _lora_stem_key(value: str) -> str:
+    name = _normalize_lora_option_name(value)
+    if not name:
+        return ""
+    filename = name.rsplit("/", 1)[-1]
+    if "." in filename:
+        filename = filename.rsplit(".", 1)[0]
+    return f"{name.rsplit('/', 1)[0]}/{filename}".casefold() if "/" in name else filename.casefold()
+
+
+def _dedupe_preserve_order(values) -> list[str]:
+    seen = set()
+    result = []
+    for value in values or []:
+        name = _normalize_lora_option_name(value)
+        key = _normalize_lora_option_key(name)
+        stem_key = _lora_stem_key(name)
+        if not name or key in seen or stem_key in seen:
+            continue
+        seen.add(key)
+        seen.add(stem_key)
+        result.append(name)
+    return result
+
+
+def _sort_lora_options(values: list[str]) -> list[str]:
+    return sorted(_dedupe_preserve_order(values), key=lambda item: item.casefold())
+
+
+def _extract_lora_options_from_object_info(payload: dict) -> list[str]:
+    names: list[str] = []
+    if not isinstance(payload, dict):
+        return names
+    for node in payload.values():
+        if not isinstance(node, dict):
+            continue
+        node_input = node.get("input")
+        if not isinstance(node_input, dict):
+            continue
+        for group_name in ("required", "optional"):
+            group = node_input.get(group_name)
+            if not isinstance(group, dict):
+                continue
+            for field_name, field_spec in group.items():
+                if not isinstance(field_name, str):
+                    continue
+                if "lora" not in field_name.lower():
+                    continue
+                if isinstance(field_spec, (list, tuple)) and field_spec:
+                    options = field_spec[0]
+                    if isinstance(options, list):
+                        names.extend(options)
+    return _sort_lora_options(names)
+
+
+def get_comfyui_lora_options(server: str, force_refresh: bool = False) -> list[str]:
+    normalized_server = _normalize_server_url(server)
+    if not normalized_server:
+        return []
+    if not force_refresh and normalized_server in _COMFYUI_LORA_OPTIONS_CACHE:
+        return list(_COMFYUI_LORA_OPTIONS_CACHE[normalized_server])
+    url = f"{normalized_server}/object_info"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        payload = response.json() if response.content else {}
+        options = _extract_lora_options_from_object_info(payload)
+    except Exception:
+        options = []
+    if options:
+        _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = list(options)
+    else:
+        _COMFYUI_LORA_OPTIONS_CACHE.pop(normalized_server, None)
+    return list(options)
+
+
+def get_lora_options_by_prefix(server: str, prefix: str, force_refresh: bool = False) -> list[str]:
+    prefix = _normalize_lora_option_name(prefix)
+    if not prefix:
+        return []
+    prefix_key = _normalize_lora_option_key(prefix)
+    options = get_comfyui_lora_options(server, force_refresh=force_refresh)
+    return _sort_lora_options(
+        [name for name in options if _normalize_lora_option_key(name).startswith(prefix_key)]
+    )
+
+
+def choose_lora_value(options: list[str], current_value: str = "", template_default: str = "") -> str:
+    normalized_options = _dedupe_preserve_order(options)
+    current_value = _normalize_lora_option_name(current_value)
+    template_default = _normalize_lora_option_name(template_default)
+    normalized_map = {_normalize_lora_option_key(option): option for option in normalized_options}
+    basename_map = {_lora_basename(option): option for option in normalized_options if _lora_basename(option)}
+    stem_map = {_lora_stem_key(option): option for option in normalized_options if _lora_stem_key(option)}
+
+    if current_value:
+        mapped_current = normalized_map.get(_normalize_lora_option_key(current_value))
+        if mapped_current:
+            return mapped_current
+        basename_current = _lora_basename(current_value)
+        if basename_current:
+            mapped_basename = basename_map.get(basename_current)
+            if mapped_basename:
+                return mapped_basename
+        stem_current = _lora_stem_key(current_value)
+        if stem_current:
+            mapped_stem = stem_map.get(stem_current)
+            if mapped_stem:
+                return mapped_stem
+
+    if current_value and current_value != template_default:
+        return current_value
+
+    if normalized_options:
+        return normalized_options[0]
+
+    return current_value
+
+
+def populate_lora_combo(
+    combo: QComboBox,
+    options: list[str],
+    *,
+    current_value: str = "",
+    template_default: str = "",
+    preserve_missing: bool = False,
+) -> str:
+    normalized_options = _dedupe_preserve_order(options)
+    current_value = _normalize_lora_option_name(current_value)
+    template_default = _normalize_lora_option_name(template_default)
+    normalized_map = {_normalize_lora_option_key(option): option for option in normalized_options}
+    basename_map = {_lora_basename(option): option for option in normalized_options if _lora_basename(option)}
+    stem_map = {_lora_stem_key(option): option for option in normalized_options if _lora_stem_key(option)}
+    current_key = _normalize_lora_option_key(current_value)
+    if current_value and current_key in normalized_map:
+        selected_value = normalized_map[current_key]
+    elif current_value and _lora_basename(current_value) in basename_map:
+        selected_value = basename_map[_lora_basename(current_value)]
+    elif current_value and _lora_stem_key(current_value) in stem_map:
+        selected_value = stem_map[_lora_stem_key(current_value)]
+    elif current_value and preserve_missing and current_value != template_default:
+        selected_value = current_value
+    elif normalized_options:
+        selected_value = normalized_options[0]
+    else:
+        selected_value = current_value
+
+    combo.blockSignals(True)
+    combo.clear()
+    for option in normalized_options:
+        combo.addItem(option, option)
+    selected_key = _normalize_lora_option_key(selected_value)
+    selected_stem = _lora_stem_key(selected_value)
+    if selected_value and selected_key not in normalized_map and selected_stem not in stem_map:
+        combo.addItem(selected_value, selected_value)
+    index = combo.findData(selected_value)
+    if index >= 0:
+        combo.setCurrentIndex(index)
+    elif normalized_options:
+        combo.setCurrentIndex(0)
+        selected_value = str(combo.currentData() or combo.currentText() or "").strip()
+    else:
+        combo.setCurrentIndex(-1)
+    combo.blockSignals(False)
+    return selected_value
+
+
+def _collect_scene_lora_defaults(server: str, z_prompt: dict, wan_t2v_prompt: dict, wan_prompt: dict):
+    z_prompt = copy.deepcopy(z_prompt or {})
+    wan_t2v_prompt = copy.deepcopy(wan_t2v_prompt or {})
+    wan_prompt = copy.deepcopy(wan_prompt or {})
+
+    z_model = str(z_prompt.get("image_model", MODEL_Z_IMAGE_TURBO)).strip().lower()
+    if z_model == MODEL_GEMINI_IMAGE:
+        z_prompt["lora_name"] = ""
+    elif z_model == MODEL_FLUX2_K9:
+        z_prompt["lora_name"] = choose_lora_value(
+            get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2_K9),
+            z_prompt.get("lora_name", ""),
+            str(z_prompt.get("lora_name", "")),
+        )
+    elif z_model == MODEL_FLUX2:
+        z_prompt["lora_name"] = choose_lora_value(
+            get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2),
+            z_prompt.get("lora_name", ""),
+            str(z_prompt.get("lora_name", "")),
+        )
+    else:
+        z_prompt["lora_name"] = choose_lora_value(
+            get_lora_options_by_prefix(server, LORA_PREFIX_Z_IMAGE),
+            z_prompt.get("lora_name", ""),
+            str(z_prompt.get("lora_name", "")),
+        )
+
+    wan_t2v_prompt["lora_high_name"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
+        wan_t2v_prompt.get("lora_high_name", ""),
+        DEFAULT_WAN22_T2V_PROMPT["lora_high_name"],
+    )
+    wan_t2v_prompt["lora_low_name"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
+        wan_t2v_prompt.get("lora_low_name", ""),
+        DEFAULT_WAN22_T2V_PROMPT["lora_low_name"],
+    )
+    wan_t2v_prompt["lora_high_name_2"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
+        wan_t2v_prompt.get("lora_high_name_2", ""),
+        DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"],
+    )
+    wan_t2v_prompt["lora_low_name_2"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
+        wan_t2v_prompt.get("lora_low_name_2", ""),
+        DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"],
+    )
+
+    wan_prompt["lora_high_name"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
+        wan_prompt.get("lora_high_name", ""),
+        DEFAULT_WAN_PROMPT["lora_high_name"],
+    )
+    wan_prompt["lora_low_name"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
+        wan_prompt.get("lora_low_name", ""),
+        DEFAULT_WAN_PROMPT["lora_low_name"],
+    )
+    wan_prompt["lora_high_name_2"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
+        wan_prompt.get("lora_high_name_2", ""),
+        DEFAULT_WAN_PROMPT["lora_high_name_2"],
+    )
+    wan_prompt["lora_low_name_2"] = choose_lora_value(
+        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
+        wan_prompt.get("lora_low_name_2", ""),
+        DEFAULT_WAN_PROMPT["lora_low_name_2"],
+    )
+
+    return z_prompt, wan_t2v_prompt, wan_prompt
 
 WAN22_T2V_SCENE_TYPE = "wan22_t2v_i2v"
 WAN22_T2V_BATCH_SCENE_TYPE = "wan22_t2v_batch"
@@ -413,6 +693,30 @@ def create_project_on_disk(
     initial_project_settings = copy.deepcopy(project_settings or DEFAULT_PROJECT_SETTINGS)
     if not isinstance(initial_project_settings.get("cover"), dict):
         initial_project_settings["cover"] = copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
+    cover_data = initial_project_settings.get("cover") if isinstance(initial_project_settings.get("cover"), dict) else {}
+    if isinstance(cover_data, dict):
+        comfyui_server = str(initial_project_settings.get("comfyui_server", DEFAULT_PROJECT_SETTINGS["comfyui_server"])).strip()
+        cover_model = str(cover_data.get("image_model", MODEL_Z_IMAGE_TURBO)).strip().lower()
+        if cover_model == MODEL_GEMINI_IMAGE:
+            cover_data["lora_name"] = ""
+        elif cover_model == MODEL_FLUX2_K9:
+            cover_data["lora_name"] = choose_lora_value(
+                get_lora_options_by_prefix(comfyui_server, LORA_PREFIX_FLUX2_K9),
+                cover_data.get("lora_name", ""),
+                str(cover_data.get("lora_name", "")),
+            )
+        elif cover_model == MODEL_FLUX2:
+            cover_data["lora_name"] = choose_lora_value(
+                get_lora_options_by_prefix(comfyui_server, LORA_PREFIX_FLUX2),
+                cover_data.get("lora_name", ""),
+                str(cover_data.get("lora_name", "")),
+            )
+        else:
+            cover_data["lora_name"] = choose_lora_value(
+                get_lora_options_by_prefix(comfyui_server, LORA_PREFIX_Z_IMAGE),
+                cover_data.get("lora_name", ""),
+                str(cover_data.get("lora_name", "")),
+            )
     saved_settings = save_project_settings_file(project_dir, initial_project_settings)
 
     if create_default_scene:
@@ -446,6 +750,17 @@ def create_scene_in_project(
     )
     meta["scene_description"] = str(scene_description or "").strip()
     meta["voice_text"] = str(voice_text or "").strip()
+    try:
+        project_settings = load_project_settings_file(project_dir)
+        comfyui_server = str(project_settings.get("comfyui_server", DEFAULT_PROJECT_SETTINGS["comfyui_server"])).strip()
+    except Exception:
+        comfyui_server = DEFAULT_PROJECT_SETTINGS["comfyui_server"]
+    z_prompt, wan_t2v_prompt, wan_prompt = _collect_scene_lora_defaults(
+        comfyui_server,
+        z_prompt,
+        wan_t2v_prompt,
+        wan_prompt,
+    )
     create_scene_files(
         new_dir,
         meta=meta,
@@ -972,6 +1287,7 @@ class ProjectSettingsDialog(QDialog):
         self,
         settings_data: dict,
         parent=None,
+        project_dir: str | Path | None = None,
         on_generate_cover=None,
         on_run_agentic_generate=None,
         on_run_agentic_execute=None,
@@ -985,6 +1301,8 @@ class ProjectSettingsDialog(QDialog):
         self.on_generate_cover = on_generate_cover
         self.on_run_agentic_generate = on_run_agentic_generate
         self.on_run_agentic_execute = on_run_agentic_execute
+        self.project_dir = Path(project_dir) if project_dir else None
+        self._existing_cover_data = copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
 
         self.description_input = QTextEdit(self)
         self.description_input.setMaximumHeight(90)
@@ -1041,7 +1359,8 @@ class ProjectSettingsDialog(QDialog):
         self.cover_use_random_seed_input = QCheckBox("Random Seed", self)
         self.cover_seed_input = QLineEdit(self)
         self.cover_use_lora_input = QCheckBox("Pakai Lora", self)
-        self.cover_lora_name_input = QLineEdit(self)
+        self.cover_lora_name_input = QComboBox(self)
+        self.cover_lora_name_input.setEditable(False)
         self.cover_lora_strength_input = QLineEdit(self)
         self.cover_positive_input = QTextEdit(self)
         self.cover_negative_input = QTextEdit(self)
@@ -1114,6 +1433,9 @@ class ProjectSettingsDialog(QDialog):
         self._update_cover_lora_enabled()
         self._update_cover_model_fields()
         self._update_prompt_generation_fields()
+        if str(self.prompt_provider_input.currentData() or "gemini").strip().lower() == "ollama":
+            self._refresh_ollama_models()
+        self._is_loading_project_settings = False
 
     def _set_model_combo_value(self, combo: QComboBox, value: str):
         value = str(value or "").strip()
@@ -1166,6 +1488,7 @@ class ProjectSettingsDialog(QDialog):
         self.caption_enabled_input.setChecked(bool(caption.get("generate_caption", True)))
 
         cover = data.get("cover", {}) if isinstance(data.get("cover"), dict) else {}
+        self._existing_cover_data = copy.deepcopy(cover)
         cover_model_key = get_z_image_model_key(cover)
         cover_model_index = self.cover_model_input.findData(cover_model_key)
         self.cover_model_input.setCurrentIndex(max(cover_model_index, 0))
@@ -1187,11 +1510,11 @@ class ProjectSettingsDialog(QDialog):
         self.cover_use_random_seed_input.setChecked(bool(cover.get("use_random_seed", True)))
         self.cover_seed_input.setText(str(cover.get("seed", 1)))
         self.cover_use_lora_input.setChecked(bool(cover.get("use_lora", False)))
-        self.cover_lora_name_input.setText(str(cover.get("lora_name", "")))
+        self._refresh_cover_lora_options(cover_model_key, str(cover.get("lora_name", "")), preserve_missing=True)
         self.cover_lora_strength_input.setText(str(cover.get("strength_model", 1.0)))
-        self.cover_positive_input.setPlainText(str(cover.get("positive_prompt", "")))
-        self.cover_negative_input.setPlainText(str(cover.get("negative_prompt", "")))
-        self._is_loading_project_settings = False
+        cover_ui = convert_prompt_payload_for_ui("project_settings_cover.json", cover)
+        self.cover_positive_input.setPlainText(str(cover_ui.get("positive_prompt", "")))
+        self.cover_negative_input.setPlainText(str(cover_ui.get("negative_prompt", "")))
         self._update_prompt_generation_fields()
 
     def _sync_cover_size_with_project_size(self):
@@ -1243,18 +1566,18 @@ class ProjectSettingsDialog(QDialog):
         self.prompt_model_input.clear()
         for name in normalized_models:
             self.prompt_model_input.addItem(name, name)
+        if target_value and self.prompt_model_input.findData(target_value) < 0:
+            self.prompt_model_input.addItem(target_value, target_value)
         self.prompt_model_input.blockSignals(False)
-        if normalized_models:
+        if self.prompt_model_input.count() > 0:
             index = self.prompt_model_input.findData(target_value)
-            if index >= 0:
-                self.prompt_model_input.setCurrentIndex(index)
-                self._pending_prompt_model_value = (
-                    str(self.prompt_model_input.currentData() or "").strip()
-                    or str(self.prompt_model_input.currentText() or "").strip()
-                )
-            else:
-                self.prompt_model_input.setCurrentIndex(-1)
-                self._pending_prompt_model_value = target_value
+            if index < 0:
+                index = 0
+            self.prompt_model_input.setCurrentIndex(index)
+            self._pending_prompt_model_value = (
+                str(self.prompt_model_input.currentData() or "").strip()
+                or str(self.prompt_model_input.currentText() or "").strip()
+            )
         else:
             self.prompt_model_input.setCurrentIndex(-1)
             self._pending_prompt_model_value = target_value
@@ -1312,6 +1635,38 @@ class ProjectSettingsDialog(QDialog):
         self.cover_lora_name_input.setEnabled(enabled)
         self.cover_lora_strength_input.setEnabled(enabled)
 
+    def _refresh_cover_lora_options(
+        self,
+        model_key: str | None = None,
+        current_value: str = "",
+        *,
+        preserve_missing: bool = False,
+    ):
+        model_key = str(model_key or self.cover_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+        server = str(self.comfyui_server_input.text().strip() or DEFAULT_PROJECT_SETTINGS["comfyui_server"])
+        if model_key == MODEL_GEMINI_IMAGE:
+            populate_lora_combo(
+                self.cover_lora_name_input,
+                [],
+                current_value=current_value,
+                template_default="",
+                preserve_missing=preserve_missing,
+            )
+            self.cover_lora_name_input.setEnabled(False)
+            return
+        if model_key == MODEL_FLUX2_K9:
+            options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2_K9)
+        elif model_key == MODEL_FLUX2:
+            options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2)
+        else:
+            options = get_lora_options_by_prefix(server, LORA_PREFIX_Z_IMAGE)
+        populate_lora_combo(
+            self.cover_lora_name_input,
+            options,
+            current_value=current_value,
+            preserve_missing=preserve_missing,
+        )
+
     def _update_cover_model_fields(self):
         model_key = str(self.cover_model_input.currentData() or MODEL_Z_IMAGE_TURBO)
         is_gemini = model_key == MODEL_GEMINI_IMAGE
@@ -1329,6 +1684,13 @@ class ProjectSettingsDialog(QDialog):
             self.cover_use_lora_input.setChecked(False)
             self.cover_use_random_seed_input.setChecked(True)
             self.cover_seed_input.setText("1")
+            self.cover_lora_name_input.setEnabled(False)
+        else:
+            self._refresh_cover_lora_options(
+                model_key,
+                self.cover_lora_name_input.currentText().strip(),
+                preserve_missing=bool(self._is_loading_project_settings),
+            )
         self._update_cover_seed_enabled()
         self._update_cover_lora_enabled()
 
@@ -1402,9 +1764,14 @@ class ProjectSettingsDialog(QDialog):
             "use_random_seed": cover_use_random_seed,
             "seed": cover_seed_val,
             "use_lora": cover_use_lora,
-            "lora_name": self.cover_lora_name_input.text().strip() if cover_use_lora else "",
+            "lora_name": self.cover_lora_name_input.currentText().strip() if cover_use_lora else "",
             "strength_model": cover_lora_strength,
         }
+        cover_data = prepare_prompt_payload_for_save(
+            "project_settings_cover.json",
+            cover_data,
+            existing_data=self._existing_cover_data,
+        )
         cover_data["json_api"] = get_z_image_template_name(cover_data)
         if not cover_data["positive_prompt"]:
             raise ValueError("Prompt positif cover wajib diisi.")
@@ -1639,7 +2006,8 @@ class SceneEditorWindow(QMainWindow):
         self.z_use_random_seed_input.setChecked(True)
         self.z_seed_input = QLineEdit()
         self.z_use_lora_input = QCheckBox("Pakai Lora")
-        self.z_lora_name_input = QLineEdit()
+        self.z_lora_name_input = QComboBox()
+        self.z_lora_name_input.setEditable(False)
         self.z_lora_strength_input = QLineEdit()
         for slot_index in range(3):
             positive_input = QTextEdit()
@@ -1663,24 +2031,32 @@ class SceneEditorWindow(QMainWindow):
         self.wan_size_input = QComboBox()
         for label, width, height in WAN_SIZE_OPTIONS:
             self.wan_size_input.addItem(label, (width, height))
-        self.wan_lora_high_name_input = QLineEdit()
+        self.wan_lora_high_name_input = QComboBox()
+        self.wan_lora_high_name_input.setEditable(False)
         self.wan_lora_high_strength_input = QLineEdit()
-        self.wan_lora_low_name_input = QLineEdit()
+        self.wan_lora_low_name_input = QComboBox()
+        self.wan_lora_low_name_input.setEditable(False)
         self.wan_lora_low_strength_input = QLineEdit()
-        self.wan_lora_high2_name_input = QLineEdit()
+        self.wan_lora_high2_name_input = QComboBox()
+        self.wan_lora_high2_name_input.setEditable(False)
         self.wan_lora_high2_strength_input = QLineEdit()
-        self.wan_lora_low2_name_input = QLineEdit()
+        self.wan_lora_low2_name_input = QComboBox()
+        self.wan_lora_low2_name_input.setEditable(False)
         self.wan_lora_low2_strength_input = QLineEdit()
         self.wan_t2v_size_input = QComboBox()
         for label, width, height in WAN_SIZE_OPTIONS:
             self.wan_t2v_size_input.addItem(label, (width, height))
-        self.wan_t2v_lora_high_name_input = QLineEdit()
+        self.wan_t2v_lora_high_name_input = QComboBox()
+        self.wan_t2v_lora_high_name_input.setEditable(False)
         self.wan_t2v_lora_high_strength_input = QLineEdit()
-        self.wan_t2v_lora_low_name_input = QLineEdit()
+        self.wan_t2v_lora_low_name_input = QComboBox()
+        self.wan_t2v_lora_low_name_input.setEditable(False)
         self.wan_t2v_lora_low_strength_input = QLineEdit()
-        self.wan_t2v_lora_high2_name_input = QLineEdit()
+        self.wan_t2v_lora_high2_name_input = QComboBox()
+        self.wan_t2v_lora_high2_name_input.setEditable(False)
         self.wan_t2v_lora_high2_strength_input = QLineEdit()
-        self.wan_t2v_lora_low2_name_input = QLineEdit()
+        self.wan_t2v_lora_low2_name_input = QComboBox()
+        self.wan_t2v_lora_low2_name_input.setEditable(False)
         self.wan_t2v_lora_low2_strength_input = QLineEdit()
         self.wan_t2v_positive_input = QTextEdit()
         self.wan_t2v_negative_input = QTextEdit()
@@ -1931,7 +2307,9 @@ class SceneEditorWindow(QMainWindow):
             *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
             self.agentic_special_command_input,
         ]:
-            widget.textChanged.connect(self.refresh_scene_status)
+            signal = getattr(widget, "textChanged", None) or getattr(widget, "currentTextChanged", None)
+            if signal is not None:
+                signal.connect(self.refresh_scene_status)
         self.z_use_lora_input.toggled.connect(self.update_lora_fields_enabled)
         self.z_use_random_seed_input.toggled.connect(self.update_seed_fields_enabled)
         self.z_model_input.currentIndexChanged.connect(self.update_image_model_fields_enabled)
@@ -2390,7 +2768,15 @@ class SceneEditorWindow(QMainWindow):
 
         add_button("Tambahkan adegan baru di akhir daftar.", QStyle.SP_FileDialogNewFolder, self.add_scene)
         add_button("Sisipkan adegan baru sebelum adegan yang sedang dipilih.", QStyle.SP_ArrowDown, self.insert_scene)
-        add_button("Gandakan adegan yang sedang dipilih dan sisipkan setelahnya.", QStyle.SP_FileDialogDetailedView, self.duplicate_scene)
+        duplicate_button = QToolButton(frame)
+        duplicate_icon = QIcon.fromTheme("edit-copy")
+        duplicate_button.setIcon(
+            duplicate_icon if not duplicate_icon.isNull() else self.style().standardIcon(QStyle.SP_FileIcon)
+        )
+        duplicate_button.setToolTip("Gandakan adegan yang sedang dipilih dan sisipkan setelahnya.")
+        duplicate_button.setStatusTip(duplicate_button.toolTip())
+        duplicate_button.clicked.connect(self.duplicate_scene)
+        layout.addWidget(duplicate_button)
         add_button("Hapus adegan yang sedang dipilih.", QStyle.SP_DialogCloseButton, self.delete_scene)
         add_button("Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
         add_button("Tambahkan file aset ke folder adegan yang sedang dipilih.", QStyle.SP_FileIcon, self.add_asset_to_scene)
@@ -2786,6 +3172,7 @@ class SceneEditorWindow(QMainWindow):
         dialog = ProjectSettingsDialog(
             current_settings,
             self,
+            project_dir=self.project_dir(),
             on_generate_cover=self.generate_cover_from_project_settings_dialog,
             on_run_agentic_generate=self.run_agentic_generate_from_project_settings_dialog,
             on_run_agentic_execute=self.run_agentic_execute_from_project_settings_dialog,
@@ -3166,6 +3553,100 @@ class SceneEditorWindow(QMainWindow):
         self.z_lora_name_input.setEnabled(enabled)
         self.z_lora_strength_input.setEnabled(enabled)
 
+    def _refresh_image_lora_options(
+        self,
+        model_key: str | None = None,
+        current_value: str = "",
+        *,
+        preserve_missing: bool = False,
+    ):
+        model_key = str(model_key or self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+        server = self.comfyui_server_address()
+        if model_key == MODEL_GEMINI_IMAGE:
+            populate_lora_combo(
+                self.z_lora_name_input,
+                [],
+                current_value=current_value,
+                template_default="",
+                preserve_missing=preserve_missing,
+            )
+            self.z_lora_name_input.setEnabled(False)
+            return
+        if model_key == MODEL_FLUX2_K9:
+            options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2_K9)
+        elif model_key == MODEL_FLUX2:
+            options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2)
+        else:
+            options = get_lora_options_by_prefix(server, LORA_PREFIX_Z_IMAGE)
+        populate_lora_combo(
+            self.z_lora_name_input,
+            options,
+            current_value=current_value,
+            preserve_missing=preserve_missing,
+        )
+
+    def _refresh_wan_lora_options(self, current_values: dict[str, str] | None = None, *, preserve_missing: bool = False):
+        current_values = current_values or {}
+        server = self.comfyui_server_address()
+        high_options = get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH)
+        low_options = get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW)
+        populate_lora_combo(
+            self.wan_lora_high_name_input,
+            high_options,
+            current_value=current_values.get("lora_high_name", ""),
+            template_default=DEFAULT_WAN_PROMPT["lora_high_name"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_lora_low_name_input,
+            low_options,
+            current_value=current_values.get("lora_low_name", ""),
+            template_default=DEFAULT_WAN_PROMPT["lora_low_name"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_lora_high2_name_input,
+            high_options,
+            current_value=current_values.get("lora_high_name_2", ""),
+            template_default=DEFAULT_WAN_PROMPT["lora_high_name_2"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_lora_low2_name_input,
+            low_options,
+            current_value=current_values.get("lora_low_name_2", ""),
+            template_default=DEFAULT_WAN_PROMPT["lora_low_name_2"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_t2v_lora_high_name_input,
+            high_options,
+            current_value=current_values.get("t2v_lora_high_name", ""),
+            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_high_name"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_t2v_lora_low_name_input,
+            low_options,
+            current_value=current_values.get("t2v_lora_low_name", ""),
+            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_low_name"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_t2v_lora_high2_name_input,
+            high_options,
+            current_value=current_values.get("t2v_lora_high_name_2", ""),
+            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
+            self.wan_t2v_lora_low2_name_input,
+            low_options,
+            current_value=current_values.get("t2v_lora_low_name_2", ""),
+            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"],
+            preserve_missing=preserve_missing,
+        )
+
     def update_seed_fields_enabled(self):
         self.z_seed_input.setEnabled(not self.z_use_random_seed_input.isChecked())
 
@@ -3194,6 +3675,11 @@ class SceneEditorWindow(QMainWindow):
         if is_gemini:
             self.z_use_random_seed_input.setChecked(True)
             self.z_seed_input.setText("1")
+        self._refresh_image_lora_options(
+            model_key,
+            self.z_lora_name_input.currentText().strip(),
+            preserve_missing=bool(self.loading_scene),
+        )
         self.update_seed_fields_enabled()
         self.update_lora_fields_enabled()
 
@@ -3430,7 +3916,7 @@ class SceneEditorWindow(QMainWindow):
             self.z_use_random_seed_input.setChecked(bool(z_prompt.get("use_random_seed", True)))
             self.z_seed_input.setText(str(z_prompt.get("seed", 1)))
             self.z_use_lora_input.setChecked(bool(z_prompt.get("use_lora", False)))
-            self.z_lora_name_input.setText(str(z_prompt.get("lora_name", "")))
+            self._refresh_image_lora_options(model_key, str(z_prompt.get("lora_name", "")), preserve_missing=True)
             self.z_lora_strength_input.setText(str(z_prompt.get("strength_model", 1.0)))
             self.update_image_model_fields_enabled()
             self.update_seed_fields_enabled()
@@ -3446,13 +3932,22 @@ class SceneEditorWindow(QMainWindow):
                     index = i
                     break
             self.wan_t2v_size_input.setCurrentIndex(max(index, 0))
-            self.wan_t2v_lora_high_name_input.setText(str(wan_t2v_prompt.get("lora_high_name", DEFAULT_WAN22_T2V_PROMPT["lora_high_name"])))
+            self._refresh_wan_lora_options(
+                {
+                    "t2v_lora_high_name": str(wan_t2v_prompt.get("lora_high_name", DEFAULT_WAN22_T2V_PROMPT["lora_high_name"])),
+                    "t2v_lora_low_name": str(wan_t2v_prompt.get("lora_low_name", DEFAULT_WAN22_T2V_PROMPT["lora_low_name"])),
+                    "t2v_lora_high_name_2": str(wan_t2v_prompt.get("lora_high_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"])),
+                    "t2v_lora_low_name_2": str(wan_t2v_prompt.get("lora_low_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"])),
+                    "lora_high_name": str(wan_prompt.get("lora_high_name", DEFAULT_WAN_PROMPT["lora_high_name"])),
+                    "lora_low_name": str(wan_prompt.get("lora_low_name", DEFAULT_WAN_PROMPT["lora_low_name"])),
+                    "lora_high_name_2": str(wan_prompt.get("lora_high_name_2", DEFAULT_WAN_PROMPT["lora_high_name_2"])),
+                    "lora_low_name_2": str(wan_prompt.get("lora_low_name_2", DEFAULT_WAN_PROMPT["lora_low_name_2"])),
+                },
+                preserve_missing=True,
+            )
             self.wan_t2v_lora_high_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength"])))
-            self.wan_t2v_lora_low_name_input.setText(str(wan_t2v_prompt.get("lora_low_name", DEFAULT_WAN22_T2V_PROMPT["lora_low_name"])))
             self.wan_t2v_lora_low_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength"])))
-            self.wan_t2v_lora_high2_name_input.setText(str(wan_t2v_prompt.get("lora_high_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"])))
             self.wan_t2v_lora_high2_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength_2"])))
-            self.wan_t2v_lora_low2_name_input.setText(str(wan_t2v_prompt.get("lora_low_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"])))
             self.wan_t2v_lora_low2_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength_2"])))
             self.wan_t2v_positive_input.setPlainText(str(wan_t2v_prompt.get("positive_prompt", "")))
             self.wan_t2v_negative_input.setPlainText(str(wan_t2v_prompt.get("negative_prompt", "")))
@@ -3465,13 +3960,9 @@ class SceneEditorWindow(QMainWindow):
                     index = i
                     break
             self.wan_size_input.setCurrentIndex(max(index, 0))
-            self.wan_lora_high_name_input.setText(str(wan_prompt.get("lora_high_name", DEFAULT_WAN_PROMPT["lora_high_name"])))
             self.wan_lora_high_strength_input.setText(str(wan_prompt.get("lora_high_strength", DEFAULT_WAN_PROMPT["lora_high_strength"])))
-            self.wan_lora_low_name_input.setText(str(wan_prompt.get("lora_low_name", DEFAULT_WAN_PROMPT["lora_low_name"])))
             self.wan_lora_low_strength_input.setText(str(wan_prompt.get("lora_low_strength", DEFAULT_WAN_PROMPT["lora_low_strength"])))
-            self.wan_lora_high2_name_input.setText(str(wan_prompt.get("lora_high_name_2", DEFAULT_WAN_PROMPT["lora_high_name_2"])))
             self.wan_lora_high2_strength_input.setText(str(wan_prompt.get("lora_high_strength_2", DEFAULT_WAN_PROMPT["lora_high_strength_2"])))
-            self.wan_lora_low2_name_input.setText(str(wan_prompt.get("lora_low_name_2", DEFAULT_WAN_PROMPT["lora_low_name_2"])))
             self.wan_lora_low2_strength_input.setText(str(wan_prompt.get("lora_low_strength_2", DEFAULT_WAN_PROMPT["lora_low_strength_2"])))
             self.update_wan_lora_fields_enabled()
             for key, widget in self.wan_prompt_inputs.items():
@@ -3621,7 +4112,7 @@ class SceneEditorWindow(QMainWindow):
             "use_random_seed": self.z_use_random_seed_input.isChecked(),
             "seed": self.parse_seed_value(),
             "use_lora": self.z_use_lora_input.isChecked(),
-            "lora_name": self.z_lora_name_input.text().strip(),
+            "lora_name": self.z_lora_name_input.currentText().strip(),
             "strength_model": self.parse_lora_strength_value(),
         }
         z_prompt["json_api"] = get_z_image_template_name(z_prompt)
@@ -3630,25 +4121,25 @@ class SceneEditorWindow(QMainWindow):
             "height": int((self.wan_t2v_size_input.currentData() or (368, 640))[1]),
             "positive_prompt": self.wan_t2v_positive_input.toPlainText().strip(),
             "negative_prompt": self.wan_t2v_negative_input.toPlainText().strip(),
-            "lora_high_name": self.wan_t2v_lora_high_name_input.text().strip(),
+            "lora_high_name": self.wan_t2v_lora_high_name_input.currentText().strip(),
             "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high_strength_input, "High 1"),
-            "lora_low_name": self.wan_t2v_lora_low_name_input.text().strip(),
+            "lora_low_name": self.wan_t2v_lora_low_name_input.currentText().strip(),
             "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low_strength_input, "Low 1"),
-            "lora_high_name_2": self.wan_t2v_lora_high2_name_input.text().strip(),
+            "lora_high_name_2": self.wan_t2v_lora_high2_name_input.currentText().strip(),
             "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high2_strength_input, "High 2"),
-            "lora_low_name_2": self.wan_t2v_lora_low2_name_input.text().strip(),
+            "lora_low_name_2": self.wan_t2v_lora_low2_name_input.currentText().strip(),
             "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low2_strength_input, "Low 2"),
         }
         wan_prompt = {
             "width": int((self.wan_size_input.currentData() or (368, 640))[0]),
             "height": int((self.wan_size_input.currentData() or (368, 640))[1]),
-            "lora_high_name": self.wan_lora_high_name_input.text().strip(),
+            "lora_high_name": self.wan_lora_high_name_input.currentText().strip(),
             "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_lora_high_strength_input, "High 1"),
-            "lora_low_name": self.wan_lora_low_name_input.text().strip(),
+            "lora_low_name": self.wan_lora_low_name_input.currentText().strip(),
             "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_lora_low_strength_input, "Low 1"),
-            "lora_high_name_2": self.wan_lora_high2_name_input.text().strip(),
+            "lora_high_name_2": self.wan_lora_high2_name_input.currentText().strip(),
             "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_high2_strength_input, "High 2"),
-            "lora_low_name_2": self.wan_lora_low2_name_input.text().strip(),
+            "lora_low_name_2": self.wan_lora_low2_name_input.currentText().strip(),
             "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_low2_strength_input, "Low 2"),
         }
         for key, widget in self.wan_prompt_inputs.items():
