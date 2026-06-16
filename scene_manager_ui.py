@@ -5009,6 +5009,8 @@ class SceneEditorWindow(QMainWindow):
         project_dir = self.project_dir()
         if project_dir is None:
             return None, "Belum ada project yang dibuka."
+        codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+        imagegen_skill_path = codex_home / "skills" / ".system" / "imagegen" / "SKILL.md"
 
         if image_path:
             prompt_text = (
@@ -5019,7 +5021,7 @@ class SceneEditorWindow(QMainWindow):
             )
         else:
             prompt_text = (
-                f"[$imagegen](C:\\Users\\brainer94\\.codex\\skills\\.system\\imagegen\\SKILL.md) {positive_prompt}. "
+                f"[$imagegen]({imagegen_skill_path}) {positive_prompt}. "
                 f"Ukuran gambar {size_label}.\n\n"
                 f"Kemudian kopikan hasil image yang dibuat direktori project {project_dir.resolve()} "
                 f"dalam scene {self.current_scene_dir.name}. Jangan lupa scale ke ukuran diminta tanpa strecth."

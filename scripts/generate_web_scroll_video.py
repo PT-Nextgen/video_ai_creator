@@ -236,9 +236,10 @@ def generate_web_scroll_video(scene_dir, url, width, height, duration_seconds, s
         from playwright.sync_api import sync_playwright
     except Exception as e:
         raise RuntimeError(
-            "Playwright belum terpasang di environment aktif. Install dulu dengan: "
-            '".\\.venv\\Scripts\\python.exe -m pip install playwright" lalu '
-            '".\\.venv\\Scripts\\python.exe -m playwright install chromium"'
+            "Playwright belum terpasang di environment aktif. Install dengan:\n"
+            "  python -m pip install playwright\n"
+            "  python -m playwright install chromium\n"
+            "Jika memakai virtualenv, jalankan perintah itu dari environment Python yang aktif."
         ) from e
 
     output_name = f"web_scroll_{int(datetime.utcnow().timestamp())}.mp4"
