@@ -161,7 +161,7 @@
   },
   "83": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "lora_name": "WAN2.2/HIGH/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
       "strength_model": 1.0,
       "model": [
         "118",
@@ -175,7 +175,7 @@
   },
   "85": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+      "lora_name": "WAN2.2/LOW/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
       "strength_model": 1.0,
       "model": [
         "117",
@@ -228,7 +228,7 @@
   },
   "114": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "lora_name": "WAN2.2/HIGH/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
       "strength_model": 0,
       "model": [
         "83",
@@ -242,7 +242,7 @@
   },
   "115": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+      "lora_name": "WAN2.2/LOW/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
       "strength_model": 0,
       "model": [
         "85",
@@ -300,7 +300,7 @@
   },
   "133": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "lora_name": "WAN2.2/HIGH/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
       "strength_model": 0,
       "model": [
         "114",
@@ -314,7 +314,7 @@
   },
   "134": {
     "inputs": {
-      "lora_name": "WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+      "lora_name": "WAN2.2/LOW/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
       "strength_model": 0,
       "model": [
         "115",

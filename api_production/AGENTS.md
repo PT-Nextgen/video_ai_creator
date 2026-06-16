@@ -1,41 +1,79 @@
-# Pembuatan video dengan menggunakan Agent AI
+# CLI untuk Project dan Scene
 
-## Penjelasan umum
-1. Agent digunakan untuk membuat variasi prompt 
-2. Prompt yang divariasikan adalah prompt untuk gambar awal dan prompt untuk pembuatan video
-3. Agent akan diberikan perintah spesifik untuk memulai variasi ini
+Dokumen ini menjelaskan cara memakai CLI untuk membuat project baru dan menambahkan scene baru di `api_production`.
 
-## Alur agent bekerja
-1. Agent tidak bekerja dari nol
-2. Project pembuatan video sudah dibuatkan terlebih dahulu dengan konfigurasi lengkap
-3. Agent membuat variasi prompt untuk setiap scene sesuai dengan perintah yang diberikan
-4. Agent tidak boleh pakai script untuk generate dan membuat variasi scene, gunakan cara agentic 
-5. Hasil image atau video tidak perlu direname atau digandakan karena akan membuat banyak file-file duplikasi dalam folder scene
+## 1. Membuat Project
 
-## Isi perintah ke Agent
-1. Agent akan diberitahu project apa saja yang harus diproses
-2. Agent akan diberitahu berapa variasi yang dibutuhkan untuk setiap scene pada setiap project
-3. Agent akan diberikan panduan khusus per project
-4. Agent akan diberikan panduan khusus per scene per project
+Gunakan script:
 
-## Referensi panduan untuk agent (lakukan secara berurutan)
-1. Lihat isi folder `AGENT-SKILLS`
-2. Baca `SCENE-GENERAL.md`
-3. Baca `SCENE-WAN22-T2V-I2V.md`, `SCENE-WAN22-I2V.md`, `SCENE-WAN22-S2V.md`, `SCENE-I2V.md`, `SCENE-IMAGE-PAN.md` dan `SCENE-IMAGE-ZOOM.md` dan baca juga file .md referensi pada setiap file tersebut
-4. Pahami semua file panduan (file .md) yang diberikan
-5. Jangan membuat eksekusi yang tidak sesuai dengan panduan (file .md) yang diberikan
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project <nama_project>
+```
 
-## Proses teknis per project 
-1. Proses setiap scene per project secara berurutan
-2. Proses setiap scene mulai dari pembuatan gambar sampai video akhir
-3. Setelah selesai kopikan semua isi folder scene ke dalam direktori variasi<nomor_variasi> di dalam folder scene, buat foldernya apabila belum ada
-4. `nomor_variasi` harus berurutan 
-5. Hapus file .mp4 dan .png dalam folder root scene
-6. Ulang lagi proses scene sesuai dengan jumlah variasi yang diberikan
-7. Apabila satu scene sudah selesai semua variasinya, maka lanjutkan ke scene berikutnya
-8. Apabila satu project sudah selesai semua scenenya divariasikan, maka lanjutkan ke project berikut
+Contoh:
 
-## Larangan untuk Agent
-1. Agent dilarang untuk menganalisa source code python, karena akan menghabiskan token dan akan memperlama proses pengerjaan
-2. Untuk membuat gambar dan membuat video, gunakan CLI yang sudah dijelaskan pada panduan 
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project
+```
 
+Opsi yang umum dipakai:
+
+- `--description` untuk deskripsi project
+- `--width` dan `--height` untuk ukuran video
+- `--comfyui-server` untuk alamat server ComfyUI
+- `--prompt-generation-provider` untuk provider prompt generation (`gemini` atau `ollama`)
+- `--prompt-generation-model` untuk model prompt generation
+- `--prompt-generation-host` dan `--prompt-generation-port` untuk konfigurasi Ollama
+- `--voice-provider` untuk provider voice default (`gemini` atau `elevenlabs`)
+- `--generate-caption` untuk aktif atau nonaktifkan caption otomatis
+- `--with-default-scene` untuk langsung membuat `scene_1` saat project dibuat
+
+Contoh project dengan konfigurasi lengkap:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider ollama --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 11434 --voice-provider gemini --generate-caption true
+```
+
+## 2. Membuat Scene
+
+Gunakan script:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project <nama_project> --scene-type <tipe_scene>
+```
+
+Contoh:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet." --duration 10
+```
+
+Argumen yang umum dipakai:
+
+- `--project` untuk nama project di `api_production`
+- `--scene-type` untuk tipe scene
+- `--title` untuk judul scene
+- `--scene-description` untuk deskripsi scene
+- `--voice-text` untuk naskah suara
+- `--duration` untuk durasi scene dalam detik
+
+Tipe scene yang didukung:
+
+- `wan22_i2v`
+- `wan22_t2v_i2v`
+- `wan22_t2v_batch`
+- `wan22_s2v`
+- `i2v`
+- `web_scroll`
+- `image_pan`
+- `image_zoom`
+
+Contoh tambahan:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat." --duration 15
+```
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type image_zoom --title "Zoom Intro" --scene-description "Close-up magnet merah biru." --voice-text "Halo teman-teman! Hari ini kita belajar magnet." --duration 10
+```
