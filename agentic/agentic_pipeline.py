@@ -20,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 import re
+from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -35,6 +36,7 @@ from agentic.agentic_llm import expected_output_files, generate_variations
 
 VARIATION_DIR_PATTERN = re.compile(r"^variasi_?\d+$", re.IGNORECASE)
 STATUS_DONE_FILENAME = "status.done"
+VARIATION_FAIL_FILENAME = "variasi_gagal.txt"
 
 
 def _run_script(script_path: Path, args: list[str], cwd: Path | None = None) -> bool:
@@ -113,6 +115,41 @@ def _copy_scene_baseline_files(src: Path, dst: Path) -> bool:
         return True
     except Exception as e:
         write_log(f"[agentic] Copy baseline error {src} -> {dst}: {e}", level="error")
+        return False
+
+
+def _extract_numeric_suffix(name: str) -> int | None:
+    match = re.search(r"(\d+)$", str(name).strip())
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _record_variation_failure(project_dir: Path, scene_dir: Path, variation_dir: Path, message: str) -> bool:
+    """Append a failure record to project-root variasi_gagal.txt."""
+    project_dir = Path(project_dir)
+    scene_dir = Path(scene_dir)
+    variation_dir = Path(variation_dir)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    scene_number = _extract_numeric_suffix(scene_dir.name)
+    variation_number = _extract_numeric_suffix(variation_dir.name)
+    fail_path = project_dir / VARIATION_FAIL_FILENAME
+    line = (
+        f"[{timestamp}] scene={scene_dir.name}"
+        + (f" (no {scene_number})" if scene_number is not None else "")
+        + f", variasi={variation_dir.name}"
+        + (f" (no {variation_number})" if variation_number is not None else "")
+        + f" - {message}\n"
+    )
+    try:
+        with fail_path.open("a", encoding="utf-8") as f:
+            f.write(line)
+        return True
+    except Exception as e:
+        write_log(f"[agentic] Gagal tulis {fail_path.name}: {e}", level="error")
         return False
 
 
@@ -403,6 +440,12 @@ def generate_variation_configs_for_scene(
         if not variations:
             skipped_count += 1
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal generate, skip", level="warning")
+            _record_variation_failure(
+                scene_dir.parent,
+                scene_dir,
+                variation_dir,
+                "LLM gagal membuat variasi prompt setelah 3 percobaan.",
+            )
             continue
         if not _write_variation_payloads(variation_dir, variations, allowed_output_files):
             return False

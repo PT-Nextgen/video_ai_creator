@@ -268,14 +268,6 @@ def _collect_existing_variation_payloads(
     max_variation_index: int | None = None,
 ) -> list[tuple[str, dict[str, dict]]]:
     collected: list[tuple[str, dict[str, dict]]] = []
-    root_payloads: dict[str, dict] = {}
-    for filename in output_files:
-        payload = _normalize_schema_template(filename, _read_json_file(scene_dir / filename))
-        if isinstance(payload, dict):
-            root_payloads[filename] = payload
-    if root_payloads:
-        collected.append(("root_scene", root_payloads))
-
     for variation_dir in _existing_variation_dirs(scene_dir):
         digits_match = re.search(r"(\d+)$", variation_dir.name.strip())
         variation_index = int(digits_match.group(1)) if digits_match else 999999
@@ -801,8 +793,8 @@ def build_agentic_prompt(
     lines.append("=" * 60)
     if existing_variations:
         lines.append(
-            "Berikut adalah isi JSON dari root scene dan variasi yang sudah dibuat sebelumnya. "
-            "Gunakan semuanya sebagai pembanding agar variasi baru TIDAK SAMA dengan root scene maupun variasi yang sudah ada."
+            "Berikut adalah isi JSON dari variasi yang sudah dibuat sebelumnya. "
+            "Gunakan semuanya sebagai pembanding agar variasi baru TIDAK SAMA dengan variasi yang sudah ada."
         )
         for variation_name, payloads in existing_variations:
             lines.append(f"\n--- {variation_name} ---")

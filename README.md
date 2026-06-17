@@ -638,7 +638,8 @@ Agentic dipakai untuk membuat dan menjalankan variasi per scene dalam dua tahap:
      - file JSON/template input
      - file `.md` referensi
      - untuk `wan22_t2v_batch`, referensi markdown yang ditempel adalah `SCENE-GENERAL.md`, `SCENE-WAN22-T2V-BATCH.md`, `TEXT-TO-VIDEO-BATCH.md`, dan `TEXT-TO-VIDEO-PROMPT.md`
-     - isi JSON root scene dan variasi yang sudah ada sebagai referensi anti-duplikasi
+     - isi JSON dari variasi yang sudah ada sebagai referensi anti-duplikasi
+   - jika LLM gagal membuat variasi prompt setelah 3 percobaan, catatan akan ditulis ke `variasi_gagal.txt` di root project berisi nama scene dan variasi
    - pada section input JSON dan schema output, field prompt ditampilkan sebagai string kosong `""` agar LLM jelas mengisi bagian itu saja
    - output JSON divalidasi ketat:
      - struktur harus sama dengan input
