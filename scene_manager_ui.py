@@ -816,6 +816,25 @@ def copy_scene_contents_to_root(src: Path, dst: Path):
             shutil.copy2(item, target)
 
 
+def copy_latest_video_to_root(src: Path, dst: Path):
+    dst.mkdir(parents=True, exist_ok=True)
+    videos = [
+        item for item in src.iterdir()
+        if item.is_file() and item.suffix.lower() in VIDEO_EXTS
+    ]
+    if not videos:
+        raise FileNotFoundError(f"Tidak ada file video di folder variasi: {src.name}")
+    videos.sort(key=lambda p: (p.stat().st_mtime, p.name.lower()))
+    latest_video = videos[-1]
+
+    for item in list(dst.iterdir()):
+        if item.is_file() and item.suffix.lower() in VIDEO_EXTS:
+            item.unlink()
+
+    shutil.copy2(latest_video, dst / latest_video.name)
+    return latest_video
+
+
 def find_latest_asset(scene_dir: Path, exts: set[str]):
     if not scene_dir.exists():
         return None
@@ -2802,7 +2821,7 @@ class SceneEditorWindow(QMainWindow):
 
         self.copy_variation_to_root_button = QToolButton(frame)
         self.copy_variation_to_root_button.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
-        self.copy_variation_to_root_button.setToolTip("Kopikan isi folder variasi yang dipilih ke root scene untuk diproses combine all.")
+        self.copy_variation_to_root_button.setToolTip("Kopikan video terbaru dari folder variasi terpilih ke root scene.")
         self.copy_variation_to_root_button.setStatusTip(self.copy_variation_to_root_button.toolTip())
         self.copy_variation_to_root_button.setEnabled(False)
         self.copy_variation_to_root_button.clicked.connect(self.copy_selected_variation_to_root)
@@ -2924,8 +2943,8 @@ class SceneEditorWindow(QMainWindow):
             self,
             "Kopikan Variasi ke Root",
             (
-                f"Isi root scene {self.current_scene_dir.name} akan diganti dengan isi {variation_dir.name}.\n\n"
-                "Folder variasi tidak akan dihapus. Lanjutkan?"
+                f"Root scene {self.current_scene_dir.name} akan menerima video terbaru dari {variation_dir.name}.\n\n"
+                "Video root lama akan dihapus, folder variasi tidak akan dihapus. Lanjutkan?"
             ),
             QMessageBox.Yes | QMessageBox.No,
         )
@@ -2934,8 +2953,7 @@ class SceneEditorWindow(QMainWindow):
 
         try:
             self.release_media_locks()
-            clear_scene_root_contents(self.current_scene_dir)
-            copy_scene_contents_to_root(variation_dir, self.current_scene_dir)
+            latest_video = copy_latest_video_to_root(variation_dir, self.current_scene_dir)
         except Exception as e:
             QMessageBox.critical(self, "Gagal Copy Variasi", f"Gagal menyalin variasi ke root:\n{e}")
             return
@@ -2945,7 +2963,7 @@ class SceneEditorWindow(QMainWindow):
         self._apply_scene_view_mode()
         self.load_scene(self.current_scene_dir, root_scene_dir=self.current_scene_dir)
         self.statusBar().showMessage(
-            f"Isi {variation_dir.name} dikopikan ke root scene {self.current_scene_dir.name}.",
+            f"Video terbaru {latest_video.name} dari {variation_dir.name} dikopikan ke root scene {self.current_scene_dir.name}.",
             5000,
         )
 

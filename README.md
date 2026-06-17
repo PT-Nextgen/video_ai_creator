@@ -474,9 +474,9 @@ Fungsi utama:
 - tab `Image Edit` untuk edit gambar berbasis prompt
 - tab `Web Search` untuk mencari gambar referensi dari web dan menyimpannya langsung ke folder scene aktif
 - dropdown `Variasi` di toolbar untuk melihat isi `variasiN` secara read-only
-- tombol di sebelah dropdown `Variasi` untuk mengkopikan isi variasi terpilih ke root scene
-  - dipakai saat ingin memakai satu variasi tertentu sebagai isi root sebelum proses `combine all`
-  - file `status.done` tidak ikut disalin ke root
+- tombol di sebelah dropdown `Variasi` untuk mengkopikan video terbaru dari variasi terpilih ke root scene
+  - dipakai saat ingin memakai satu hasil video terbaru sebagai isi root sebelum proses `combine all`
+  - file video root lama akan dihapus, folder variasi tetap dipertahankan
   - folder `variasi*` tetap dipertahankan
 - saat pindah scene, tampilan otomatis kembali ke `Root Scene`
 - untuk voice, tersedia field:
