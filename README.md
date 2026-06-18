@@ -466,6 +466,7 @@ Fungsi utama:
 - menampilkan daftar scene dari project aktif
 - drag-and-drop untuk reorder scene
 - tambah, sisipkan, dan hapus scene
+- grup toolbar `Edit Prompt` untuk append prompt massal ke semua scene dan semua variasi dalam project aktif
 - edit metadata scene
 - edit prompt image
 - tab `Prompt Tambahan` untuk 3 prompt image tambahan berbasis aturan `Gambar Awal`
@@ -521,6 +522,7 @@ Perilaku UI:
 - hasil generate cover disimpan ke `api_production/<project_name>/cover/cover.png`
 - `Status Adegan` menampilkan masalah validasi scene aktif
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
+- tombol `Clear VRAM` tersedia di dialog `Konfigurasi Project`
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_text` diisi
 - pilihan suara scene tersedia di metadata scene melalui `voice_character`
@@ -612,6 +614,13 @@ Perilaku UI:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
     - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
+- dialog `Edit Prompt` menyediakan 5 group append dengan tombol `Jalankan` terpisah:
+  - append positive `wan22_t2v`
+  - append negative `wan22_t2v`
+  - append positive `wan22_i2v`
+  - append negative `wan22_i2v`
+  - append positive `image`
+  - setiap aksi menerjemahkan teks tambahan sekali di awal untuk mengisi `en`, lalu menambahkan kalimat itu di awal prompt yang relevan pada semua `scene_*` dan semua folder `variasi*`
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup
@@ -688,12 +697,11 @@ Cleanup VRAM dijalankan otomatis setelah proses yang berhasil selesai:
 - setelah generate gambar awal
 - setelah generate image edit
 - setelah generate cover
-- setelah scene selesai diproses lewat `main.py`
 
 File workflow yang dikirim ke ComfyUI:
 - `api_template/vram-cleaner-api.json`
 
-Di UI juga tersedia tombol manual `Clear VRAM` pada toolbar untuk mengirim workflow ini secara langsung ke ComfyUI aktif.
+Di UI tersedia tombol manual `Clear VRAM` di dialog `Konfigurasi Project` untuk mengirim workflow ini secara langsung ke ComfyUI aktif.
 
 ## Image Models
 

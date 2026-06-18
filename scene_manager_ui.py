@@ -60,6 +60,7 @@ from agentic.agentic_config import (
 )
 from prompt_localization import (
     convert_prompt_payload_for_ui,
+    _normalize_prompt_entry,
     prepare_prompt_payload_for_save,
     read_json_for_runtime,
 )
@@ -417,6 +418,81 @@ WAN22_T2V_SCENE_TYPE = "wan22_t2v_i2v"
 WAN22_T2V_BATCH_SCENE_TYPE = "wan22_t2v_batch"
 DEFAULT_DURATION_OPTIONS = [5, 10]
 WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
+PROMPT_APPEND_OPERATIONS = {
+    "wan22_t2v_positive": {
+        "title": "Append prompt positive wan22_t2v",
+        "targets": [
+            {
+                "filename": "wan22_t2v_prompt.json",
+                "mode": "top_level",
+                "keys": ["positive_prompt"],
+                "default": DEFAULT_WAN22_T2V_PROMPT,
+            },
+            {
+                "filename": "wan22_t2v_batch_extra_prompts.json",
+                "mode": "groups",
+                "keys": ["positive_prompt"],
+                "default": DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
+            },
+        ],
+    },
+    "wan22_t2v_negative": {
+        "title": "Append prompt negative wan22_t2v",
+        "targets": [
+            {
+                "filename": "wan22_t2v_prompt.json",
+                "mode": "top_level",
+                "keys": ["negative_prompt"],
+                "default": DEFAULT_WAN22_T2V_PROMPT,
+            },
+            {
+                "filename": "wan22_t2v_batch_extra_prompts.json",
+                "mode": "groups",
+                "keys": ["negative_prompt"],
+                "default": DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
+            },
+        ],
+    },
+    "wan22_i2v_positive": {
+        "title": "Append prompt positive wan22_i2v",
+        "targets": [
+            {
+                "filename": "wan22_i2v_prompt.json",
+                "mode": "top_level",
+                "keys": ["positive_prompt_one", "positive_prompt_two"],
+                "default": DEFAULT_WAN_PROMPT,
+            },
+        ],
+    },
+    "wan22_i2v_negative": {
+        "title": "Append prompt negative wan22_i2v",
+        "targets": [
+            {
+                "filename": "wan22_i2v_prompt.json",
+                "mode": "top_level",
+                "keys": ["negative_prompt_one", "negative_prompt_two"],
+                "default": DEFAULT_WAN_PROMPT,
+            },
+        ],
+    },
+    "image_positive": {
+        "title": "Append prompt positive image",
+        "targets": [
+            {
+                "filename": "z_image_prompt.json",
+                "mode": "top_level",
+                "keys": ["positive_prompt"],
+                "default": DEFAULT_Z_IMAGE_PROMPT,
+            },
+            {
+                "filename": "z_image_extra_prompts.json",
+                "mode": "groups",
+                "keys": ["positive_prompt"],
+                "default": DEFAULT_Z_IMAGE_EXTRA_PROMPTS,
+            },
+        ],
+    },
+}
 
 
 def duration_options_for_scene_type(scene_type: str) -> list[int]:
@@ -426,6 +502,98 @@ def duration_options_for_scene_type(scene_type: str) -> list[int]:
     if scene_type == WAN22_T2V_BATCH_SCENE_TYPE:
         return [5, 10]
     return list(DEFAULT_DURATION_OPTIONS)
+
+
+def _prompt_target_dirs_for_scene(scene_dir: Path | None) -> list[Path]:
+    if scene_dir is None or not scene_dir.exists() or not scene_dir.is_dir():
+        return []
+    targets = [scene_dir]
+    variations = []
+    for child in scene_dir.iterdir():
+        if child.is_dir() and child.name.lower().startswith("variasi"):
+            variations.append(child)
+    targets.extend(
+        sorted(variations, key=lambda p: int("".join(ch for ch in p.name if ch.isdigit()) or "999999"))
+    )
+    return targets
+
+
+def _prepend_prompt_text(prefix_text: str, base_text: str) -> str:
+    prefix_text = str(prefix_text or "").strip()
+    base_text = str(base_text or "").strip()
+    if not prefix_text:
+        return base_text
+    if not base_text:
+        return prefix_text
+    return f"{prefix_text}, {base_text}"
+
+
+def _prepend_prompt_entry(existing_value, prefix_id: str, prefix_en: str) -> dict:
+    existing = _normalize_prompt_entry(existing_value)
+    base_id = existing.id_new or existing.id_old
+    base_en = existing.en or base_id
+    combined_id = _prepend_prompt_text(prefix_id, base_id)
+    combined_en = _prepend_prompt_text(prefix_en, base_en)
+    return {
+        "id_old": combined_id,
+        "id_new": combined_id,
+        "en": combined_en,
+    }
+
+
+def _load_json_raw(path: Path, default: dict) -> dict:
+    if not path.exists():
+        return copy.deepcopy(default)
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        return copy.deepcopy(default)
+    return copy.deepcopy(data)
+
+
+def _append_prompts_in_file(
+    path: Path,
+    *,
+    mode: str,
+    keys: list[str],
+    default: dict,
+    append_id: str,
+    append_en: str,
+) -> tuple[bool, int]:
+    if not path.exists():
+        return False, 0
+    data = _load_json_raw(path, default)
+    changed = False
+    updated_prompts = 0
+
+    if mode == "top_level":
+        for key in keys:
+            existing_value = data.get(key)
+            new_value = _prepend_prompt_entry(existing_value, append_id, append_en)
+            if new_value != existing_value:
+                data[key] = new_value
+                changed = True
+                updated_prompts += 1
+    elif mode == "groups":
+        groups = data.get("groups")
+        if not isinstance(groups, list):
+            groups = []
+        new_groups = []
+        for item in groups:
+            group_item = dict(item) if isinstance(item, dict) else {}
+            for key in keys:
+                existing_value = group_item.get(key)
+                new_value = _prepend_prompt_entry(existing_value, append_id, append_en)
+                if new_value != existing_value:
+                    group_item[key] = new_value
+                    changed = True
+                    updated_prompts += 1
+            new_groups.append(group_item)
+        data["groups"] = new_groups
+
+    if changed:
+        write_json(path, data)
+    return changed, updated_prompts
 
 
 def populate_duration_combo(combo: QComboBox, scene_type: str, selected_value: int | None = None):
@@ -1301,6 +1469,58 @@ class ComposeMusicDialog(QDialog):
         return str(self.music_combo.currentData() or "").strip(), float(self.volume_input.value())
 
 
+class ProjectPromptAppendDialog(QDialog):
+    def __init__(self, parent=None, on_run=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Prompt")
+        self.resize(760, 620)
+        self.setMinimumSize(680, 520)
+        self.on_run = on_run
+        self.inputs: dict[str, QPlainTextEdit] = {}
+
+        root_layout = QVBoxLayout(self)
+        info_label = QLabel(
+            "Tambahan prompt akan diterapkan ke semua scene dan semua folder variasi pada project aktif.",
+            self,
+        )
+        info_label.setWordWrap(True)
+        root_layout.addWidget(info_label)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+
+        for operation_key, config in PROMPT_APPEND_OPERATIONS.items():
+            group = QGroupBox(str(config.get("title", operation_key)), container)
+            form = QFormLayout(group)
+            input_widget = QPlainTextEdit(group)
+            input_widget.setPlaceholderText("Masukkan kalimat tambahan dalam Bahasa Indonesia...")
+            input_widget.setFixedHeight(88)
+            self.inputs[operation_key] = input_widget
+            run_button = QToolButton(group)
+            run_button.setText("Jalankan")
+            run_button.clicked.connect(
+                lambda _checked=False, key=operation_key: self._handle_run_clicked(key)
+            )
+            form.addRow("Teks Tambahan", input_widget)
+            form.addRow("", run_button)
+            container_layout.addWidget(group)
+
+        container_layout.addStretch(1)
+        scroll.setWidget(container)
+        root_layout.addWidget(scroll, 1)
+
+    def _handle_run_clicked(self, operation_key: str):
+        callback = self.on_run
+        if callback is None:
+            return
+        input_widget = self.inputs.get(operation_key)
+        prompt_text = input_widget.toPlainText().strip() if input_widget is not None else ""
+        callback(operation_key, prompt_text)
+
+
 class ProjectSettingsDialog(QDialog):
     def __init__(
         self,
@@ -1310,6 +1530,7 @@ class ProjectSettingsDialog(QDialog):
         on_generate_cover=None,
         on_run_agentic_generate=None,
         on_run_agentic_execute=None,
+        on_run_clear_vram=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Konfigurasi Project")
@@ -1320,6 +1541,7 @@ class ProjectSettingsDialog(QDialog):
         self.on_generate_cover = on_generate_cover
         self.on_run_agentic_generate = on_run_agentic_generate
         self.on_run_agentic_execute = on_run_agentic_execute
+        self.on_run_clear_vram = on_run_clear_vram
         self.project_dir = Path(project_dir) if project_dir else None
         self._existing_cover_data = copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
 
@@ -1425,6 +1647,10 @@ class ProjectSettingsDialog(QDialog):
         self.run_agentic_execute_button = QToolButton(self)
         self.run_agentic_execute_button.setText("Execute Agentic")
         self.run_agentic_execute_button.clicked.connect(self._on_run_agentic_execute_clicked)
+        self.clear_vram_button = QToolButton(self)
+        self.clear_vram_button.setText("Clear VRAM")
+        self.clear_vram_button.setToolTip("Jalankan VRAM cleaner di ComfyUI untuk project aktif.")
+        self.clear_vram_button.clicked.connect(self._on_run_clear_vram_clicked)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         self.buttons.accepted.connect(self._on_save_clicked)
@@ -1433,6 +1659,7 @@ class ProjectSettingsDialog(QDialog):
         button_row.addWidget(self.generate_cover_button)
         button_row.addWidget(self.run_agentic_generate_button)
         button_row.addWidget(self.run_agentic_execute_button)
+        button_row.addWidget(self.clear_vram_button)
         button_row.addStretch(1)
         button_row.addWidget(self.buttons)
         root_layout.addLayout(button_row, 0)
@@ -1851,6 +2078,15 @@ class ProjectSettingsDialog(QDialog):
         if callable(self.on_run_agentic_execute):
             self.on_run_agentic_execute(data)
 
+    def _on_run_clear_vram_clicked(self):
+        try:
+            data = self.get_data()
+        except ValueError as e:
+            QMessageBox.warning(self, "Konfigurasi Project Tidak Valid", str(e))
+            return
+        if callable(self.on_run_clear_vram):
+            self.on_run_clear_vram(data)
+
 
 class MediaPreviewLabel(QLabel):
     activated = Signal()
@@ -1972,12 +2208,12 @@ class SceneEditorWindow(QMainWindow):
         self._loading_variation_view = False
         self.project_action_group_widget = None
         self.scene_action_group_widget = None
+        self.edit_prompt_action_group_widget = None
         self.variation_action_group_widget = None
         self.run_action_group_widget = None
         self.audio_action_group_widget = None
         self.backup_action_group_widget = None
         self.compose_action_group_widget = None
-        self.vram_action_group_widget = None
 
         self.scene_title_input = QLineEdit()
         self.scene_description_input = QTextEdit()
@@ -2710,20 +2946,20 @@ class SceneEditorWindow(QMainWindow):
         self.toolbar.clear()
         self.project_action_group_widget = self.build_project_action_group()
         self.scene_action_group_widget = self.build_scene_action_group()
+        self.edit_prompt_action_group_widget = self.build_edit_prompt_action_group()
         self.variation_action_group_widget = self.build_variation_action_group()
         self.run_action_group_widget = self.build_run_action_group()
         self.audio_action_group_widget = self.build_audio_action_group()
         self.backup_action_group_widget = self.build_backup_action_group()
         self.compose_action_group_widget = self.build_compose_action_group()
-        self.vram_action_group_widget = self.build_vram_action_group()
         self.toolbar.addWidget(self.project_action_group_widget)
         self.toolbar.addWidget(self.scene_action_group_widget)
+        self.toolbar.addWidget(self.edit_prompt_action_group_widget)
         self.toolbar.addWidget(self.variation_action_group_widget)
         self.toolbar.addWidget(self.run_action_group_widget)
         self.toolbar.addWidget(self.audio_action_group_widget)
         self.toolbar.addWidget(self.backup_action_group_widget)
         self.toolbar.addWidget(self.compose_action_group_widget)
-        self.toolbar.addWidget(self.vram_action_group_widget)
         self._apply_scene_view_mode()
 
     def build_project_action_group(self):
@@ -2799,6 +3035,26 @@ class SceneEditorWindow(QMainWindow):
         add_button("Hapus adegan yang sedang dipilih.", QStyle.SP_DialogCloseButton, self.delete_scene)
         add_button("Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
         add_button("Tambahkan file aset ke folder adegan yang sedang dipilih.", QStyle.SP_FileIcon, self.add_asset_to_scene)
+        return frame
+
+    def build_edit_prompt_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #f5f3ff; border: 1px solid #c4b5fd; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        title = QLabel("Edit Prompt", frame)
+        title.setStyleSheet("font-weight: 600; color: #5b21b6;")
+        layout.addWidget(title)
+
+        button = QToolButton(frame)
+        button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
+        button.setToolTip("Buka dialog append prompt untuk semua scene dan variasi.")
+        button.setStatusTip(button.toolTip())
+        button.clicked.connect(self.open_project_prompt_append_dialog)
+        layout.addWidget(button)
         return frame
 
     def build_variation_action_group(self):
@@ -3194,6 +3450,7 @@ class SceneEditorWindow(QMainWindow):
             on_generate_cover=self.generate_cover_from_project_settings_dialog,
             on_run_agentic_generate=self.run_agentic_generate_from_project_settings_dialog,
             on_run_agentic_execute=self.run_agentic_execute_from_project_settings_dialog,
+            on_run_clear_vram=self.run_clear_vram_from_project_settings_dialog,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -3201,6 +3458,100 @@ class SceneEditorWindow(QMainWindow):
         if not isinstance(new_settings, dict):
             return
         self.apply_project_settings_and_refresh(new_settings, notify=True)
+
+    def open_project_prompt_append_dialog(self):
+        if not self.ensure_project_selected():
+            return
+        dialog = ProjectPromptAppendDialog(self, on_run=self.run_project_prompt_append_operation)
+        dialog.exec()
+
+    def run_project_prompt_append_operation(self, operation_key: str, prompt_text: str):
+        if not self.ensure_project_selected():
+            return
+        operation = PROMPT_APPEND_OPERATIONS.get(str(operation_key or "").strip())
+        if not isinstance(operation, dict):
+            QMessageBox.warning(self, "Operasi Tidak Dikenal", "Jenis append prompt tidak dikenali.")
+            return
+        prompt_text = str(prompt_text or "").strip()
+        if not prompt_text:
+            QMessageBox.warning(self, "Input Kosong", "Isi teks tambahan terlebih dahulu.")
+            return
+
+        title = str(operation.get("title", operation_key))
+        project_dir = self.project_dir()
+        if project_dir is None:
+            return
+
+        self.ensure_process_dialog()
+        self.append_log(f"[prompt-append] Menjalankan: {title}")
+        self.append_log("[prompt-append] Menerjemahkan teks tambahan ke Inggris sekali di awal.")
+        try:
+            translator = get_prompt_translator(project_dir=project_dir)
+            prompt_en = str(translator.translate_to_english(prompt_text) or "").strip()
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Translate Prompt", f"Gagal menerjemahkan prompt:\n{e}")
+            self.append_log(f"[prompt-append][gagal] Translate gagal: {e}")
+            return
+        if not prompt_en:
+            prompt_en = prompt_text
+
+        folder_count = 0
+        file_count = 0
+        prompt_count = 0
+        error_messages = []
+
+        for scene_dir in list_scene_dirs_in_project(project_dir):
+            for target_dir in _prompt_target_dirs_for_scene(scene_dir):
+                folder_count += 1
+                for target in operation.get("targets", []):
+                    filename = str(target.get("filename", "")).strip()
+                    if not filename:
+                        continue
+                    try:
+                        changed, updated_prompts = _append_prompts_in_file(
+                            target_dir / filename,
+                            mode=str(target.get("mode", "top_level")).strip(),
+                            keys=list(target.get("keys", [])),
+                            default=copy.deepcopy(target.get("default", {})),
+                            append_id=prompt_text,
+                            append_en=prompt_en,
+                        )
+                    except Exception as e:
+                        error_messages.append(f"{target_dir.name}/{filename}: {e}")
+                        self.append_log(f"[prompt-append][gagal] {target_dir / filename}: {e}")
+                        continue
+                    if changed:
+                        file_count += 1
+                        prompt_count += updated_prompts
+                        self.append_log(
+                            f"[prompt-append][ok] {target_dir / filename} ({updated_prompts} prompt)"
+                        )
+
+        if self.current_scene_dir:
+            active_view = self.active_scene_dir() or self.current_scene_dir
+            self._refresh_variation_view_options(self.current_scene_dir, selected_path=active_view)
+            self.load_scene(active_view, root_scene_dir=self.current_scene_dir)
+        self.refresh_scene_status()
+
+        summary = (
+            f"{title} selesai.\n\n"
+            f"Folder diproses: {folder_count}\n"
+            f"File diubah: {file_count}\n"
+            f"Prompt diubah: {prompt_count}"
+        )
+        if error_messages:
+            preview = "\n".join(error_messages[:8])
+            if len(error_messages) > 8:
+                preview += f"\n... dan {len(error_messages) - 8} error lain."
+            summary = f"{summary}\n\nError:\n{preview}"
+            QMessageBox.warning(self, "Append Prompt Selesai Dengan Error", summary)
+            self.append_log(f"[prompt-append] Selesai dengan {len(error_messages)} error.")
+            self.statusBar().showMessage("Append prompt selesai dengan error.", 5000)
+            return
+
+        QMessageBox.information(self, "Append Prompt Selesai", summary)
+        self.append_log("[prompt-append] Selesai tanpa error.")
+        self.statusBar().showMessage("Append prompt selesai.", 4000)
 
     def apply_project_settings_and_refresh(self, settings: dict, notify: bool = False):
         self.save_project_settings(settings, sync_scene_sizes=True)
@@ -3243,6 +3594,12 @@ class SceneEditorWindow(QMainWindow):
 
     def run_agentic_execute_from_project_settings_dialog(self, settings: dict):
         self._start_agentic_mode(settings, "execute", "Execute agentic")
+
+    def run_clear_vram_from_project_settings_dialog(self, settings: dict):
+        if not self.ensure_project_selected():
+            return
+        self.apply_project_settings_and_refresh(settings, notify=False)
+        self.run_clear_vram()
 
     def refresh_project_state(self):
         project_label = self.current_project_name if self.current_project_name else "(tidak ada project)"
@@ -3454,26 +3811,6 @@ class SceneEditorWindow(QMainWindow):
             layout.addWidget(button)
 
         add_button("Gabungkan video dan audio untuk semua adegan.", QStyle.SP_DialogYesButton, self.compose_all_scenes)
-        return frame
-
-    def build_vram_action_group(self):
-        frame = QFrame(self)
-        frame.setFrameShape(QFrame.StyledPanel)
-        frame.setStyleSheet("QFrame { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px; }")
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
-
-        title = QLabel("VRAM", frame)
-        title.setStyleSheet("font-weight: 600; color: #991b1b;")
-        layout.addWidget(title)
-
-        button = QToolButton(frame)
-        button.setIcon(self.style().standardIcon(QStyle.SP_BrowserStop))
-        button.setToolTip("Jalankan VRAM cleaner di ComfyUI.")
-        button.setStatusTip("Jalankan VRAM cleaner di ComfyUI.")
-        button.clicked.connect(self.run_clear_vram)
-        layout.addWidget(button)
         return frame
 
     def append_log(self, text: str):

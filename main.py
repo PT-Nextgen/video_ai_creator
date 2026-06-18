@@ -58,7 +58,6 @@ from scripts.project_settings import load_project_settings
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
-VRAM_CLEANER_API_PATH = os.path.join(os.path.dirname(__file__), 'api_template', 'vram-cleaner-api.json')
 POLL_INTERVAL = 10.0
 POLL_TIMEOUT = 600
 WAN22_S2V_POLL_TIMEOUT = 2400
@@ -237,29 +236,10 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             write_log(f"Failed to apply caption for {scene_dir}: {e}")
             return False
 
-    def _run_vram_cleaner():
-        try:
-            workflow = load_json(VRAM_CLEANER_API_PATH)
-        except Exception as e:
-            write_log(f"Failed to load VRAM cleaner workflow for {scene_dir}: {e}")
-            return False
-        try:
-            result = comfyui_api.post_workflow_api(workflow, server)
-            write_log(
-                f"Posted VRAM cleaner workflow for {scene_dir}: "
-                f"{json.dumps(result, ensure_ascii=False)}"
-            )
-            return True
-        except Exception as e:
-            write_log(f"Failed to post VRAM cleaner workflow for {scene_dir}: {e}")
-            return False
-
     def _finalize_scene_success(video_path, *, is_s2v=False, success_message=None):
         if not _mix_scene_audio_to_video(video_path, is_s2v=is_s2v):
             return False
         if not _apply_caption_if_enabled(video_path):
-            return False
-        if not _run_vram_cleaner():
             return False
         if success_message:
             write_log(success_message)
