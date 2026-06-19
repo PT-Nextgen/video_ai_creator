@@ -466,7 +466,7 @@ Fungsi utama:
 - menampilkan daftar scene dari project aktif
 - drag-and-drop untuk reorder scene
 - tambah, sisipkan, dan hapus scene
-- grup toolbar `Edit Prompt` untuk append prompt massal ke semua scene dan semua variasi dalam project aktif
+- grup toolbar `Edit` untuk append prompt massal ke semua scene dan semua variasi dalam project aktif
 - edit metadata scene
 - edit prompt image
 - tab `Prompt Tambahan` untuk 3 prompt image tambahan berbasis aturan `Gambar Awal`
@@ -479,6 +479,7 @@ Fungsi utama:
   - dipakai saat ingin memakai satu hasil video terbaru sebagai isi root sebelum proses `combine all`
   - file video root lama akan dihapus, folder variasi tetap dipertahankan
   - folder `variasi*` tetap dipertahankan
+- tombol di sebelah `Buka Project` untuk menjalankan `Execute Agentic` ke beberapa project sekaligus
 - saat pindah scene, tampilan otomatis kembali ke `Root Scene`
 - untuk voice, tersedia field:
   - `Pilihan Suara Scene` (per scene): 8 karakter suara
@@ -523,6 +524,8 @@ Perilaku UI:
 - `Status Adegan` menampilkan masalah validasi scene aktif
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
 - tombol `Clear VRAM` tersedia di dialog `Konfigurasi Project`
+- daftar LoRa dimuat sekali saat UI dijalankan, lalu dipakai dari memory cache untuk semua dropdown LoRa
+- jika ComfyUI tidak menjawab saat startup UI, akan muncul popup error berbahasa Indonesia dan daftar LoRa tidak dimuat
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_text` diisi
 - pilihan suara scene tersedia di metadata scene melalui `voice_character`
@@ -559,9 +562,12 @@ Perilaku UI:
 - tab `WAN22_T2V` menyediakan:
   - `Ukuran`
   - 4 field Lora: `Lora High 1`, `Lora Low 1`, `Lora High 2`, `Lora Low 2`
+  - tombol `Edit Variasi` di atas prompt positif untuk mengkopikan semua konfigurasi Lora (`nama` dan `kekuatan`) ke semua folder variasi scene aktif pada file `wan22_t2v_prompt.json`
   - `Prompt Positif`
   - `Prompt Negatif`
   - tombol `Buat Prompt` pada `Prompt Positif`
+- tab `WAN22_I2V` juga menyediakan tombol `Edit Variasi` dengan fungsi serupa untuk file `wan22_i2v_prompt.json`
+- tombol `Edit Variasi` hanya aktif saat `Root Scene` sedang dipilih dan scene aktif memang memiliki folder variasi
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
   - negative prompt dinonaktifkan
@@ -621,6 +627,8 @@ Perilaku UI:
   - append negative `wan22_i2v`
   - append positive `image`
   - setiap aksi menerjemahkan teks tambahan sekali di awal untuk mengisi `en`, lalu menambahkan kalimat itu di awal prompt yang relevan pada semua `scene_*` dan semua folder `variasi*`
+- dialog multi-project agentic menampilkan daftar project dalam bentuk checkbox dan tombol `Agentic`
+- saat tombol `Agentic` dijalankan dari dialog itu, project terpilih diproses berurutan berdasarkan abjad dengan mode `Execute Agentic`
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup

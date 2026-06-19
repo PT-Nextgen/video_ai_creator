@@ -235,21 +235,7 @@ def get_comfyui_lora_options(server: str, force_refresh: bool = False) -> list[s
     normalized_server = _normalize_server_url(server)
     if not normalized_server:
         return []
-    if not force_refresh and normalized_server in _COMFYUI_LORA_OPTIONS_CACHE:
-        return list(_COMFYUI_LORA_OPTIONS_CACHE[normalized_server])
-    url = f"{normalized_server}/object_info"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        payload = response.json() if response.content else {}
-        options = _extract_lora_options_from_object_info(payload)
-    except Exception:
-        options = []
-    if options:
-        _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = list(options)
-    else:
-        _COMFYUI_LORA_OPTIONS_CACHE.pop(normalized_server, None)
-    return list(options)
+    return list(_COMFYUI_LORA_OPTIONS_CACHE.get(normalized_server, []))
 
 
 def get_lora_options_by_prefix(server: str, prefix: str, force_refresh: bool = False) -> list[str]:
@@ -1469,6 +1455,47 @@ class ComposeMusicDialog(QDialog):
         return str(self.music_combo.currentData() or "").strip(), float(self.volume_input.value())
 
 
+class MultiProjectAgenticDialog(QDialog):
+    def __init__(self, project_names: list[str], parent=None, on_run=None):
+        super().__init__(parent)
+        self.setWindowTitle("Jalankan Agentic Multi Project")
+        self.resize(420, 520)
+        self.on_run = on_run
+        self.checkboxes: list[QCheckBox] = []
+
+        root_layout = QVBoxLayout(self)
+        info = QLabel("Pilih project yang ingin dijalankan agentic execute secara berurutan.", self)
+        info.setWordWrap(True)
+        root_layout.addWidget(info)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        for project_name in sorted(project_names, key=lambda value: value.lower()):
+            checkbox = QCheckBox(project_name, container)
+            self.checkboxes.append(checkbox)
+            container_layout.addWidget(checkbox)
+        container_layout.addStretch(1)
+        scroll.setWidget(container)
+        root_layout.addWidget(scroll, 1)
+
+        self.run_button = QToolButton(self)
+        self.run_button.setText("Agentic")
+        self.run_button.clicked.connect(self._handle_run_clicked)
+        root_layout.addWidget(self.run_button, 0, Qt.AlignLeft)
+
+    def selected_projects(self) -> list[str]:
+        return [checkbox.text().strip() for checkbox in self.checkboxes if checkbox.isChecked()]
+
+    def _handle_run_clicked(self):
+        callback = self.on_run
+        if callback is None:
+            return
+        callback(self.selected_projects())
+
+
 class ProjectPromptAppendDialog(QDialog):
     def __init__(self, parent=None, on_run=None):
         super().__init__(parent)
@@ -2180,6 +2207,8 @@ class SceneEditorWindow(QMainWindow):
         self.project_settings = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
         self.process = None
         self.process_context = None
+        self.multi_project_agentic_queue: list[str] = []
+        self.multi_project_agentic_completed: list[str] = []
         self.loading_scene = False
         self.editor_tabs = None
         self.meta_tab = None
@@ -2320,6 +2349,9 @@ class SceneEditorWindow(QMainWindow):
         self.wan_t2v_generate_prompt_button.clicked.connect(
             lambda _checked=False: self.generate_wan_prompt_from_ui("positive_prompt", prompt_kind="wan_t2v")
         )
+        self.copy_wan_t2v_variations_button = QToolButton()
+        self.copy_wan_t2v_variations_button.setText("Edit Variasi")
+        self.copy_wan_t2v_variations_button.clicked.connect(self.copy_wan_t2v_config_to_variations)
         # wan22_t2v_batch extra prompt widgets
         self.t2v_batch_positive_inputs = []
         self.t2v_batch_negative_inputs = []
@@ -2344,6 +2376,9 @@ class SceneEditorWindow(QMainWindow):
                 button.setText("Buat Prompt")
                 button.clicked.connect(lambda _checked=False, prompt_key=key: self.generate_wan_prompt_from_ui(prompt_key))
                 self.wan_generate_prompt_buttons[key] = button
+        self.copy_wan_i2v_variations_button = QToolButton()
+        self.copy_wan_i2v_variations_button.setText("Edit Variasi")
+        self.copy_wan_i2v_variations_button.clicked.connect(self.copy_wan_i2v_config_to_variations)
         self.s2v_positive_input = QTextEdit()
         self.s2v_negative_input = QTextEdit()
         self.s2v_generate_positive_button = QToolButton()
@@ -2482,6 +2517,8 @@ class SceneEditorWindow(QMainWindow):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.process_dialog = None
+        self._lora_options_initialized = False
+        self._lora_options_server = ""
         self._ui_log_emitter = UiLogEmitter(self)
         self._ui_log_emitter.message.connect(self.append_log)
         self._ui_log_handler = UiLogHandler(self._ui_log_emitter)
@@ -2516,6 +2553,7 @@ class SceneEditorWindow(QMainWindow):
         self.update_run_action_buttons_state()
         self.reload_scene_list()
         self.refresh_project_state()
+        QTimer.singleShot(0, self.initialize_lora_options_once)
         self.setMinimumSize(0, 0)
 
     def install_field_watchers(self):
@@ -2699,11 +2737,12 @@ class SceneEditorWindow(QMainWindow):
         add_t2v_lora_row(2, "Lora Low 1", self.wan_t2v_lora_low_name_input, self.wan_t2v_lora_low_strength_input)
         add_t2v_lora_row(3, "Lora High 2", self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input)
         add_t2v_lora_row(4, "Lora Low 2", self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input)
-        wan_t2v_layout.addWidget(QLabel("Prompt Positif"), 5, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_positive_input, 5, 1, 1, 3)
-        wan_t2v_layout.addWidget(self.wan_t2v_generate_prompt_button, 6, 1, 1, 3, Qt.AlignLeft)
-        wan_t2v_layout.addWidget(QLabel("Prompt Negatif"), 7, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_negative_input, 7, 1, 1, 3)
+        wan_t2v_layout.addWidget(self.copy_wan_t2v_variations_button, 5, 1, 1, 3, Qt.AlignLeft)
+        wan_t2v_layout.addWidget(QLabel("Prompt Positif"), 6, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_positive_input, 6, 1, 1, 3)
+        wan_t2v_layout.addWidget(self.wan_t2v_generate_prompt_button, 7, 1, 1, 3, Qt.AlignLeft)
+        wan_t2v_layout.addWidget(QLabel("Prompt Negatif"), 8, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_negative_input, 8, 1, 1, 3)
         tabs.addTab(self.wan_t2v_tab, "WAN22_T2V")
 
         self.wan_tab = QWidget()
@@ -2722,7 +2761,8 @@ class SceneEditorWindow(QMainWindow):
         add_lora_row(2, "Lora Low 1", self.wan_lora_low_name_input, self.wan_lora_low_strength_input)
         add_lora_row(3, "Lora High 2", self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input)
         add_lora_row(4, "Lora Low 2", self.wan_lora_low2_name_input, self.wan_lora_low2_strength_input)
-        row = 5
+        wan_layout.addWidget(self.copy_wan_i2v_variations_button, 5, 1, 1, 3, Qt.AlignLeft)
+        row = 6
         for slot in ("one", "two"):
             positive_key = f"positive_prompt_{slot}"
             negative_key = f"negative_prompt_{slot}"
@@ -2991,6 +3031,7 @@ class SceneEditorWindow(QMainWindow):
 
         add_button("Buat project baru.", QStyle.SP_FileDialogNewFolder, self.new_project)
         add_button("Buka project yang sudah ada.", QStyle.SP_DirOpenIcon, self.open_project)
+        add_button("Jalankan agentic execute untuk beberapa project yang dipilih.", QStyle.SP_MediaPlay, self.open_multi_project_agentic_dialog)
         add_button("Tutup project aktif.", QStyle.SP_DialogCloseButton, self.close_project)
         add_button(
             "Buka konfigurasi project (deskripsi, ukuran video, model, voice, caption, cover).",
@@ -3034,7 +3075,6 @@ class SceneEditorWindow(QMainWindow):
         layout.addWidget(duplicate_button)
         add_button("Hapus adegan yang sedang dipilih.", QStyle.SP_DialogCloseButton, self.delete_scene)
         add_button("Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
-        add_button("Tambahkan file aset ke folder adegan yang sedang dipilih.", QStyle.SP_FileIcon, self.add_asset_to_scene)
         return frame
 
     def build_edit_prompt_action_group(self):
@@ -3045,7 +3085,7 @@ class SceneEditorWindow(QMainWindow):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
 
-        title = QLabel("Edit Prompt", frame)
+        title = QLabel("Edit", frame)
         title.setStyleSheet("font-weight: 600; color: #5b21b6;")
         layout.addWidget(title)
 
@@ -3069,7 +3109,7 @@ class SceneEditorWindow(QMainWindow):
         title.setStyleSheet("font-weight: 600; color: #9a3412;")
         layout.addWidget(title)
 
-        self.variation_view_input.setMinimumWidth(190)
+        self.variation_view_input.setMinimumWidth(80)
         self.variation_view_input.addItem("Root Scene", "")
         self.variation_view_input.setEnabled(False)
         self.variation_view_input.setToolTip("Pilih root scene atau salah satu folder variasi untuk dilihat.")
@@ -3173,6 +3213,22 @@ class SceneEditorWindow(QMainWindow):
             return None
         return target_path
 
+    def _has_variations_for_current_scene(self) -> bool:
+        return bool(self._variation_dirs_for_scene(self.current_scene_dir))
+
+    def _update_variation_config_copy_buttons_state(self):
+        enabled = (
+            self.current_scene_dir is not None
+            and not self.is_viewing_variation()
+            and self._has_variations_for_current_scene()
+        )
+        for button in (
+            getattr(self, "copy_wan_t2v_variations_button", None),
+            getattr(self, "copy_wan_i2v_variations_button", None),
+        ):
+            if button is not None:
+                button.setEnabled(enabled)
+
     def _update_copy_variation_button_state(self):
         if self.copy_variation_to_root_button is None:
             return
@@ -3181,6 +3237,105 @@ class SceneEditorWindow(QMainWindow):
             self.current_scene_dir is not None
             and selected_variation is not None
             and selected_variation.exists()
+        )
+        self._update_variation_config_copy_buttons_state()
+
+    def _copy_selected_keys_to_variations(
+        self,
+        *,
+        filename: str,
+        source_data: dict,
+        keys: list[str],
+        action_title: str,
+    ):
+        if not self.current_scene_dir:
+            return
+        if self.is_viewing_variation():
+            QMessageBox.information(
+                self,
+                "Mode Lihat Variasi",
+                "Pilih `Root Scene` di dropdown Variasi untuk mengedit konfigurasi variasi.",
+            )
+            return
+        variation_dirs = self._variation_dirs_for_scene(self.current_scene_dir)
+        if not variation_dirs:
+            QMessageBox.information(self, "Tidak Ada Variasi", "Scene aktif belum memiliki folder variasi.")
+            return
+
+        updated_count = 0
+        skipped_count = 0
+        errors = []
+        for variation_dir in variation_dirs:
+            target_path = variation_dir / filename
+            if not target_path.exists():
+                skipped_count += 1
+                continue
+            try:
+                payload = _load_json_raw(target_path, {})
+                changed = False
+                for key in keys:
+                    if key in source_data and payload.get(key) != source_data.get(key):
+                        payload[key] = copy.deepcopy(source_data.get(key))
+                        changed = True
+                if changed:
+                    write_json(target_path, payload)
+                    updated_count += 1
+            except Exception as e:
+                errors.append(f"{variation_dir.name}: {e}")
+
+        summary = (
+            f"{action_title} selesai.\n\n"
+            f"Variasi diupdate: {updated_count}\n"
+            f"Variasi dilewati: {skipped_count}"
+        )
+        if errors:
+            preview = "\n".join(errors[:8])
+            if len(errors) > 8:
+                preview += f"\n... dan {len(errors) - 8} error lain."
+            QMessageBox.warning(self, f"{action_title} Dengan Error", f"{summary}\n\nError:\n{preview}")
+            return
+        QMessageBox.information(self, action_title, summary)
+
+    def copy_wan_t2v_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        _meta, _z_prompt, wan_t2v_prompt, _wan_prompt, *_rest = self.gather_scene_data()
+        self._copy_selected_keys_to_variations(
+            filename="wan22_t2v_prompt.json",
+            source_data=wan_t2v_prompt,
+            keys=[
+                "lora_high_name",
+                "lora_high_strength",
+                "lora_low_name",
+                "lora_low_strength",
+                "lora_high_name_2",
+                "lora_high_strength_2",
+                "lora_low_name_2",
+                "lora_low_strength_2",
+            ],
+            action_title="Edit Variasi WAN22_T2V",
+        )
+
+    def copy_wan_i2v_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        _meta, _z_prompt, _wan_t2v_prompt, wan_prompt, *_rest = self.gather_scene_data()
+        self._copy_selected_keys_to_variations(
+            filename="wan22_i2v_prompt.json",
+            source_data=wan_prompt,
+            keys=[
+                "lora_high_name",
+                "lora_high_strength",
+                "lora_low_name",
+                "lora_low_strength",
+                "lora_high_name_2",
+                "lora_high_strength_2",
+                "lora_low_name_2",
+                "lora_low_strength_2",
+            ],
+            action_title="Edit Variasi WAN22_I2V",
         )
 
     def copy_selected_variation_to_root(self):
@@ -3277,6 +3432,8 @@ class SceneEditorWindow(QMainWindow):
             self.variation_action_group_widget.setEnabled(self.current_scene_dir is not None)
             self.variation_view_input.setEnabled(self.variation_view_input.count() > 1)
             self._update_copy_variation_button_state()
+        else:
+            self._update_variation_config_copy_buttons_state()
 
         if read_only and active_dir is not None:
             self.statusBar().showMessage(
@@ -3464,6 +3621,74 @@ class SceneEditorWindow(QMainWindow):
             return
         dialog = ProjectPromptAppendDialog(self, on_run=self.run_project_prompt_append_operation)
         dialog.exec()
+
+    def _comfyui_server_for_project_name(self, project_name: str) -> str:
+        project_name = str(project_name or "").strip()
+        if not project_name:
+            return str(DEFAULT_PROJECT_SETTINGS.get("comfyui_server", "nextgenserver:8188")).strip()
+        project_dir = API_PRODUCTION / project_name
+        settings = load_project_settings_file(project_dir)
+        return str(settings.get("comfyui_server", DEFAULT_PROJECT_SETTINGS.get("comfyui_server", "nextgenserver:8188"))).strip()
+
+    def open_multi_project_agentic_dialog(self):
+        project_names = self.list_projects()
+        if not project_names:
+            QMessageBox.information(self, "Belum Ada Project", "Belum ada project yang bisa dipilih.")
+            return
+        dialog = MultiProjectAgenticDialog(project_names, self, on_run=self.run_multi_project_agentic)
+        dialog.exec()
+
+    def run_multi_project_agentic(self, selected_projects: list[str]):
+        selected = sorted(
+            [str(project_name or "").strip() for project_name in selected_projects if str(project_name or "").strip()],
+            key=lambda value: value.lower(),
+        )
+        if not selected:
+            QMessageBox.information(self, "Belum Ada Pilihan", "Pilih minimal satu project terlebih dahulu.")
+            return
+        if self.process is not None and self.process.state() != QProcess.NotRunning:
+            QMessageBox.information(self, "Proses Sedang Berjalan", "Tunggu proses yang sedang berjalan selesai terlebih dahulu.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Jalankan Agentic",
+            "Jalankan agentic execute untuk project terpilih secara berurutan?\n\n- " + "\n- ".join(selected),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.multi_project_agentic_queue = list(selected)
+        self.multi_project_agentic_completed = []
+        self._start_next_multi_project_agentic()
+
+    def _start_next_multi_project_agentic(self):
+        if not self.multi_project_agentic_queue:
+            completed = list(self.multi_project_agentic_completed)
+            self.multi_project_agentic_completed = []
+            QMessageBox.information(
+                self,
+                "Agentic Selesai",
+                "Agentic execute selesai untuk semua project terpilih.\n\n- " + "\n- ".join(completed),
+            )
+            self.statusBar().showMessage("Agentic multi project selesai.", 5000)
+            return
+        project_name = self.multi_project_agentic_queue.pop(0)
+        server = self._comfyui_server_for_project_name(project_name)
+        project_dir = API_PRODUCTION / project_name
+        scene_dirs = list_scene_dirs_in_project(project_dir)
+        started = self.start_process(
+            AGENTIC_SCRIPT,
+            ["--server", server, "--project", project_name, "--mode", "execute"],
+            f"Execute agentic untuk project {project_name}",
+            watch_dirs=scene_dirs,
+            extra_context={
+                "kind": "multi_project_agentic",
+                "project_name": project_name,
+            },
+        )
+        if not started:
+            self.multi_project_agentic_queue = []
+            self.multi_project_agentic_completed = []
 
     def run_project_prompt_append_operation(self, operation_key: str, prompt_text: str):
         if not self.ensure_project_selected():
@@ -3837,6 +4062,40 @@ class SceneEditorWindow(QMainWindow):
         if not value:
             value = str(DEFAULT_PROJECT_SETTINGS.get("comfyui_server", "nextgenserver:8188")).strip()
         return value
+
+    def initialize_lora_options_once(self):
+        if self._lora_options_initialized:
+            return
+        server = self.comfyui_server_address()
+        normalized_server = _normalize_server_url(server)
+        self._lora_options_initialized = True
+        self._lora_options_server = normalized_server
+        if not normalized_server:
+            QMessageBox.critical(
+                self,
+                "Gagal Memuat Daftar LoRa",
+                "Konfigurasi ComfyUI Server tidak valid, sehingga daftar LoRa tidak bisa dimuat saat UI dijalankan.",
+            )
+            return
+        url = f"{normalized_server}/object_info"
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            payload = response.json() if response.content else {}
+            options = _extract_lora_options_from_object_info(payload)
+        except Exception as e:
+            _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = []
+            QMessageBox.critical(
+                self,
+                "Gagal Memuat Daftar LoRa",
+                (
+                    "ComfyUI tidak menjawab saat UI dijalankan, sehingga daftar LoRa gagal dimuat.\n\n"
+                    f"Server: {server}\n"
+                    f"Error: {e}"
+                ),
+            )
+            return
+        _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = list(options)
 
     def release_media_locks(self):
         self.video_player.stop()
@@ -5741,14 +6000,19 @@ class SceneEditorWindow(QMainWindow):
         lines = text.splitlines()
         return "\n".join(lines[-max_lines:])
 
-    def start_process(self, script_path: Path, args, title, watch_dirs=None):
+    def start_process(self, script_path: Path, args, title, watch_dirs=None, extra_context=None):
         python_exe = VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)
+        if self.process is not None and self.process.state() != QProcess.NotRunning:
+            QMessageBox.information(self, "Proses Sedang Berjalan", "Tunggu proses yang sedang berjalan selesai terlebih dahulu.")
+            return False
         self.process = QProcess(self)
         self.process_context = {
             "title": title,
             "watch_dirs": list(watch_dirs or []),
             "before_snapshot": self.snapshot_outputs(watch_dirs or []),
         }
+        if isinstance(extra_context, dict):
+            self.process_context.update(extra_context)
         self.process.setProgram(str(python_exe))
         self.process.setArguments([str(script_path), *args])
         self.process.setWorkingDirectory(str(ROOT))
@@ -5761,6 +6025,9 @@ class SceneEditorWindow(QMainWindow):
         if not self.process.waitForStarted(3000):
             self.process_context = None
             QMessageBox.critical(self, "Proses Gagal", "Gagal memulai proses.")
+            self.process = None
+            return False
+        return True
 
     def confirm_run_action(self, title: str, message: str):
         reply = QMessageBox.question(self, title, message, QMessageBox.Yes | QMessageBox.No)
@@ -6280,20 +6547,27 @@ class SceneEditorWindow(QMainWindow):
     def on_process_finished(self, exit_code, exit_status):
         self.append_log(f"\nProses selesai dengan kode keluar {exit_code}")
         context = self.process_context or {}
+        process_kind = str(context.get("kind", "")).strip()
+        finished_project_name = str(context.get("project_name", "")).strip()
         if self.current_scene_dir:
             self.refresh_assets_and_previews()
             self.refresh_scene_status()
         if exit_code == 0:
-            outputs = self.collect_changed_outputs(
-                context.get("watch_dirs", []),
-                context.get("before_snapshot", {}),
-            )
-            QMessageBox.information(
-                self,
-                "Proses Berhasil",
-                f"{context.get('title', 'Proses')} berhasil.\n\n{self.format_output_summary(outputs)}",
-            )
-            self.statusBar().showMessage("Proses selesai.", 5000)
+            if process_kind == "multi_project_agentic":
+                if finished_project_name:
+                    self.multi_project_agentic_completed.append(finished_project_name)
+                self.statusBar().showMessage(f"Agentic selesai untuk {finished_project_name}.", 4000)
+            else:
+                outputs = self.collect_changed_outputs(
+                    context.get("watch_dirs", []),
+                    context.get("before_snapshot", {}),
+                )
+                QMessageBox.information(
+                    self,
+                    "Proses Berhasil",
+                    f"{context.get('title', 'Proses')} berhasil.\n\n{self.format_output_summary(outputs)}",
+                )
+                self.statusBar().showMessage("Proses selesai.", 5000)
         else:
             tail_log = self.tail_process_log()
             message = f"{context.get('title', 'Proses')} gagal dengan kode keluar {exit_code}."
@@ -6301,7 +6575,13 @@ class SceneEditorWindow(QMainWindow):
                 message += f"\n\nRingkasan log terakhir:\n{tail_log}"
             QMessageBox.critical(self, "Proses Gagal", message)
             self.statusBar().showMessage("Proses gagal.", 5000)
+            if process_kind == "multi_project_agentic":
+                self.multi_project_agentic_queue = []
+                self.multi_project_agentic_completed = []
         self.process_context = None
+        self.process = None
+        if exit_code == 0 and process_kind == "multi_project_agentic":
+            self._start_next_multi_project_agentic()
 
 
 def main():
