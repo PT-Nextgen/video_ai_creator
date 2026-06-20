@@ -77,6 +77,7 @@ VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
 SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
+UPSCALE_VIDEO_SCRIPT = ROOT / "scripts" / "upscale_video.py"
 COVER_IMAGE_SCRIPT = ROOT / "scripts" / "generate_cover_image.py"
 AGENTIC_SCRIPT = ROOT / "agentic" / "agentic_cli.py"
 BACKUP_SCRIPT = ROOT / "backup_production.py"
@@ -86,6 +87,15 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 ARCHIVE_EXTS = {".zip"}
+UPSCALE_OPTIONS = [
+    ("Tanpa upscale", 1.0),
+    ("1.5x", 1.5),
+    ("2x", 2.0),
+]
+UPSCALE_ACTION_OPTIONS = [
+    ("1.5x", 1.5),
+    ("2x", 2.0),
+]
 DEFAULT_SCENE_META = {
     "scene_title": "", "scene_description": "", "duration_seconds": 10, "voice_text": "",
     "voice_character": DEFAULT_SCENE_VOICE_KEY,
@@ -1441,9 +1451,13 @@ class ComposeMusicDialog(QDialog):
         self.volume_input.setDecimals(2)
         self.volume_input.setSingleStep(0.05)
         self.volume_input.setValue(1.00)
+        self.upscale_input = QComboBox(self)
+        for label, value in UPSCALE_OPTIONS:
+            self.upscale_input.addItem(label, value)
 
         layout = QFormLayout(self)
         layout.addRow("File Music", self.music_combo)
+        layout.addRow("Upscale", self.upscale_input)
         layout.addRow("Volume (0.00 - 2.00)", self.volume_input)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
@@ -1452,7 +1466,31 @@ class ComposeMusicDialog(QDialog):
         layout.addRow(buttons)
 
     def get_values(self):
-        return str(self.music_combo.currentData() or "").strip(), float(self.volume_input.value())
+        return (
+            str(self.music_combo.currentData() or "").strip(),
+            float(self.volume_input.value()),
+            float(self.upscale_input.currentData() or 1.0),
+        )
+
+
+class UpscaleChoiceDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Upscale Video")
+        self.resize(320, 120)
+        self.scale_input = QComboBox(self)
+        for label, value in UPSCALE_ACTION_OPTIONS:
+            self.scale_input.addItem(label, value)
+
+        layout = QFormLayout(self)
+        layout.addRow("Skala Upscale", self.scale_input)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def get_scale_factor(self) -> float:
+        return float(self.scale_input.currentData() or 1.5)
 
 
 class MultiProjectAgenticDialog(QDialog):
@@ -3075,6 +3113,7 @@ class SceneEditorWindow(QMainWindow):
         layout.addWidget(duplicate_button)
         add_button("Hapus adegan yang sedang dipilih.", QStyle.SP_DialogCloseButton, self.delete_scene)
         add_button("Simpan perubahan adegan yang sedang dibuka.", QStyle.SP_DialogSaveButton, self.save_current_scene)
+        add_button("Upscale video terakhir pada root scene aktif.", QStyle.SP_ArrowUp, self.upscale_latest_scene_video)
         return frame
 
     def build_edit_prompt_action_group(self):
@@ -6434,17 +6473,57 @@ class SceneEditorWindow(QMainWindow):
         dialog = ComposeMusicDialog(music_files, self)
         if dialog.exec() != QDialog.Accepted:
             return
-        music_file, music_volume = dialog.get_values()
+        music_file, music_volume, upscale_factor = dialog.get_values()
         args = []
         args.extend(["--project", self.current_project_name])
         if music_file:
             args.extend(["--music-file", music_file, "--music-volume", f"{music_volume:.2f}"])
+        if float(upscale_factor) > 1.0:
+            args.extend(["--upscale-factor", f"{float(upscale_factor):.2f}"])
 
         self.start_process(
             COMPOSE_SCRIPT,
             args,
             "Menggabungkan video dan audio untuk semua adegan",
             watch_dirs=[*self.list_scene_dirs_current(), self.project_dir() / "combined" if self.project_dir() else API_PRODUCTION / "combined", MUSIC_DIR],
+        )
+
+    def upscale_latest_scene_video(self):
+        if not self.ensure_project_selected():
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        if self.is_viewing_variation():
+            QMessageBox.information(
+                self,
+                "Mode Lihat Variasi",
+                "Upscale video terakhir hanya bisa dijalankan saat melihat Root Scene.",
+            )
+            return
+        latest_video = find_latest_asset(self.current_scene_dir, VIDEO_EXTS)
+        if latest_video is None:
+            QMessageBox.information(self, "Video Tidak Ditemukan", "Tidak ada video di root scene aktif.")
+            return
+        dialog = UpscaleChoiceDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        scale_factor = dialog.get_scale_factor()
+        source_video = Path(latest_video)
+        stem = source_video.stem
+        scale_tag = str(scale_factor).replace(".", "_")
+        output_video = source_video.with_name(f"{stem}_upscale_{scale_tag}x{source_video.suffix}")
+        frames_dir = self.current_scene_dir / stem
+        self.start_process(
+            UPSCALE_VIDEO_SCRIPT,
+            [
+                "--video", str(source_video),
+                "--scale-factor", f"{float(scale_factor):.2f}",
+                "--output", str(output_video),
+                "--frames-dir", str(frames_dir),
+            ],
+            f"Upscale video {source_video.name} untuk {self.current_scene_dir.name}",
+            watch_dirs=[self.current_scene_dir],
         )
 
     def save_backup_zip(self):

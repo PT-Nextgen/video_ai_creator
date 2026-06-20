@@ -34,6 +34,11 @@ IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
 
 # Background music volume for final merged video (0.0 to 1.0)
 BACKGROUND_MUSIC_VOLUME = 0.3
+UPSCALE_FACTORS = {
+    "none": 1.0,
+    "1.5x": 1.5,
+    "2x": 2.0,
+}
 
 
 def _load_scene_meta_runtime(scene_dir: str) -> dict:
@@ -312,6 +317,59 @@ def ffprobe_has_audio(path):
         return bool(out)
     except Exception:
         return False
+
+
+def _clear_directory_contents(directory: str):
+    if not os.path.isdir(directory):
+        return
+    for name in os.listdir(directory):
+        target = os.path.join(directory, name)
+        try:
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            else:
+                os.remove(target)
+        except Exception as e:
+            logger.warning("Failed to clear %s: %s", target, e)
+
+
+def _scaled_dimension(value: int, factor: float) -> int:
+    scaled = max(2, int(round(float(value) * float(factor))))
+    if scaled % 2 != 0:
+        scaled += 1
+    return scaled
+
+
+def upscale_video_with_frames(src_path: str, dst_path: str, scale_factor: float, frames_dir: str) -> str:
+    src_path = os.path.abspath(str(src_path))
+    dst_path = os.path.abspath(str(dst_path))
+    frames_dir = os.path.abspath(str(frames_dir))
+    factor = float(scale_factor)
+    if factor <= 1.0:
+        raise ValueError("scale_factor harus lebih besar dari 1.0")
+    width, height = ffprobe_size(src_path)
+    out_width = _scaled_dimension(width, factor)
+    out_height = _scaled_dimension(height, factor)
+
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    os.makedirs(frames_dir, exist_ok=True)
+    _clear_directory_contents(frames_dir)
+
+    tmp_output = dst_path if os.path.abspath(dst_path) != os.path.abspath(src_path) else f"{dst_path}.tmp.mp4"
+    run(
+        f'ffmpeg -y -i "{src_path}" '
+        f'-vf "scale={out_width}:{out_height}:flags=lanczos" '
+        f'-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p '
+        f'-c:a aac -b:a 192k -movflags +faststart "{tmp_output}"'
+    )
+    if tmp_output != dst_path:
+        os.replace(tmp_output, dst_path)
+    run(
+        f'ffmpeg -y -i "{dst_path}" '
+        f'"{os.path.join(frames_dir, "frame_%06d.png")}"'
+    )
+    logger.info("Upscaled video written to %s with frames in %s", dst_path, frames_dir)
+    return dst_path
 
 
 def concat_videos(video_files, out_path):
@@ -689,7 +747,7 @@ def image_to_clip(img_path, dst, fps, width, height, duration):
         os.replace(f'{dst}.tmp', dst)
 
 
-def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
+def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0):
     if not API_PRODUCTION:
         raise RuntimeError("Project root belum diset untuk merge.")
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
@@ -811,12 +869,19 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
     if music_file:
         _mix_background_music(final_out, music_file, music_volume)
     _force_dual_mono_audio(final_out)
+    if float(upscale_factor) > 1.0:
+        upscale_video_with_frames(
+            final_out,
+            final_out,
+            float(upscale_factor),
+            os.path.join(combined_dir, "Frame"),
+        )
 
     logger.info('Final merged video: %s', final_out)
     return final_out
 
 
-def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME):
+def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0):
     global API_PRODUCTION
     API_PRODUCTION = os.path.join(ROOT, 'api_production', str(project_name).strip())
     if not os.path.exists(API_PRODUCTION):
@@ -870,11 +935,13 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 selected_scene_nums=selected_nums,
                 music_file=music_file,
                 music_volume=music_volume,
+                upscale_factor=upscale_factor,
             )
         else:
             merge_combined_videos(
                 music_file=music_file,
                 music_volume=music_volume,
+                upscale_factor=upscale_factor,
             )
     except Exception as e:
         logger.error('Failed to merge combined videos: %s', e)
@@ -890,6 +957,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-final-merge', action='store_true', help='Only export scene videos to combined folder, skip combined_all.mp4 merge')
     parser.add_argument('--music-file', default='', help='Optional background music file path for final combined video')
     parser.add_argument('--music-volume', type=float, default=BACKGROUND_MUSIC_VOLUME, help='Background music volume in range 0.0 to 2.0')
+    parser.add_argument('--upscale-factor', type=float, default=1.0, help='Optional final upscale factor, e.g. 1.5 or 2.0')
     args = parser.parse_args()
     music_volume = max(0.0, min(2.0, float(args.music_volume)))
     raise SystemExit(main(
@@ -899,4 +967,5 @@ if __name__ == '__main__':
         no_final_merge=args.no_final_merge,
         music_file=str(args.music_file or '').strip() or None,
         music_volume=music_volume,
+        upscale_factor=float(args.upscale_factor or 1.0),
     ))

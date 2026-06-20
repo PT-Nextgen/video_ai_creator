@@ -484,6 +484,7 @@ Fungsi utama:
 - untuk voice, tersedia field:
   - `Pilihan Suara Scene` (per scene): 8 karakter suara
 - group `Audio` berisi proses generate voice/sound untuk scene atau semua scene
+- tombol `Upscale Video` di group `Scene` untuk upscale video terakhir pada root scene aktif
 - edit ukuran image dan WAN
 - edit ukuran WAN22 S2V
 - edit `CFG` untuk WAN22 S2V
@@ -629,6 +630,13 @@ Perilaku UI:
   - setiap aksi menerjemahkan teks tambahan sekali di awal untuk mengisi `en`, lalu menambahkan kalimat itu di awal prompt yang relevan pada semua `scene_*` dan semua folder `variasi*`
 - dialog multi-project agentic menampilkan daftar project dalam bentuk checkbox dan tombol `Agentic`
 - saat tombol `Agentic` dijalankan dari dialog itu, project terpilih diproses berurutan berdasarkan abjad dengan mode `Execute Agentic`
+- saat `Compose Semua Adegan`, dialog compose juga menyediakan dropdown `Upscale`:
+  - `Tanpa upscale`
+  - `1.5x`
+  - `2x`
+  - jika dipilih `1.5x` atau `2x`, video final `combined_all.mp4` akan di-upscale dan frame PNG hasil upscale disimpan ke folder `combined/Frame`
+- tombol `Upscale Video` pada group `Scene` membuka dialog kecil untuk memilih `1.5x` atau `2x`
+- hasil tombol `Upscale Video` disimpan sebagai file video baru di root scene aktif, dan frame PNG hasil upscale disimpan ke subfolder dengan nama yang sama seperti stem video sumber terakhir
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup
