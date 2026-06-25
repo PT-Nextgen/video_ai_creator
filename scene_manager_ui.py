@@ -2317,6 +2317,9 @@ class SceneEditorWindow(QMainWindow):
         self.z_generate_prompt_button = QToolButton()
         self.z_generate_prompt_button.setText("Buat Prompt")
         self.z_generate_prompt_button.clicked.connect(self.generate_z_prompt_from_ui)
+        self.copy_z_variations_button = QToolButton()
+        self.copy_z_variations_button.setText("Edit Variasi")
+        self.copy_z_variations_button.clicked.connect(self.copy_z_config_to_variations)
         self.z_extra_positive_inputs = []
         self.z_extra_negative_inputs = []
         self.z_extra_clipboard_buttons = []
@@ -2742,6 +2745,7 @@ class SceneEditorWindow(QMainWindow):
         z_layout.addRow("Nama Lora", self.z_lora_name_input)
         z_layout.addRow("Kekuatan Lora", self.z_lora_strength_input)
         z_layout.addRow("Trigger Word Lora", self.z_lora_trigger_words_input)
+        z_layout.addRow("", self.copy_z_variations_button)
         z_layout.addRow("Prompt Positif", self.z_positive_input)
         z_layout.addRow("", button_row(self.z_clipboard_button, self.z_generate_prompt_button))
         z_layout.addRow("Prompt Negatif", self.z_negative_input)
@@ -3271,6 +3275,7 @@ class SceneEditorWindow(QMainWindow):
             and self._has_variations_for_current_scene()
         )
         for button in (
+            getattr(self, "copy_z_variations_button", None),
             getattr(self, "copy_wan_t2v_variations_button", None),
             getattr(self, "copy_wan_i2v_variations_button", None),
         ):
@@ -3353,6 +3358,7 @@ class SceneEditorWindow(QMainWindow):
             filename="wan22_t2v_prompt.json",
             source_data=wan_t2v_prompt,
             keys=[
+                LORA_TRIGGER_WORDS_FIELD,
                 "lora_high_name",
                 "lora_high_strength",
                 "lora_low_name",
@@ -3365,6 +3371,27 @@ class SceneEditorWindow(QMainWindow):
             action_title="Edit Variasi WAN22_T2V",
         )
 
+    def copy_z_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        _meta, z_prompt, _wan_t2v_prompt, _wan_prompt, *_rest = self.gather_scene_data()
+        self._copy_selected_keys_to_variations(
+            filename="z_image_prompt.json",
+            source_data=z_prompt,
+            keys=[
+                "image_model",
+                "gemini_model_id",
+                "use_random_seed",
+                "seed",
+                "use_lora",
+                "lora_name",
+                "strength_model",
+                LORA_TRIGGER_WORDS_FIELD,
+            ],
+            action_title="Edit Variasi Gambar Awal",
+        )
+
     def copy_wan_i2v_config_to_variations(self):
         if not self.save_current_scene(silent=True, reload_list=False):
             QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
@@ -3374,6 +3401,7 @@ class SceneEditorWindow(QMainWindow):
             filename="wan22_i2v_prompt.json",
             source_data=wan_prompt,
             keys=[
+                LORA_TRIGGER_WORDS_FIELD,
                 "lora_high_name",
                 "lora_high_strength",
                 "lora_low_name",
@@ -4529,9 +4557,9 @@ class SceneEditorWindow(QMainWindow):
             root_scene_dir = root_scene_dir if root_scene_dir is not None else scene_dir
             fallback_dir = None if self._scene_paths_equal(scene_dir, root_scene_dir) else root_scene_dir
             meta = load_json_with_fallback(scene_dir / "scene_meta.json", (fallback_dir / "scene_meta.json") if fallback_dir else None, DEFAULT_SCENE_META)
-            z_prompt = load_json_with_fallback(scene_dir / "z_image_prompt.json", (fallback_dir / "z_image_prompt.json") if fallback_dir else None, DEFAULT_Z_IMAGE_PROMPT)
-            wan_t2v_prompt = load_json_with_fallback(scene_dir / "wan22_t2v_prompt.json", (fallback_dir / "wan22_t2v_prompt.json") if fallback_dir else None, DEFAULT_WAN22_T2V_PROMPT)
-            wan_prompt = load_json_with_fallback(scene_dir / "wan22_i2v_prompt.json", (fallback_dir / "wan22_i2v_prompt.json") if fallback_dir else None, DEFAULT_WAN_PROMPT)
+            z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
+            wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
+            wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             s2v_prompt = load_json_with_fallback(scene_dir / "wan22_s2v_prompt.json", (fallback_dir / "wan22_s2v_prompt.json") if fallback_dir else None, DEFAULT_WAN22_S2V_PROMPT)
             web_prompt = load_json_with_fallback(scene_dir / "web_scroll_prompt.json", (fallback_dir / "web_scroll_prompt.json") if fallback_dir else None, DEFAULT_WEB_SCROLL_PROMPT)
             image_pan_prompt = load_json_with_fallback(scene_dir / "image_pan_prompt.json", (fallback_dir / "image_pan_prompt.json") if fallback_dir else None, DEFAULT_IMAGE_PAN_PROMPT)
