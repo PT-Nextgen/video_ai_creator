@@ -677,6 +677,8 @@ Agentic dipakai untuk membuat dan menjalankan variasi per scene dalam dua tahap:
    - output JSON divalidasi ketat:
      - struktur harus sama dengan input
      - field prompt harus konsisten
+     - untuk `wan22_t2v_prompt.json`, `wan22_i2v_prompt.json`, `z_image_prompt.json`, `z_image_extra_prompts.json`, dan `wan22_t2v_batch_extra_prompts.json`, setiap field prompt bilingual wajib mengisi `id_old`, `id_new`, dan `en`
+     - jika salah satu dari `id_old`, `id_new`, atau `en` kosong pada field prompt di file-file di atas, hasil LLM dianggap gagal dan request akan di-retry ulang
      - `id_old` dan `id_new` disamakan oleh runtime
 
 2. `Execute Agentic`

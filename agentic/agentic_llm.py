@@ -513,6 +513,13 @@ SCENE_TYPE_OUTPUTS = {
 }
 
 PROMPT_VALUE_KEYS = {"id_old", "id_new", "en"}
+STRICT_NON_EMPTY_AGENTIC_PROMPT_FILES = {
+    "wan22_t2v_prompt.json",
+    "wan22_i2v_prompt.json",
+    "z_image_prompt.json",
+    "z_image_extra_prompts.json",
+    "wan22_t2v_batch_extra_prompts.json",
+}
 
 
 def _get_scene_type_outputs(scene_type: str, agentic_config: dict) -> list[str]:
@@ -1032,6 +1039,50 @@ def _validate_output_structure(
         )
 
 
+def _validate_non_empty_prompt_triplets(
+    filename: str,
+    value,
+    path_parts: tuple[str, ...],
+    errors: list[str],
+):
+    """Reject agentic prompt outputs when any required bilingual field is empty."""
+    if filename not in STRICT_NON_EMPTY_AGENTIC_PROMPT_FILES:
+        return
+
+    if isinstance(value, dict):
+        dict_keys = {str(key) for key in value.keys()}
+        if PROMPT_VALUE_KEYS.issubset(dict_keys):
+            missing_keys = [
+                key for key in ("id_old", "id_new", "en")
+                if not _clean_text(str(value.get(key, "")))
+            ]
+            if missing_keys:
+                path_text = ".".join(path_parts) if path_parts else filename
+                errors.append(
+                    f"{path_text}: field prompt bilingual tidak boleh kosong "
+                    f"(kosong={missing_keys})"
+                )
+            return
+
+        for key, child in value.items():
+            _validate_non_empty_prompt_triplets(
+                filename,
+                child,
+                path_parts + (str(key),),
+                errors,
+            )
+        return
+
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_non_empty_prompt_triplets(
+                filename,
+                item,
+                path_parts + (f"[{index}]",),
+                errors,
+            )
+
+
 def _normalize_output_against_input(
     input_value,
     output_value,
@@ -1174,6 +1225,17 @@ def normalize_llm_variations(
         _validate_output_structure(input_payload, output_payload, (filename,), structure_errors)
         if structure_errors:
             errors.extend(structure_errors)
+            continue
+
+        prompt_triplet_errors: list[str] = []
+        _validate_non_empty_prompt_triplets(
+            filename,
+            output_payload,
+            (filename,),
+            prompt_triplet_errors,
+        )
+        if prompt_triplet_errors:
+            errors.extend(prompt_triplet_errors)
             continue
 
         normalized[filename] = _normalize_output_against_input(
