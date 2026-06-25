@@ -52,7 +52,13 @@ from scripts.generate_compose import compose_scene, ffprobe_fps, ffprobe_size, r
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
 from scripts.generate_image_zoom_video import generate_image_zoom_video
-from prompt_localization import prepare_prompt_payload_for_save, read_json_for_runtime, resolve_prompt_payload_for_runtime
+from prompt_localization import (
+    LORA_TRIGGER_WORDS_FIELD,
+    prepare_prompt_payload_for_save,
+    prepend_lora_trigger_words,
+    read_json_for_runtime,
+    resolve_prompt_payload_for_runtime,
+)
 from scripts.project_settings import load_project_settings
 
 
@@ -588,6 +594,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
 
         # Process each prompt sequentially
         video_paths = []
+        base_t2v_trigger_words = str(t2v_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")).strip()
         for idx, prompt_data in enumerate(prompts_to_process):
             write_log(f"Processing wan22_t2v_batch video {idx + 1}/{total_videos} for {scene_dir}")
             try:
@@ -596,6 +603,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 merged_prompt_data = copy.deepcopy(t2v_prompt)
                 if isinstance(prompt_data, dict):
                     merged_prompt_data.update(prompt_data)
+                    if prompt_data is not t2v_prompt:
+                        merged_prompt_data["positive_prompt"] = prepend_lora_trigger_words(
+                            str(prompt_data.get("positive_prompt", "")).strip(),
+                            base_t2v_trigger_words,
+                        )
                 workflow = build_wan_t2v_workflow(merged_prompt_data, scene_meta, length_override=frames_per_video)
             except Exception as e:
                 write_log(f"Failed to build wan22_t2v workflow for batch video {idx + 1} in {scene_dir}: {e}")

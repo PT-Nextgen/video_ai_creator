@@ -38,6 +38,7 @@ SIZE_OPTIONS = [
 ]
 DEFAULT_PROMPT = {
     "image_model": MODEL_Z_IMAGE_TURBO,
+    "lora_trigger_words": "",
     "positive_prompt": "",
     "negative_prompt": "",
     "width": 368,

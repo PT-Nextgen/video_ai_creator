@@ -67,6 +67,8 @@ Catatan format prompt:
   - `repeat_penalty=1`
   - `draft_num_predict=4`
 - saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
+- `lora_trigger_words` disimpan sebagai text biasa dan tidak diterjemahkan
+- `lora_trigger_words` hanya disisipkan ke awal prompt positif versi Inggris saat runtime, bukan ditulis permanen ke field prompt
 
 Field utama:
 - `scene_meta.json`
@@ -91,6 +93,7 @@ Field utama:
 - `z_image_prompt.json`
   - `image_model`
   - `gemini_model_id` (khusus saat `image_model=gemini`)
+  - `lora_trigger_words`
   - `positive_prompt`
   - `negative_prompt`
   - `width`
@@ -107,6 +110,7 @@ Nilai `image_model` yang didukung:
 - `gemini`
 - `wan22_i2v_prompt.json`
   - `duration_seconds` (`5` / `10`)
+  - `lora_trigger_words`
   - `positive_prompt_one` sampai `positive_prompt_two`
   - `negative_prompt_one` sampai `negative_prompt_two`
   - `width`
@@ -120,6 +124,7 @@ Nilai `image_model` yang didukung:
   - `lora_low_name_2`
   - `lora_low_strength_2`
 - `wan22_t2v_prompt.json`
+  - `lora_trigger_words`
   - `positive_prompt`
   - `negative_prompt`
   - `width`
@@ -179,6 +184,7 @@ Kebutuhan prompt per `scene_type`:
   - membutuhkan `scene_meta.json`, `wan22_t2v_prompt.json`, dan `wan22_t2v_batch_extra_prompts.json`
   - durasi scene hanya `5` atau `10`
   - stage `WAN22_T2V` dijalankan satu per satu untuk prompt utama dan setiap prompt tambahan yang terisi
+  - `lora_trigger_words` diambil dari `wan22_t2v_prompt.json` lalu ditambahkan ke awal prompt positif `en` untuk prompt utama dan semua prompt tambahan saat runtime
   - jumlah video total = prompt utama + jumlah slot `Prompt Tambahan` yang terisi
   - jumlah frame per video dihitung dengan `ceil((duration * 16) / total_video)`
   - seluruh video hasil stage `WAN22_T2V` digabung menjadi satu video final
@@ -211,6 +217,7 @@ Catatan sumber image:
 - `wan22_i2v`
   - memakai satu gambar terbaru dari root folder scene
   - durasi gerak WAN mengikuti `wan22_i2v_prompt.json.duration_seconds` (`5` / `10`)
+  - `lora_trigger_words` dari `wan22_i2v_prompt.json` otomatis ditambahkan ke awal `positive_prompt_one` dan `positive_prompt_two` versi `en` saat runtime
 - `wan22_t2v_i2v`
   - stage `WAN22_T2V` selalu dijalankan terlebih dahulu
   - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
@@ -218,6 +225,7 @@ Catatan sumber image:
   - durasi stage `WAN22_I2V` otomatis menjadi `5` untuk scene `10` detik dan `10` untuk scene `15` detik
 - `wan22_t2v_batch`
   - stage `WAN22_T2V` dijalankan untuk prompt utama dan setiap prompt tambahan yang terisi
+  - `lora_trigger_words` dari `wan22_t2v_prompt.json` otomatis ditambahkan ke awal prompt positif versi `en` untuk prompt utama dan semua prompt tambahan saat runtime
   - frame per video dihitung dengan `ceil((duration * 16) / total_video)`
   - semua hasil video digabung menjadi video final
   - prompt tambahan yang kosong dilewati
@@ -860,6 +868,7 @@ Script: `scripts/generate_initial_image.py`
 Fungsi:
 - membaca `z_image_prompt.json`
 - prompt UI yang disimpan di JSON menggunakan `id_new`, lalu runtime akan memakai `en` jika tersedia atau akan menerjemahkan `id_new` ke Inggris saat diperlukan
+- `lora_trigger_words` dari `z_image_prompt.json` otomatis ditambahkan ke awal prompt positif versi `en` saat generate gambar utama maupun prompt tambahan
 - bisa juga membaca file prompt tambahan berbasis group untuk generate image alternatif dengan aturan model scene yang sama
 - jalur model dipilih otomatis dari `z_image_prompt.json`
 - jika model image scene adalah model biasa / ComfyUI:

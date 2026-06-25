@@ -64,6 +64,16 @@ GROUP_PROMPT_FIELDS = {
     "wan22_t2v_batch_extra_prompts.json": ["positive_prompt", "negative_prompt"],
 }
 
+LORA_TRIGGER_WORDS_FIELD = "lora_trigger_words"
+
+TRIGGER_WORD_PROMPT_FIELDS = {
+    "z_image_prompt.json": ["positive_prompt"],
+    "z_image_extra_prompts.json": ["positive_prompt"],
+    "wan22_i2v_prompt.json": ["positive_prompt_one", "positive_prompt_two"],
+    "wan22_t2v_prompt.json": ["positive_prompt"],
+    "wan22_t2v_batch_extra_prompts.json": ["positive_prompt"],
+}
+
 
 @dataclass
 class I18NPrompt:
@@ -843,6 +853,56 @@ def _group_fields_for(filename: str) -> list[str]:
     return GROUP_PROMPT_FIELDS.get(str(filename or ""), [])
 
 
+def normalize_lora_trigger_words(value) -> str:
+    return str(value or "").strip()
+
+
+def prepend_lora_trigger_words(prompt_text: str, trigger_words: str) -> str:
+    prompt_text = str(prompt_text or "").strip()
+    trigger_words = normalize_lora_trigger_words(trigger_words)
+    if not trigger_words:
+        return prompt_text
+    if not prompt_text:
+        return trigger_words
+    if prompt_text.casefold().startswith(trigger_words.casefold()):
+        return prompt_text
+    return f"{trigger_words} {prompt_text}"
+
+
+def apply_lora_trigger_words_to_prompt_payload(
+    filename: str,
+    data: dict,
+    trigger_words: str | None = None,
+) -> dict:
+    result = copy.deepcopy(data or {})
+    fields = TRIGGER_WORD_PROMPT_FIELDS.get(str(filename or ""), [])
+    if not fields:
+        return result
+
+    effective_trigger_words = normalize_lora_trigger_words(
+        result.get(LORA_TRIGGER_WORDS_FIELD, "") if trigger_words is None else trigger_words
+    )
+    if not effective_trigger_words:
+        return result
+
+    groups = result.get("groups")
+    if isinstance(groups, list):
+        updated_groups = []
+        for item in groups:
+            group_item = dict(item) if isinstance(item, dict) else {}
+            for key in fields:
+                if key in group_item:
+                    group_item[key] = prepend_lora_trigger_words(group_item.get(key, ""), effective_trigger_words)
+            updated_groups.append(group_item)
+        result["groups"] = updated_groups
+        return result
+
+    for key in fields:
+        if key in result:
+            result[key] = prepend_lora_trigger_words(result.get(key, ""), effective_trigger_words)
+    return result
+
+
 def _get_group_item(groups_value, index: int):
     if isinstance(groups_value, list) and 0 <= index < len(groups_value) and isinstance(groups_value[index], dict):
         return groups_value[index]
@@ -937,6 +997,8 @@ def resolve_prompt_payload_for_runtime(
                 resolved_groups.append(out_resolved_item)
             stored["groups"] = stored_groups
             resolved["groups"] = resolved_groups
+
+    resolved = apply_lora_trigger_words_to_prompt_payload(filename, resolved)
 
     return resolved, stored, changed
 

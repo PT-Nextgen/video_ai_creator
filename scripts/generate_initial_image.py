@@ -13,7 +13,12 @@ from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
-from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
+from prompt_localization import (
+    LORA_TRIGGER_WORDS_FIELD,
+    prepend_lora_trigger_words,
+    read_json_for_runtime,
+    resolve_prompt_payload_for_runtime,
+)
 
 
 def _scene_sort_key(name: str):
@@ -73,7 +78,10 @@ def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_i
             )
         group = groups[prompt_index - 1] if isinstance(groups[prompt_index - 1], dict) else {}
         prompts = dict(base_prompts)
-        prompts["positive_prompt"] = str(group.get("positive_prompt", "")).strip()
+        prompts["positive_prompt"] = prepend_lora_trigger_words(
+            str(group.get("positive_prompt", "")).strip(),
+            str(base_prompts.get(LORA_TRIGGER_WORDS_FIELD, "")).strip(),
+        )
         prompts["negative_prompt"] = str(group.get("negative_prompt", "")).strip()
 
     model_name = get_model_display_name(prompts)

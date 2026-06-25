@@ -27,6 +27,7 @@ WAN_DURATION_OPTIONS = [
 ]
 DEFAULT_PROMPT = {
     "duration_seconds": 10,
+    "lora_trigger_words": "",
     "positive_prompt_one": "",
     "positive_prompt_two": "",
     "negative_prompt_one": "",

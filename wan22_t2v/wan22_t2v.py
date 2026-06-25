@@ -20,6 +20,7 @@ SIZE_OPTIONS = [
     ("1280x720", 1280, 720),
 ]
 DEFAULT_PROMPT = {
+    "lora_trigger_words": "",
     "positive_prompt": "",
     "negative_prompt": "",
     "width": 368,

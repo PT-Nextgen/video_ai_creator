@@ -59,6 +59,7 @@ from agentic.agentic_config import (
     save_agentic_config,
 )
 from prompt_localization import (
+    LORA_TRIGGER_WORDS_FIELD,
     convert_prompt_payload_for_ui,
     _normalize_prompt_entry,
     prepare_prompt_payload_for_save,
@@ -2331,6 +2332,7 @@ class SceneEditorWindow(QMainWindow):
         self.z_lora_name_input = QComboBox()
         self.z_lora_name_input.setEditable(False)
         self.z_lora_strength_input = QLineEdit()
+        self.z_lora_trigger_words_input = QLineEdit()
         for slot_index in range(3):
             positive_input = QTextEdit()
             negative_input = QTextEdit()
@@ -2365,6 +2367,7 @@ class SceneEditorWindow(QMainWindow):
         self.wan_lora_low2_name_input = QComboBox()
         self.wan_lora_low2_name_input.setEditable(False)
         self.wan_lora_low2_strength_input = QLineEdit()
+        self.wan_lora_trigger_words_input = QLineEdit()
         self.wan_t2v_size_input = QComboBox()
         for label, width, height in WAN_SIZE_OPTIONS:
             self.wan_t2v_size_input.addItem(label, (width, height))
@@ -2380,6 +2383,7 @@ class SceneEditorWindow(QMainWindow):
         self.wan_t2v_lora_low2_name_input = QComboBox()
         self.wan_t2v_lora_low2_name_input.setEditable(False)
         self.wan_t2v_lora_low2_strength_input = QLineEdit()
+        self.wan_t2v_lora_trigger_words_input = QLineEdit()
         self.wan_t2v_positive_input = QTextEdit()
         self.wan_t2v_negative_input = QTextEdit()
         self.wan_t2v_generate_prompt_button = QToolButton()
@@ -2737,6 +2741,7 @@ class SceneEditorWindow(QMainWindow):
         z_layout.addRow("", self.z_use_lora_input)
         z_layout.addRow("Nama Lora", self.z_lora_name_input)
         z_layout.addRow("Kekuatan Lora", self.z_lora_strength_input)
+        z_layout.addRow("Trigger Word Lora", self.z_lora_trigger_words_input)
         z_layout.addRow("Prompt Positif", self.z_positive_input)
         z_layout.addRow("", button_row(self.z_clipboard_button, self.z_generate_prompt_button))
         z_layout.addRow("Prompt Negatif", self.z_negative_input)
@@ -2775,12 +2780,14 @@ class SceneEditorWindow(QMainWindow):
         add_t2v_lora_row(2, "Lora Low 1", self.wan_t2v_lora_low_name_input, self.wan_t2v_lora_low_strength_input)
         add_t2v_lora_row(3, "Lora High 2", self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input)
         add_t2v_lora_row(4, "Lora Low 2", self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input)
-        wan_t2v_layout.addWidget(self.copy_wan_t2v_variations_button, 5, 1, 1, 3, Qt.AlignLeft)
-        wan_t2v_layout.addWidget(QLabel("Prompt Positif"), 6, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_positive_input, 6, 1, 1, 3)
-        wan_t2v_layout.addWidget(self.wan_t2v_generate_prompt_button, 7, 1, 1, 3, Qt.AlignLeft)
-        wan_t2v_layout.addWidget(QLabel("Prompt Negatif"), 8, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_negative_input, 8, 1, 1, 3)
+        wan_t2v_layout.addWidget(QLabel("Trigger Word Lora"), 5, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_lora_trigger_words_input, 5, 1, 1, 3)
+        wan_t2v_layout.addWidget(self.copy_wan_t2v_variations_button, 6, 1, 1, 3, Qt.AlignLeft)
+        wan_t2v_layout.addWidget(QLabel("Prompt Positif"), 7, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_positive_input, 7, 1, 1, 3)
+        wan_t2v_layout.addWidget(self.wan_t2v_generate_prompt_button, 8, 1, 1, 3, Qt.AlignLeft)
+        wan_t2v_layout.addWidget(QLabel("Prompt Negatif"), 9, 0)
+        wan_t2v_layout.addWidget(self.wan_t2v_negative_input, 9, 1, 1, 3)
         tabs.addTab(self.wan_t2v_tab, "WAN22_T2V")
 
         self.wan_tab = QWidget()
@@ -2799,8 +2806,10 @@ class SceneEditorWindow(QMainWindow):
         add_lora_row(2, "Lora Low 1", self.wan_lora_low_name_input, self.wan_lora_low_strength_input)
         add_lora_row(3, "Lora High 2", self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input)
         add_lora_row(4, "Lora Low 2", self.wan_lora_low2_name_input, self.wan_lora_low2_strength_input)
-        wan_layout.addWidget(self.copy_wan_i2v_variations_button, 5, 1, 1, 3, Qt.AlignLeft)
-        row = 6
+        wan_layout.addWidget(QLabel("Trigger Word Lora"), 5, 0)
+        wan_layout.addWidget(self.wan_lora_trigger_words_input, 5, 1, 1, 3)
+        wan_layout.addWidget(self.copy_wan_i2v_variations_button, 6, 1, 1, 3, Qt.AlignLeft)
+        row = 7
         for slot in ("one", "two"):
             positive_key = f"positive_prompt_{slot}"
             negative_key = f"negative_prompt_{slot}"
@@ -4574,6 +4583,7 @@ class SceneEditorWindow(QMainWindow):
             self.update_image_model_fields_enabled()
             self.update_seed_fields_enabled()
             self.update_lora_fields_enabled()
+            self.z_lora_trigger_words_input.setText(str(z_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")))
             self.z_positive_input.setPlainText(str(z_prompt.get("positive_prompt", "")))
             self.z_negative_input.setPlainText(str(z_prompt.get("negative_prompt", "")))
             wan_t2v_width = int(wan_t2v_prompt.get("width", DEFAULT_WAN22_T2V_PROMPT["width"]))
@@ -4602,6 +4612,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_t2v_lora_low_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength"])))
             self.wan_t2v_lora_high2_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength_2"])))
             self.wan_t2v_lora_low2_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength_2"])))
+            self.wan_t2v_lora_trigger_words_input.setText(str(wan_t2v_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")))
             self.wan_t2v_positive_input.setPlainText(str(wan_t2v_prompt.get("positive_prompt", "")))
             self.wan_t2v_negative_input.setPlainText(str(wan_t2v_prompt.get("negative_prompt", "")))
             wan_width = int(wan_prompt.get("width", DEFAULT_WAN_PROMPT["width"]))
@@ -4617,6 +4628,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_lora_low_strength_input.setText(str(wan_prompt.get("lora_low_strength", DEFAULT_WAN_PROMPT["lora_low_strength"])))
             self.wan_lora_high2_strength_input.setText(str(wan_prompt.get("lora_high_strength_2", DEFAULT_WAN_PROMPT["lora_high_strength_2"])))
             self.wan_lora_low2_strength_input.setText(str(wan_prompt.get("lora_low_strength_2", DEFAULT_WAN_PROMPT["lora_low_strength_2"])))
+            self.wan_lora_trigger_words_input.setText(str(wan_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")))
             self.update_wan_lora_fields_enabled()
             for key, widget in self.wan_prompt_inputs.items():
                 widget.setPlainText(str(wan_prompt.get(key, "")))
@@ -4767,6 +4779,7 @@ class SceneEditorWindow(QMainWindow):
             "use_lora": self.z_use_lora_input.isChecked(),
             "lora_name": self.z_lora_name_input.currentText().strip(),
             "strength_model": self.parse_lora_strength_value(),
+            LORA_TRIGGER_WORDS_FIELD: self.z_lora_trigger_words_input.text().strip(),
         }
         z_prompt["json_api"] = get_z_image_template_name(z_prompt)
         wan_t2v_prompt = {
@@ -4782,6 +4795,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high2_strength_input, "High 2"),
             "lora_low_name_2": self.wan_t2v_lora_low2_name_input.currentText().strip(),
             "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low2_strength_input, "Low 2"),
+            LORA_TRIGGER_WORDS_FIELD: self.wan_t2v_lora_trigger_words_input.text().strip(),
         }
         wan_prompt = {
             "width": int((self.wan_size_input.currentData() or (368, 640))[0]),
@@ -4794,6 +4808,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_high2_strength_input, "High 2"),
             "lora_low_name_2": self.wan_lora_low2_name_input.currentText().strip(),
             "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_low2_strength_input, "Low 2"),
+            LORA_TRIGGER_WORDS_FIELD: self.wan_lora_trigger_words_input.text().strip(),
         }
         for key, widget in self.wan_prompt_inputs.items():
             wan_prompt[key] = widget.toPlainText().strip()
