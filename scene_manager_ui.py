@@ -2501,7 +2501,7 @@ class SceneEditorWindow(QMainWindow):
         self.agentic_number_of_variations_input = QSpinBox()
         self.agentic_number_of_variations_input.setRange(0, 999)
         self.agentic_special_command_input = QTextEdit()
-        self.agentic_special_command_input.setFixedHeight(88)
+        self.agentic_special_command_input.setFixedHeight(264)
         self.agentic_special_command_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.agentic_create_initial_image_input = QCheckBox("Buat image awal", self)
         self.agentic_create_initial_image_input.setChecked(bool(DEFAULT_AGENERIC_CONFIG.get("create_initial_image", True)))
