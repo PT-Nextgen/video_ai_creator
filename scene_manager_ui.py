@@ -631,6 +631,11 @@ def agentic_create_initial_image_policy(scene_type: str) -> tuple[bool, bool | N
     return False, True
 
 
+def scene_type_supports_initial_image(scene_type: str) -> bool:
+    scene_type = str(scene_type or "").strip()
+    return scene_type in {"wan22", "wan22_i2v", "wan22_s2v", "i2v", "image_pan", "image_zoom"}
+
+
 def load_json(path: Path, default: dict):
     if not path.exists():
         return copy.deepcopy(default)
@@ -4034,9 +4039,7 @@ class SceneEditorWindow(QMainWindow):
         if self.generate_initial_image_button is None:
             return
         scene_type = self.scene_type_combo.currentText().strip()
-        self.generate_initial_image_button.setEnabled(
-            scene_type not in {"web_scroll", WAN22_T2V_SCENE_TYPE}
-        )
+        self.generate_initial_image_button.setEnabled(scene_type_supports_initial_image(scene_type))
 
     def build_audio_action_group(self):
         frame = QFrame(self)
@@ -4775,6 +4778,7 @@ class SceneEditorWindow(QMainWindow):
         self._apply_scene_view_mode()
         self.refresh_scene_status()
         self.refresh_assets_and_previews()
+        self.update_run_action_buttons_state()
 
     def gather_scene_data(self):
         meta = {
@@ -6168,11 +6172,11 @@ class SceneEditorWindow(QMainWindow):
             QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
             return
         scene_type = self.scene_type_combo.currentText().strip()
-        if scene_type == WAN22_T2V_SCENE_TYPE:
+        if not scene_type_supports_initial_image(scene_type):
             QMessageBox.information(
                 self,
                 "Tidak Tersedia",
-                "Buat Gambar Awal tidak tersedia untuk scene wan22_t2v_i2v.",
+                f"Buat Gambar Awal tidak tersedia untuk scene {scene_type or '-'}.",
             )
             return
         if not self.save_current_scene():
