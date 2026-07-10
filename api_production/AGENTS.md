@@ -21,9 +21,9 @@ Opsi yang umum dipakai:
 - `--description` untuk deskripsi project
 - `--width` dan `--height` untuk ukuran video
 - `--comfyui-server` untuk alamat server ComfyUI
-- `--prompt-generation-provider` untuk provider prompt generation (`gemini` atau `ollama`)
+- `--prompt-generation-provider` untuk provider prompt generation (`gemini` atau `llama.cpp`)
 - `--prompt-generation-model` untuk model prompt generation
-- `--prompt-generation-host` dan `--prompt-generation-port` untuk konfigurasi Ollama
+- `--prompt-generation-host` dan `--prompt-generation-port` untuk konfigurasi llama.cpp
 - `--voice-provider` untuk provider voice default (`gemini` atau `elevenlabs`)
 - `--generate-caption` untuk aktif atau nonaktifkan caption otomatis
 - `--with-default-scene` untuk langsung membuat `scene_1` saat project dibuat
@@ -31,7 +31,7 @@ Opsi yang umum dipakai:
 Contoh project dengan konfigurasi lengkap:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider ollama --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 11434 --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
 ```
 
 ## 2. Membuat Scene

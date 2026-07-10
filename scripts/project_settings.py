@@ -23,7 +23,7 @@ DEFAULT_PROJECT_SETTINGS = {
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
         "host": "nextgenserver",
-        "port": 11434,
+        "port": 8080,
     },
     "translate": {
         "provider": "gemini",
@@ -81,7 +81,9 @@ def _normalize_settings(data: dict | None) -> dict:
         sub = merged.get(key) if isinstance(merged.get(key), dict) else {}
         provider = str(sub.get("provider", "gemini")).strip().lower()
         if key == "prompt_generation":
-            sub["provider"] = provider if provider in {"gemini", "ollama"} else "gemini"
+            if provider == "ollama":
+                provider = "llama.cpp"
+            sub["provider"] = provider if provider in {"gemini", "llama.cpp"} else "gemini"
             sub["host"] = str(sub.get("host", DEFAULT_PROJECT_SETTINGS[key]["host"])).strip() or DEFAULT_PROJECT_SETTINGS[key]["host"]
             try:
                 sub["port"] = int(sub.get("port", DEFAULT_PROJECT_SETTINGS[key]["port"]))

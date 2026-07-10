@@ -19,7 +19,7 @@ DEFAULT_SERVER_CONFIG = {
         "provider": "gemini",
         "model": "gemini-3.5-flash",
         "host": "nextgenserver",
-        "port": 11434,
+        "port": 8080,
     },
 }
 
@@ -47,7 +47,9 @@ def _normalize_config(data: dict | None) -> dict:
             sub_config = copy.deepcopy(DEFAULT_SERVER_CONFIG[key])
         provider = str(sub_config.get("provider", "gemini")).strip().lower()
         if key == "prompt_generation":
-            sub_config["provider"] = provider if provider in {"gemini", "ollama"} else "gemini"
+            if provider == "ollama":
+                provider = "llama.cpp"
+            sub_config["provider"] = provider if provider in {"gemini", "llama.cpp"} else "gemini"
             sub_config["host"] = str(sub_config.get("host", DEFAULT_SERVER_CONFIG[key]["host"])).strip() or DEFAULT_SERVER_CONFIG[key]["host"]
             try:
                 sub_config["port"] = int(sub_config.get("port", DEFAULT_SERVER_CONFIG[key]["port"]))

@@ -32,7 +32,7 @@ PROJECT_MODEL_CHOICES = [
 ]
 PROMPT_PROVIDER_CHOICES = [
     "gemini",
-    "ollama",
+    "llama.cpp",
 ]
 VOICE_PROVIDER_CHOICES = [
     "gemini",
@@ -139,13 +139,13 @@ def build_parser() -> argparse.ArgumentParser:
     create_project_parser.add_argument(
         "--prompt-generation-host",
         default=DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"],
-        help="Host Ollama untuk prompt generation.",
+        help="Host llama.cpp untuk prompt generation.",
     )
     create_project_parser.add_argument(
         "--prompt-generation-port",
         type=int,
         default=DEFAULT_PROJECT_SETTINGS["prompt_generation"]["port"],
-        help="Port Ollama untuk prompt generation.",
+        help="Port llama.cpp untuk prompt generation.",
     )
     create_project_parser.add_argument(
         "--translate-model",

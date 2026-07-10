@@ -158,6 +158,19 @@ LORA_PREFIX_WAN_LOW = "WAN2.2/LOW"
 _COMFYUI_LORA_OPTIONS_CACHE: dict[str, list[str]] = {}
 
 
+def _normalize_prompt_provider(value: str) -> str:
+    provider = str(value or "").strip().lower()
+    if provider == "ollama":
+        return "llama.cpp"
+    if provider in {"gemini", "llama.cpp"}:
+        return provider
+    return "gemini"
+
+
+def _is_local_prompt_provider(value: str) -> bool:
+    return _normalize_prompt_provider(value) == "llama.cpp"
+
+
 def _normalize_server_url(server: str) -> str:
     server = str(server or "").strip()
     if not server:
@@ -1289,7 +1302,9 @@ class PromptGenerationWorker(QObject):
         translator = None
         try:
             translator = get_prompt_translator(project_dir=self.project_dir or None)
-            provider_name = str(getattr(translator, "prompt_generation_provider", "gemini")).strip() or "gemini"
+            provider_name = _normalize_prompt_provider(
+                str(getattr(translator, "prompt_generation_provider", "gemini")).strip() or "gemini"
+            )
             model_name = str(getattr(translator, "prompt_generation_model_name", "")).strip()
             self.progress.emit(
                 f"Membuat prompt multibahasa via {provider_name}" + (f" ({model_name})..." if model_name else "...")
@@ -1625,7 +1640,7 @@ class ProjectSettingsDialog(QDialog):
 
         self.prompt_provider_input = QComboBox(self)
         self.prompt_provider_input.addItem("Gemini", "gemini")
-        self.prompt_provider_input.addItem("Ollama", "ollama")
+        self.prompt_provider_input.addItem("llama.cpp", "llama.cpp")
         self._gemini_prompt_models = [
             "gemini-3.1-flash-lite",
             "gemini-3.5-flash",
@@ -1645,7 +1660,7 @@ class ProjectSettingsDialog(QDialog):
         self.prompt_ollama_host_input = QLineEdit(self)
         self.prompt_ollama_port_input = QSpinBox(self)
         self.prompt_ollama_port_input.setRange(1, 65535)
-        self.prompt_ollama_port_input.setValue(11434)
+        self.prompt_ollama_port_input.setValue(8080)
         self.prompt_ollama_server_widget = QWidget(self)
         prompt_ollama_server_layout = QHBoxLayout(self.prompt_ollama_server_widget)
         prompt_ollama_server_layout.setContentsMargins(0, 0, 0, 0)
@@ -1691,7 +1706,7 @@ class ProjectSettingsDialog(QDialog):
         self.form_layout.addRow("Ukuran Video Project", self.video_size_input)
         self.form_layout.addRow("Provider Prompt Generation", self.prompt_provider_input)
         self.form_layout.addRow("Model Prompt Generation", self.prompt_model_input)
-        self.form_layout.addRow("Ollama Host / Port", self.prompt_ollama_server_widget)
+        self.form_layout.addRow("llama.cpp Host / Port", self.prompt_ollama_server_widget)
         self.form_layout.addRow("Voice Project", self.voice_provider_input)
         self.form_layout.addRow("Caption Project", self.caption_enabled_input)
 
@@ -1750,7 +1765,7 @@ class ProjectSettingsDialog(QDialog):
         self._update_cover_lora_enabled()
         self._update_cover_model_fields()
         self._update_prompt_generation_fields()
-        if str(self.prompt_provider_input.currentData() or "gemini").strip().lower() == "ollama":
+        if _is_local_prompt_provider(self.prompt_provider_input.currentData() or "gemini"):
             self._refresh_ollama_models()
         self._is_loading_project_settings = False
 
@@ -1790,6 +1805,7 @@ class ProjectSettingsDialog(QDialog):
         prompt_provider = str(
             prompt_generation.get("provider", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"])
         ).strip().lower() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
+        prompt_provider = _normalize_prompt_provider(prompt_provider)
         self._pending_prompt_model_value = str(
             prompt_generation.get("model", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"])
         ).strip()
@@ -1852,8 +1868,8 @@ class ProjectSettingsDialog(QDialog):
         self.cover_seed_input.setEnabled(not self.cover_use_random_seed_input.isChecked())
 
     def _update_prompt_generation_fields(self):
-        provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower()
-        is_ollama = provider == "ollama"
+        provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
+        is_ollama = _is_local_prompt_provider(provider)
         self.prompt_ollama_server_widget.setVisible(is_ollama)
         label = self.form_layout.labelForField(self.prompt_ollama_server_widget) if hasattr(self, "form_layout") else None
         if label is not None:
@@ -1908,8 +1924,8 @@ class ProjectSettingsDialog(QDialog):
         )
 
     def _schedule_ollama_model_refresh(self):
-        provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower()
-        if provider != "ollama":
+        provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
+        if not _is_local_prompt_provider(provider):
             return
         current_value = (
             str(self.prompt_model_input.currentData() or "").strip()
@@ -1921,8 +1937,8 @@ class ProjectSettingsDialog(QDialog):
         self._ollama_models_refresh_timer.start()
 
     def _refresh_ollama_models(self):
-        provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower()
-        if provider != "ollama":
+        provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
+        if not _is_local_prompt_provider(provider):
             return
         host = self.prompt_ollama_host_input.text().strip()
         port = int(self.prompt_ollama_port_input.value())
@@ -1930,21 +1946,35 @@ class ProjectSettingsDialog(QDialog):
             self._set_prompt_model_choices([], self._pending_prompt_model_value)
             return
         base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
-        url = f"{base_url.rstrip('/')}:{port}/api/tags"
         model_names = []
-        try:
-            response = requests.get(url, timeout=3)
-            response.raise_for_status()
-            payload = response.json() if response.content else {}
-            models = payload.get("models", []) if isinstance(payload, dict) else []
-            if isinstance(models, list):
-                for item in models:
-                    if isinstance(item, dict):
-                        model_name = str(item.get("name", "")).strip()
-                        if model_name:
-                            model_names.append(model_name)
-        except Exception:
-            model_names = []
+        for url, parser in (
+            (f"{base_url.rstrip('/')}:{port}/v1/models", "openai"),
+            (f"{base_url.rstrip('/')}:{port}/api/tags", "ollama"),
+        ):
+            try:
+                response = requests.get(url, timeout=3)
+                response.raise_for_status()
+                payload = response.json() if response.content else {}
+                if parser == "openai":
+                    models = payload.get("data", []) if isinstance(payload, dict) else []
+                    if isinstance(models, list):
+                        for item in models:
+                            if isinstance(item, dict):
+                                model_name = str(item.get("id", "")).strip()
+                                if model_name:
+                                    model_names.append(model_name)
+                else:
+                    models = payload.get("models", []) if isinstance(payload, dict) else []
+                    if isinstance(models, list):
+                        for item in models:
+                            if isinstance(item, dict):
+                                model_name = str(item.get("name", "")).strip()
+                                if model_name:
+                                    model_names.append(model_name)
+                if model_names:
+                    break
+            except Exception:
+                continue
         self._set_prompt_model_choices(model_names, self._pending_prompt_model_value)
 
     def _update_cover_lora_enabled(self):
@@ -2012,7 +2042,7 @@ class ProjectSettingsDialog(QDialog):
         self._update_cover_lora_enabled()
 
     def get_data(self):
-        prompt_provider = str(self.prompt_provider_input.currentData() or "gemini").strip().lower() or "gemini"
+        prompt_provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
         prompt_model = str(self.prompt_model_input.currentText() or "").strip()
         project_description = self.description_input.toPlainText().strip()
         comfyui_server = self.comfyui_server_input.text().strip()
@@ -2035,11 +2065,11 @@ class ProjectSettingsDialog(QDialog):
             raise ValueError("Model Prompt Generation wajib diisi.")
         prompt_ollama_host = self.prompt_ollama_host_input.text().strip()
         prompt_ollama_port = int(self.prompt_ollama_port_input.value())
-        if prompt_provider == "ollama":
+        if _is_local_prompt_provider(prompt_provider):
             if not prompt_ollama_host:
-                raise ValueError("Host Ollama wajib diisi.")
+                raise ValueError("Host llama.cpp wajib diisi.")
             if prompt_ollama_port <= 0:
-                raise ValueError("Port Ollama harus lebih besar dari 0.")
+                raise ValueError("Port llama.cpp harus lebih besar dari 0.")
         size_data = self.video_size_input.currentData() or (
             DEFAULT_PROJECT_SETTINGS["video_size"]["width"],
             DEFAULT_PROJECT_SETTINGS["video_size"]["height"],

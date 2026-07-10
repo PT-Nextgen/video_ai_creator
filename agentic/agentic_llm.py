@@ -9,6 +9,11 @@ import requests
 from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
 
+LOCAL_PROMPT_PROVIDER = "llama.cpp"
+LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
+DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
+DEFAULT_LOCAL_PROMPT_PORT = 8080
+
 
 # ---------------------------------------------------------------------------
 # Gemini text-only API
@@ -76,61 +81,97 @@ def call_gemini_text(
     return _clean_text(text)
 
 
-def call_ollama_text(
+def call_llama_cpp_text(
     prompt: str,
     model_name: str,
-    host: str = "nextgenserver",
-    port: int = 11434,
+    host: str = DEFAULT_LOCAL_PROMPT_HOST,
+    port: int = DEFAULT_LOCAL_PROMPT_PORT,
     timeout: int = 120,
     response_format: str | dict | None = None,
 ) -> str:
-    """Call Ollama generate API with text-only response."""
+    """Call llama.cpp text API with OpenAI-compatible fallback endpoints."""
     host = str(host or "").strip() or "nextgenserver"
     base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
-    url = f"{base_url.rstrip('/')}:{int(port)}/api/generate"
-    payload = {
-        "model": str(model_name or "").strip(),
-        "prompt": prompt,
-        "stream": False,
-        "think": True,
-        "options": {
-            "temperature": 1,
-            "top_k": 20,
-            "top_p": 0.95,
-            "presence_penalty": 1.5,
-            "repeat_penalty": 1,
-            "draft_num_predict": 4,
-        },
-    }
-    if response_format:
-        payload["format"] = response_format
-
+    server_base_url = f"{base_url.rstrip('/')}:{int(port)}"
+    attempts = [
+        (
+            f"{server_base_url}/v1/chat/completions",
+            {
+                "model": str(model_name or "").strip(),
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "temperature": 1,
+                "top_p": 0.95,
+                **(
+                    {"response_format": {"type": "json_object"}}
+                    if response_format
+                    else {}
+                ),
+            },
+            _extract_best_openai_compatible_text,
+        ),
+        (
+            f"{server_base_url}/completion",
+            {
+                "prompt": prompt,
+                "n_predict": 2048,
+                "temperature": 1,
+                "top_p": 0.95,
+                "stop": [],
+            },
+            _extract_best_llama_cpp_completion_text,
+        ),
+        (
+            f"{server_base_url}/api/generate",
+            {
+                "model": str(model_name or "").strip(),
+                "prompt": prompt,
+                "stream": False,
+                "think": True,
+                "options": {
+                    "temperature": 1,
+                    "top_k": 20,
+                    "top_p": 0.95,
+                    "presence_penalty": 1.5,
+                    "repeat_penalty": 1,
+                    "draft_num_predict": 4,
+                },
+                **({"format": response_format} if response_format else {}),
+            },
+            _extract_best_ollama_text,
+        ),
+    ]
     start_time = time.perf_counter()
-    resp = requests.post(url, json=payload, timeout=timeout)
+    errors: list[str] = []
+    prefer_json = bool(response_format)
+    for url, payload, extractor in attempts:
+        try:
+            resp = requests.post(url, json=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            errors.append(f"{url} -> {exc}")
+            continue
+        if resp.status_code >= 400:
+            errors.append(f"{url} -> HTTP {resp.status_code}: {resp.text[:240]}")
+            continue
+        result = resp.json()
+        text = extractor(result, prefer_json=prefer_json)
+        if not text:
+            errors.append(f"{url} -> response tanpa teks")
+            continue
+        elapsed = time.perf_counter() - start_time
+        write_log(
+            f"[{LOCAL_PROMPT_PROVIDER}] text generation sukses | model={model_name} | host={host} | "
+            f"port={port} | elapsed={elapsed:.3f}s | endpoint={url}"
+        )
+        return _clean_text(text)
+
     elapsed = time.perf_counter() - start_time
-
-    if resp.status_code >= 400:
-        write_log(
-            f"[ollama] text generation gagal | model={model_name} | host={host} | port={port} | "
-            f"elapsed={elapsed:.3f}s | status={resp.status_code} | error={resp.text[:600]}",
-            level="error",
-        )
-        raise RuntimeError(f"Ollama error {resp.status_code}: {resp.text[:600]}")
-
-    result = resp.json()
-    text = _extract_best_ollama_text(result, prefer_json=bool(response_format))
-    if not text:
-        write_log(
-            f"[ollama] text generation gagal — response tanpa teks | model={model_name} | "
-            f"host={host} | port={port} | elapsed={elapsed:.3f}s",
-            level="error",
-        )
-        raise RuntimeError(f"Ollama response has no text data: {json.dumps(result)[:500]}")
-
     write_log(
-        f"[ollama] text generation sukses | model={model_name} | host={host} | port={port} | elapsed={elapsed:.3f}s"
+        f"[{LOCAL_PROMPT_PROVIDER}] text generation gagal | model={model_name} | host={host} | port={port} | "
+        f"elapsed={elapsed:.3f}s | error={' || '.join(errors[:3])}",
+        level="error",
     )
-    return _clean_text(text)
+    raise RuntimeError(f"llama.cpp error: {' || '.join(errors[:3])}")
 
 
 def _extract_text_from_gemini_response(response_json: dict) -> str:
@@ -197,6 +238,59 @@ def _extract_best_ollama_text(result: dict, prefer_json: bool = False) -> str:
         add_candidate(f"{response_text}\n{thinking_text}")
         add_candidate(f"{thinking_text}\n{response_text}")
 
+    if prefer_json:
+        for candidate in candidates:
+            json_candidate = _extract_json_text_candidate(candidate)
+            if json_candidate:
+                return json_candidate
+    return candidates[0] if candidates else ""
+
+
+def _extract_best_openai_compatible_text(result: dict, prefer_json: bool = False) -> str:
+    candidates: list[str] = []
+
+    def add_candidate(value):
+        if isinstance(value, str):
+            text = _clean_text(value)
+            if text and text not in candidates:
+                candidates.append(text)
+        elif isinstance(value, list):
+            parts = []
+            for item in value:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+            if parts:
+                add_candidate("\n".join(parts))
+
+    for choice in result.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        add_candidate(choice.get("text", ""))
+        message = choice.get("message")
+        if isinstance(message, dict):
+            add_candidate(message.get("content", ""))
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            add_candidate(delta.get("content", ""))
+
+    if prefer_json:
+        for candidate in candidates:
+            json_candidate = _extract_json_text_candidate(candidate)
+            if json_candidate:
+                return json_candidate
+    return candidates[0] if candidates else ""
+
+
+def _extract_best_llama_cpp_completion_text(result: dict, prefer_json: bool = False) -> str:
+    candidates: list[str] = []
+    for key in ("content", "completion", "response"):
+        value = result.get(key)
+        if isinstance(value, str):
+            text = _clean_text(value)
+            if text and text not in candidates:
+                candidates.append(text)
     if prefer_json:
         for candidate in candidates:
             json_candidate = _extract_json_text_candidate(candidate)
@@ -1269,7 +1363,9 @@ def generate_variations(
 
     pg = project_settings.get("prompt_generation", {})
     provider = str(pg.get("provider", "gemini")).strip().lower() or "gemini"
-    if provider not in {"gemini", "ollama"}:
+    if provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+        provider = LOCAL_PROMPT_PROVIDER
+    if provider not in {"gemini", LOCAL_PROMPT_PROVIDER}:
         provider = "gemini"
 
     # Determine model
@@ -1277,11 +1373,11 @@ def generate_variations(
         model_name = str(pg.get("model", "gemini-3.1-flash-lite")).strip()
     if not model_name:
         model_name = "gemini-3.1-flash-lite"
-    ollama_host = str(pg.get("host", "nextgenserver")).strip() or "nextgenserver"
+    local_host = str(pg.get("host", DEFAULT_LOCAL_PROMPT_HOST)).strip() or DEFAULT_LOCAL_PROMPT_HOST
     try:
-        ollama_port = int(pg.get("port", 11434))
+        local_port = int(pg.get("port", DEFAULT_LOCAL_PROMPT_PORT))
     except (TypeError, ValueError):
-        ollama_port = 11434
+        local_port = DEFAULT_LOCAL_PROMPT_PORT
     # Build prompt
     prompt = build_agentic_prompt(
         scene_dir=scene_dir,
@@ -1301,12 +1397,12 @@ def generate_variations(
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
-            if provider == "ollama":
-                response_text = call_ollama_text(
+            if provider == LOCAL_PROMPT_PROVIDER:
+                response_text = call_llama_cpp_text(
                     prompt,
                     model_name=model_name,
-                    host=ollama_host,
-                    port=ollama_port,
+                    host=local_host,
+                    port=local_port,
                     response_format=output_schema,
                 )
             else:

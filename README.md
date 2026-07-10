@@ -59,13 +59,9 @@ Catatan format prompt:
 - `en` adalah versi Inggris untuk runtime
 - prompt generation dan translate memakai konfigurasi yang sama di `project_settings.json.prompt_generation`
 - provider `gemini` memakai default model API tanpa setting `temperature`
-- provider `ollama` memakai mode thinking dengan parameter hardcoded:
-  - `temperature=1`
-  - `top_k=20`
-  - `top_p=0.95`
-  - `presence_penalty=1.5`
-  - `repeat_penalty=1`
-  - `draft_num_predict=4`
+- provider `llama.cpp` memakai endpoint OpenAI-compatible bila tersedia
+- runtime akan mencoba `v1/chat/completions` untuk text generation dan `v1/models` untuk daftar model
+- jika endpoint modern tidak tersedia, runtime akan fallback ke endpoint legacy yang kompatibel
 - saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
 - `lora_trigger_words` disimpan sebagai text biasa dan tidak diterjemahkan
 - `lora_trigger_words` hanya disisipkan ke awal prompt positif versi Inggris saat runtime, bukan ditulis permanen ke field prompt
@@ -86,7 +82,7 @@ Field utama:
   - `video_size.height`
   - `prompt_generation.provider`
   - `prompt_generation.model`
-  - `prompt_generation.host` dan `prompt_generation.port` untuk Ollama
+  - `prompt_generation.host` dan `prompt_generation.port` untuk llama.cpp
   - `voice.voice_provider` (`gemini` / `elevenlabs`)
   - `caption.generate_caption`
   - `cover` (struktur sama seperti `z_image_prompt.json`)
@@ -296,7 +292,7 @@ Contoh:
 Pemakaian:
 - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, `scripts/generate_cover_image.py`, dan `scene_manager_ui.py`
 - model `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
-- jika provider `ollama` dipilih, UI akan membaca model yang tersimpan di JSON lalu mencoba mengambil daftar model dari server `host:port`
+- jika provider `llama.cpp` dipilih, UI akan membaca model yang tersimpan di JSON lalu mencoba mengambil daftar model dari server `host:port`
 - jika model tersimpan tersedia, dropdown akan memilih model itu
 - jika model tersimpan tidak tersedia, nilai tersimpan tetap ditampilkan sebagai opsi supaya konfigurasi lama tidak hilang
 - di UI, konfigurasi ini diubah lewat dialog `Konfigurasi Project` (bukan dialog server terpisah)
@@ -353,7 +349,7 @@ Pilihan `scene_type`:
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project
-.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider ollama --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 11434 --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
@@ -457,16 +453,16 @@ Fungsi utama:
   - `ComfyUI Server` (`<ip/host>:<port>`, wajib diisi, default `nextgenserver:8188`)
   - `Ukuran Video Project`
   - `Model Prompt Generation`
-    - provider: `Gemini` atau `Ollama`
+    - provider: `Gemini` atau `llama.cpp`
     - model Gemini dibaca dari daftar model yang tersedia
-    - model Ollama dibaca dari server `host:port`
+    - model llama.cpp dibaca dari server `host:port`
     - jika model tersimpan di JSON tersedia, dropdown akan langsung memilihnya
     - jika model tidak tersedia, dropdown dibiarkan kosong dan harus dipilih ulang
     - provider `Gemini` memakai default API tanpa setting `temperature`
-    - provider `Ollama` selalu memakai `thinking` dan parameter hardcoded
-  - `Ollama Host / Port`
+    - provider `llama.cpp` mencoba endpoint `v1/models` lebih dulu lalu fallback ke endpoint legacy bila perlu
+  - `llama.cpp Host / Port`
     - berdampingan di satu baris
-    - default: `nextgenserver:11434`
+    - default: `nextgenserver:8080`
   - `Voice Project`
   - `Caption Project`
   - `Cover`
