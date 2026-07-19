@@ -63,7 +63,7 @@
     },
     "37": {
         "inputs": {
-            "unet_name": "WAN2.2/wan2.2_s2v_14B_bf16.safetensors",
+            "unet_name": "WAN2.2/wan2.2_s2v_14B_fp8_scaled.safetensors",
             "weight_dtype": "default"
         },
         "class_type": "UNETLoader",
