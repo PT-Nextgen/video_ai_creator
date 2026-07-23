@@ -34,13 +34,13 @@ DEFAULT_PROMPT = {
     "negative_prompt_two": "",
     "width": 368,
     "height": 640,
-    "lora_high_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_high_name": "WAN2.2/HIGH/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
     "lora_high_strength": 0,
-    "lora_low_name": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "lora_low_name": "WAN2.2/LOW/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
     "lora_low_strength": 0,
-    "lora_high_name_2": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_high_name_2": "WAN2.2/HIGH/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
     "lora_high_strength_2": 0,
-    "lora_low_name_2": "WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "lora_low_name_2": "WAN2.2/LOW/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
     "lora_low_strength_2": 0,
 }
 
