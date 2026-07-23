@@ -792,22 +792,22 @@ Lora WAN:
 - `Lora High / Low` set 1
   - nama file dan kekuatan bisa diatur dari UI
   - default nama file:
-    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
-    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
+    - `WAN2.2/HIGH/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
+    - `WAN2.2/LOW/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
   - default kekuatan: `0`
   - dipetakan ke node `264` dan `265`
 - `Lora High / Low` set 2
   - nama file dan kekuatan bisa diatur dari UI
   - default nama file:
-    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
-    - `WAN2.2/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
+    - `WAN2.2/HIGH/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
+    - `WAN2.2/LOW/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
   - default kekuatan: `0`
   - dipetakan ke node `266` dan `267`
 - `wan22_t2v_i2v` / `WAN22_T2V`
   - nama file dan kekuatan bisa diatur dari UI
   - default nama file:
-    - `WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors`
-    - `WAN2.2/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors`
+    - `WAN2.2/HIGH/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors`
+    - `WAN2.2/LOW/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors`
   - default kekuatan: `0`
   - dipetakan ke node `114` dan `115`
   - layer tambahan dipetakan ke node `133` dan `134`
