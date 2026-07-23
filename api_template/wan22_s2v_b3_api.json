@@ -303,7 +303,7 @@
     },
     "107": {
         "inputs": {
-            "lora_name": "WAN2.2/HIGH//wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "lora_name": "WAN2.2/HIGH/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
             "strength_model": 1,
             "model": [
                 "182",
