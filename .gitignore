@@ -119,6 +119,9 @@ models/
 # Other
 *.log
 
+# Local music assets
+music/
+
 # Ensure we ignore python cache folders anywhere
 **/__pycache__/
 
