@@ -1459,7 +1459,7 @@ class WebSearchWorker(QObject):
 
 
 class ComposeMusicDialog(QDialog):
-    def __init__(self, music_files: list[Path], parent=None):
+    def __init__(self, music_files: list[Path], compose_song_enabled: bool = False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Buat Video Final")
         self.music_combo = QComboBox(self)
@@ -1476,8 +1476,11 @@ class ComposeMusicDialog(QDialog):
         for label, value in UPSCALE_OPTIONS:
             self.upscale_input.addItem(label, value)
         self.compose_song_input = QCheckBox("Compose Lagu", self)
+        self.compose_song_input.setEnabled(bool(compose_song_enabled))
         self.compose_song_input.setToolTip(
             "Potong 4 frame extra pada video S2V, hindari audio ganda, lalu gabungkan lagu."
+            if compose_song_enabled
+            else "Compose Lagu hanya tersedia jika semua scene bertipe wan22_s2v."
         )
 
         layout = QFormLayout(self)
@@ -6553,7 +6556,12 @@ class SceneEditorWindow(QMainWindow):
                 [p for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in exts],
                 key=lambda p: p.name.lower(),
             )
-        dialog = ComposeMusicDialog(music_files, self)
+        scene_dirs = self.list_scene_dirs_current()
+        all_scenes_are_s2v = bool(scene_dirs) and all(
+            str(load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META).get("scene_type", "")).strip() == "wan22_s2v"
+            for scene_dir in scene_dirs
+        )
+        dialog = ComposeMusicDialog(music_files, all_scenes_are_s2v, self)
         if dialog.exec() != QDialog.Accepted:
             return
         music_file, music_volume, upscale_factor, compose_song = dialog.get_values()
