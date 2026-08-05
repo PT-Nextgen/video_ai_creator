@@ -340,10 +340,9 @@ def _scaled_dimension(value: int, factor: float) -> int:
     return scaled
 
 
-def upscale_video_with_frames(src_path: str, dst_path: str, scale_factor: float, frames_dir: str) -> str:
+def upscale_video(src_path: str, dst_path: str, scale_factor: float) -> str:
     src_path = os.path.abspath(str(src_path))
     dst_path = os.path.abspath(str(dst_path))
-    frames_dir = os.path.abspath(str(frames_dir))
     factor = float(scale_factor)
     if factor <= 1.0:
         raise ValueError("scale_factor harus lebih besar dari 1.0")
@@ -352,9 +351,6 @@ def upscale_video_with_frames(src_path: str, dst_path: str, scale_factor: float,
     out_height = _scaled_dimension(height, factor)
 
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-    os.makedirs(frames_dir, exist_ok=True)
-    _clear_directory_contents(frames_dir)
-
     tmp_output = dst_path if os.path.abspath(dst_path) != os.path.abspath(src_path) else f"{dst_path}.tmp.mp4"
     run(
         f'ffmpeg -y -i "{src_path}" '
@@ -364,11 +360,7 @@ def upscale_video_with_frames(src_path: str, dst_path: str, scale_factor: float,
     )
     if tmp_output != dst_path:
         os.replace(tmp_output, dst_path)
-    run(
-        f'ffmpeg -y -i "{dst_path}" '
-        f'"{os.path.join(frames_dir, "frame_%06d.png")}"'
-    )
-    logger.info("Upscaled video written to %s with frames in %s", dst_path, frames_dir)
+    logger.info("Upscaled video written to %s", dst_path)
     return dst_path
 
 
@@ -389,7 +381,117 @@ def concat_videos(video_files, out_path):
             pass
 
 
-def ensure_video_fps_size_and_length(src, dst, fps, width, height, target_duration):
+def concat_videos_reencode(video_files, out_path):
+    """Concat audio/video through the concat filter to reset per-file timestamps."""
+    if not video_files:
+        raise ValueError("Minimal satu video diperlukan untuk concat.")
+    inputs = " ".join(f'-i "{path}"' for path in video_files)
+    streams = "".join(f"[{index}:v:0][{index}:a:0]" for index in range(len(video_files)))
+    filter_complex = f'{streams}concat=n={len(video_files)}:v=1:a=1[v][a]'
+    run(
+        f'ffmpeg -y {inputs} -filter_complex "{filter_complex}" '
+        f'-map "[v]" -map "[a]" -c:v libx264 -preset fast -pix_fmt yuv420p '
+        f'-c:a aac -b:a 192k -ac 2 -ar 44100 -movflags +faststart "{out_path}"'
+    )
+
+
+def concat_videos_only_reencode(video_files, out_path):
+    """Concat video streams only; audio is supplied separately by Compose Lagu."""
+    if not video_files:
+        raise ValueError("Minimal satu video diperlukan untuk concat.")
+    inputs = " ".join(f'-i "{path}"' for path in video_files)
+    streams = "".join(f"[{index}:v:0]" for index in range(len(video_files)))
+    filter_complex = f'{streams}concat=n={len(video_files)}:v=1:a=0[v]'
+    run(
+        f'ffmpeg -y {inputs} -filter_complex "{filter_complex}" '
+        f'-map "[v]" -an -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p '
+        f'-fps_mode:v vfr -enc_time_base:v 1:1000000 -video_track_timescale 1000000 '
+        f'-movflags +faststart "{out_path}"'
+    )
+
+
+def retime_video_only_to_duration(src_path, dst_path, target_duration):
+    """Make a scene video occupy exactly the duration of its audio chunk."""
+    source_duration = max(ffprobe_duration(src_path), 0.001)
+    retime = float(target_duration) / source_duration
+    run(
+        f'ffmpeg -y -i "{src_path}" -map 0:v:0 -an '
+        f'-vf "setpts=PTS*{retime:.12f}" -t {float(target_duration):.6f} '
+        f'-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p '
+        f'-fps_mode:v vfr -enc_time_base:v 1:1000000 -video_track_timescale 1000000 '
+        f'"{dst_path}"'
+    )
+
+
+def build_song_audio_from_scenes(scene_dirs, out_path):
+    """Decode and concatenate speech chunks as one continuous audio master."""
+    chunk_paths = []
+    for scene_dir in scene_dirs:
+        candidates = [
+            os.path.join(scene_dir, name)
+            for name in os.listdir(scene_dir)
+            if name.lower().startswith('speech_chunk_')
+            and name.lower().endswith(AUDIO_EXTS)
+        ]
+        candidates.sort()
+        if candidates:
+            chunk_paths.append(candidates[0])
+
+    if not chunk_paths:
+        raise RuntimeError('Compose Lagu membutuhkan speech_chunk audio pada setiap scene.')
+    if len(chunk_paths) != len(scene_dirs):
+        raise RuntimeError(
+            f'Compose Lagu menemukan {len(chunk_paths)} speech chunk untuk '
+            f'{len(scene_dirs)} scene.'
+        )
+
+    inputs = ' '.join(f'-i "{path}"' for path in chunk_paths)
+    streams = ''.join(
+        f'[{index}:a:0]aresample=44100:async=0:first_pts=0, '
+        f'asetpts=PTS-STARTPTS[a{index}];'
+        for index in range(len(chunk_paths))
+    )
+    concat_inputs = ''.join(f'[a{index}]' for index in range(len(chunk_paths)))
+    filter_complex = (
+        f'{streams}{concat_inputs}concat=n={len(chunk_paths)}:v=0:a=1,'
+        'aresample=44100:async=0:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[a]'
+    )
+    run(
+        f'ffmpeg -y {inputs} -filter_complex "{filter_complex}" '
+        f'-map "[a]" -c:a pcm_s16le "{out_path}"'
+    )
+    return chunk_paths
+
+
+def trim_video_to_exact_duration(src_path, dst_path, duration, fps=None):
+    """Trim an S2V video while retaining its embedded audio track."""
+    audio_map = "-map 0:a:0" if ffprobe_has_audio(src_path) else "-map -0:a"
+    video_filter = "setpts=PTS-STARTPTS"
+    if fps and float(fps) > 0:
+        frame_count = max(1, math.ceil(float(duration) * float(fps) - 1e-6))
+        source_frame_duration = frame_count / float(fps)
+        retime = float(duration) / max(source_frame_duration, 1e-6)
+        video_filter = f"trim=end_frame={frame_count},setpts=(PTS-STARTPTS)*{retime:.12f}"
+    run(
+        f'ffmpeg -y -i "{src_path}" -t {float(duration):.6f} '
+        f'-map 0:v:0 {audio_map} -vf "{video_filter}" '
+        f'-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p '
+        f'-fps_mode:v vfr -enc_time_base:v 1:1000000 -video_track_timescale 1000000 '
+        f'-c:a aac -b:a 192k -ac 2 -ar 44100 '
+        f'-avoid_negative_ts make_zero "{dst_path}"'
+    )
+
+
+def ensure_video_fps_size_and_length(
+    src,
+    dst,
+    fps,
+    width,
+    height,
+    target_duration,
+    preserve_audio=False,
+    precise_timing=False,
+):
     # Check if any transformation is needed
     src_fps = ffprobe_fps(src)
     src_w, src_h = ffprobe_size(src)
@@ -398,8 +500,9 @@ def ensure_video_fps_size_and_length(src, dst, fps, width, height, target_durati
     needs_fps = abs(src_fps - fps) > 0.1
     needs_size = src_w != width or src_h != height
     needs_pad = target_duration - dur > 0.01
+    needs_trim = dur - target_duration > 0.01
     
-    if not needs_fps and not needs_size and not needs_pad:
+    if not needs_fps and not needs_size and not needs_pad and not needs_trim:
         # Perfect match - copy without re-encoding
         shutil.copyfile(src, dst)
         logger.debug('Video already perfect, using direct copy: %s', src)
@@ -416,6 +519,25 @@ def ensure_video_fps_size_and_length(src, dst, fps, width, height, target_durati
         )
         run(cmd)
         logger.debug('Extended video duration using tpad re-encode: %s', src)
+        return
+
+    if not needs_fps and not needs_size and needs_trim:
+        audio_args = ""
+        if preserve_audio and ffprobe_has_audio(src):
+            audio_args = '-map 0:a:0 -c:a aac -b:a 192k -ac 2 -ar 44100'
+        else:
+            audio_args = '-an'
+        retime = target_duration / max(dur, 1e-6)
+        precision_args = ''
+        if precise_timing:
+            precision_args = '-fps_mode:v vfr -enc_time_base:v 1:1000000 -video_track_timescale 1000000 '
+        cmd = (
+            f'ffmpeg -y -i "{src}" -vf "setpts=PTS*{retime:.12f}" '
+            f'{precision_args}-t {target_duration:.6f} -map 0:v:0 {audio_args} '
+            f'-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p "{dst}"'
+        )
+        run(cmd)
+        logger.debug('Retimed video to exact target duration: %s', src)
         return
     
     # Need full transformation (scale/fps/pad) - use high bitrate to preserve quality
@@ -504,6 +626,7 @@ def compose_scene(
     video_files=None,
     out_path_override=None,
     include_video_audio=False,
+    compose_song=False,
 ):
     files = sorted(os.listdir(scene_dir))
     if video_files is None:
@@ -547,7 +670,7 @@ def compose_scene(
                 logger.debug('Found sound prompt file: %s with volume %s', full_path, v)
 
     selected_audios = []
-    if latest_speech:
+    if latest_speech and not include_video_audio:
         selected_audios.append(latest_speech)
     for snd_path in sound_vols.keys():
         if snd_path not in selected_audios:
@@ -559,6 +682,10 @@ def compose_scene(
     max_video_dur = max(video_durations) if video_durations else 0
     max_audio_dur = max(audio_durations) if audio_durations else 0
     target_dur = max(max_video_dur, max_audio_dur)
+    if compose_song and include_video_audio and latest_speech:
+        # S2V may contain up to four extra frames. Song compose uses the
+        # original speech chunk as the exact scene duration.
+        target_dur = ffprobe_duration(latest_speech)
     if target_dur < 0.1:
         logger.warning('No media duration found in %s, skipping', scene_dir)
         return None
@@ -575,12 +702,25 @@ def compose_scene(
             concat_path = os.path.join(tmpdir, 'concat.mp4')
             concat_videos(videos, concat_path)
             base_video = concat_path
+        if compose_song and include_video_audio and latest_speech and len(videos) == 1:
+            exact_path = os.path.join(tmpdir, 's2v_exact_duration.mp4')
+            trim_video_to_exact_duration(base_video, exact_path, target_dur, ffprobe_fps(base_video))
+            base_video = exact_path
         target_fps = ffprobe_fps(base_video)
         target_w, target_h = ffprobe_size(base_video)
         if fps:
             target_fps = fps
         video_normalized = os.path.join(tmpdir, 'video_norm.mp4')
-        ensure_video_fps_size_and_length(base_video, video_normalized, target_fps, target_w, target_h, target_dur)
+        ensure_video_fps_size_and_length(
+            base_video,
+            video_normalized,
+            target_fps,
+            target_w,
+            target_h,
+            target_dur,
+            preserve_audio=include_video_audio,
+            precise_timing=compose_song,
+        )
     else:
         if not fps:
             target_fps = 24
@@ -652,9 +792,14 @@ def compose_scene(
         out_path = os.path.join(combined_dir, out_name)
 
     # Force stable audio timestamps and duration; this helps downstream transcoders (e.g., Clipchamp/WhatsApp)
+    video_codec = (
+        '-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p'
+        if compose_song
+        else '-c:v copy'
+    )
     cmd = (
         f'ffmpeg -y -i "{video_normalized}" -i "{mixed_audio}" '
-        f'-map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k '
+        f'-map 0:v -map 1:a {video_codec} -c:a aac -b:a 192k '
         f'-af "aresample=async=1:first_pts=0" -t {target_dur:.6f} -movflags +faststart "{out_path}"'
     )
     run(cmd)
@@ -747,7 +892,7 @@ def image_to_clip(img_path, dst, fps, width, height, duration):
         os.replace(f'{dst}.tmp', dst)
 
 
-def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0):
+def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0, compose_song=False):
     if not API_PRODUCTION:
         raise RuntimeError("Project root belum diset untuk merge.")
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
@@ -789,6 +934,20 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         return (num if isinstance(num, int) else 999999, bn)
     videos.sort(key=scene_key)
 
+    song_scene_dirs = []
+    if compose_song:
+        for video_path in videos:
+            try:
+                scene_num = int(os.path.basename(video_path).split('_')[1])
+            except (IndexError, ValueError):
+                song_scene_dirs = []
+                break
+            scene_dir = os.path.join(API_PRODUCTION, f'scene_{scene_num}')
+            if not os.path.isdir(scene_dir):
+                song_scene_dirs = []
+                break
+            song_scene_dirs.append(scene_dir)
+
     with tempfile.TemporaryDirectory(prefix='merge_') as td:
         # Master fps and size from first video
         master_fps = ffprobe_fps(videos[0])
@@ -808,6 +967,10 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
                 break
         # If cover intro exists, safest path is normalize+reencode merge.
         if cover_clip:
+            all_same = False
+        if compose_song:
+            # Re-encode normalized audio/video before concat so separate AAC
+            # encoder priming does not create gaps at scene boundaries.
             all_same = False
 
         norm_paths = []
@@ -835,7 +998,46 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         if os.path.exists(final_out):
             _safe_remove_file(final_out)
 
-        if all_same:
+        if compose_song and song_scene_dirs:
+            # Audio is the master timeline. Each video scene is retimed to
+            # its original speech chunk before the video-only concat, so a
+            # video frame can never insert silence at a scene boundary.
+            song_audio = os.path.join(td, 'song_audio_master.wav')
+            chunk_paths = build_song_audio_from_scenes(song_scene_dirs, song_audio)
+            song_video_paths = []
+            for index, (video_path, chunk_path) in enumerate(zip(norm_paths, chunk_paths)):
+                retimed_path = os.path.join(td, f'song_video_{index:03d}.mp4')
+                retime_video_only_to_duration(
+                    video_path,
+                    retimed_path,
+                    ffprobe_duration(chunk_path),
+                )
+                song_video_paths.append(retimed_path)
+
+            song_video = os.path.join(td, 'song_video_only.mp4')
+            concat_videos_only_reencode(song_video_paths, song_video)
+            song_duration = ffprobe_duration(song_audio)
+            video_gap = song_duration - ffprobe_duration(song_video)
+            if video_gap > 0.001:
+                # The last encoded frame duration is not always included in
+                # the container duration. Hold that frame until audio ends.
+                video_mux_args = (
+                    f'-vf "tpad=stop_mode=clone:stop_duration={video_gap + 0.05:.6f}" '
+                    '-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p '
+                )
+            else:
+                video_mux_args = '-c:v copy '
+            run(
+                f'ffmpeg -y -i "{song_video}" -i "{song_audio}" '
+                f'-map 0:v:0 -map 1:a:0 -t {song_duration:.6f} '
+                f'{video_mux_args}-c:a aac -b:a 192k -ac 2 -ar 44100 '
+                f'-af "aresample=async=0:first_pts=0" -movflags +faststart "{final_out}"'
+            )
+        elif compose_song:
+            # Keep the prior compose-song path for projects that do not use
+            # the standard scene_N/speech_chunk_NN layout.
+            concat_videos_reencode(norm_paths, final_out)
+        elif all_same:
             try:
                 run(
                     f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
@@ -870,18 +1072,17 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         _mix_background_music(final_out, music_file, music_volume)
     _force_dual_mono_audio(final_out)
     if float(upscale_factor) > 1.0:
-        upscale_video_with_frames(
+        upscale_video(
             final_out,
             final_out,
             float(upscale_factor),
-            os.path.join(combined_dir, "Frame"),
         )
 
     logger.info('Final merged video: %s', final_out)
     return final_out
 
 
-def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0):
+def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0, compose_song=False):
     global API_PRODUCTION
     API_PRODUCTION = os.path.join(ROOT, 'api_production', str(project_name).strip())
     if not os.path.exists(API_PRODUCTION):
@@ -921,6 +1122,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 scene_dir,
                 speech_volume=0.0 if is_s2v else speech_volume,
                 include_video_audio=is_s2v,
+                compose_song=compose_song,
             )
         except Exception as e:
             logger.error('Failed to compose %s: %s', scene_dir, e)
@@ -936,12 +1138,14 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 music_file=music_file,
                 music_volume=music_volume,
                 upscale_factor=upscale_factor,
+                compose_song=compose_song,
             )
         else:
             merge_combined_videos(
                 music_file=music_file,
                 music_volume=music_volume,
                 upscale_factor=upscale_factor,
+                compose_song=compose_song,
             )
     except Exception as e:
         logger.error('Failed to merge combined videos: %s', e)
@@ -958,6 +1162,7 @@ if __name__ == '__main__':
     parser.add_argument('--music-file', default='', help='Optional background music file path for final combined video')
     parser.add_argument('--music-volume', type=float, default=BACKGROUND_MUSIC_VOLUME, help='Background music volume in range 0.0 to 2.0')
     parser.add_argument('--upscale-factor', type=float, default=1.0, help='Optional final upscale factor, e.g. 1.5 or 2.0')
+    parser.add_argument('--compose-song', action='store_true', help='Trim S2V videos to exact speech duration before merging the song.')
     args = parser.parse_args()
     music_volume = max(0.0, min(2.0, float(args.music_volume)))
     raise SystemExit(main(
@@ -968,4 +1173,5 @@ if __name__ == '__main__':
         music_file=str(args.music_file or '').strip() or None,
         music_volume=music_volume,
         upscale_factor=float(args.upscale_factor or 1.0),
+        compose_song=bool(args.compose_song),
     ))

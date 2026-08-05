@@ -638,9 +638,13 @@ Perilaku UI:
   - `Tanpa upscale`
   - `1.5x`
   - `2x`
-  - jika dipilih `1.5x` atau `2x`, video final `combined_all.mp4` akan di-upscale dan frame PNG hasil upscale disimpan ke folder `combined/Frame`
+  - jika dipilih `1.5x` atau `2x`, video final `combined_all.mp4` akan di-upscale langsung tanpa mengekspor frame PNG
+- dialog compose menyediakan checkbox `Compose Lagu`:
+  - memangkas 4 frame ekstra pada setiap video `wan22_s2v` berdasarkan durasi chunk speech
+  - tidak mencampurkan file `speech_*.mp3` lagi ke video S2V karena audio sudah tertanam pada video
+  - mempertahankan audio bawaan setiap video S2V dan menyusun video/audio per-scene secara bersamaan agar lip-sync tetap terjaga
 - tombol `Upscale Video` pada group `Scene` membuka dialog kecil untuk memilih `1.5x` atau `2x`
-- hasil tombol `Upscale Video` disimpan sebagai file video baru di root scene aktif, dan frame PNG hasil upscale disimpan ke subfolder dengan nama yang sama seperti stem video sumber terakhir
+- hasil tombol `Upscale Video` disimpan sebagai file video baru di root scene aktif tanpa mengekspor frame PNG
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup
@@ -1010,6 +1014,60 @@ Contoh:
 .\.venv\Scripts\python.exe scripts\generate_sound.py --project demo_project --scene scene_1
 ```
 
+### Generate Music dengan Lyria 3 Pro
+
+Script: `lyria3/generate_music.py`
+
+Fungsi:
+- membuat musik menggunakan Gemini API dengan model `lyria-3-pro-preview`
+- menyimpan hasil audio sebagai MP3 di folder `output-music`
+- menyimpan lirik hasil generasi sebagai file `.lyrics.txt` jika tersedia
+- durasi target dimasukkan ke prompt dan dibatasi maksimal `180` detik
+- dapat menerima maksimal 10 gambar referensi untuk mengarahkan mood dan gaya musik
+
+Argumen utama:
+- `--prompt`, `-p`: prompt musik wajib
+- `--duration`, `-d`: durasi target dalam detik, wajib, maksimal `180`
+- `--output-name`, `-o`: nama file output tanpa ekstensi; default `lyria3_music`
+- `--image`: gambar referensi, bisa diulang maksimal 10 kali
+- `--timeout`: timeout request dalam detik; default `600`
+
+Rekomendasi isi prompt:
+- genre dan gaya
+- mood dan arah emosi
+- instrumen utama
+- tempo atau BPM
+- musik instrumental atau vokal
+- struktur musik dan timestamp bila timing penting
+- instruksi `instrumental only, no vocals, no lyrics` jika musik dipakai sebagai background music
+
+Contoh musik instrumental:
+```powershell
+.\.venv\Scripts\python.exe lyria3\generate_music.py --prompt "Buat musik instrumental sinematik yang hangat, penuh rasa ingin tahu, dan cocok untuk video edukasi anak. Gunakan piano felt, pizzicato strings, marimba, woodwind lembut, tempo sedang sekitar 100 BPM, aransemen sederhana agar menyisakan ruang untuk narasi, tanpa vokal dan tanpa lirik." --duration 45 --output-name edukasi_magnet
+```
+
+Contoh dengan gambar referensi:
+```powershell
+.\.venv\Scripts\python.exe lyria3\generate_music.py --prompt "Buat musik ambient sinematik yang terinspirasi dari gambar, tenang dan penuh harapan, dengan piano lembut, string pad, dan tekstur udara. Musik instrumental saja." --duration 60 --output-name suasana_pagi --image input\scene_1.png
+```
+
+Kebutuhan key:
+- `GEMINIKEY` di `keys.cfg`
+- atau `GEMINI_API_KEY` sebagai environment variable
+
+Output:
+- `output-music/<nama>/<nama>.mp3`
+- `output-music/<nama>/<nama>.lyrics.txt` jika Lyria mengembalikan lirik
+
+Setiap lagu dibuat dalam folder sendiri berdasarkan nilai `--output-name`.
+
+
+Catatan implementasi saat ini:
+- folder `lyria3` saat ini hanya menyediakan `generate_music.py`
+- fitur pemotongan musik menjadi chunk belum tersedia di folder ini
+- alignment lirik dan analisis jeda vokal belum menjadi bagian dari pipeline yang terdokumentasi
+- file `.lyrics.txt` hanya disimpan jika respons Lyria mengembalikan teks lirik
+
 ## Caption Otomatis
 
 Script pendukung: `scripts/generate_caption.py`
@@ -1036,9 +1094,11 @@ Script: `scripts/generate_compose.py`
 
 Fungsi:
 - compose per scene ke folder `api_production/<project_name>/combined` dengan mix audio:
-  - `wan22_s2v`: mempertahankan speech bawaan video dan hanya menambahkan sound
+  - `wan22_s2v`: mempertahankan speech bawaan video dan tidak mencampurkan ulang file `speech_*.mp3`
   - scene type lain: mix speech + sound ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
+- opsi `--compose-song` menjadikan audio `speech_chunk_*.mp3` sebagai master timeline: semua chunk didekode dan digabung tanpa jeda, lalu video tiap scene dipotong/diatur mengikuti durasi audio tersebut
+- pada mode `--compose-song`, audio scene bawaan video tidak dipakai sebagai timeline akhir agar padding encoder tidak menimbulkan jeda antar scene
 - pada merge akhir bisa menambahkan background music opsional:
   - file music dari folder `music` dengan ekstensi `.m4a`, `.mp3`, `.wav`
   - music bisa kosong (tidak dipilih)
@@ -1053,7 +1113,7 @@ Fungsi:
 
 Di UI:
 - tersedia tombol `Compose Semua Adegan`
-- saat `Compose Semua Adegan`, muncul dialog untuk memilih music dan volume
+- saat `Compose Semua Adegan`, muncul dialog untuk memilih music, volume, dan checkbox `Compose Lagu`
 
 Contoh:
 ```powershell
@@ -1061,6 +1121,7 @@ Contoh:
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --scene scene_1 --scene scene_2
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --music-file ".\\music\\Another Night (Corporate).m4a" --music-volume 1.00
+.\.venv\Scripts\python.exe scripts\generate_compose.py --project song_allah_mendengar_semua_doa --compose-song
 ```
 
 Catatan:

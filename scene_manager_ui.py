@@ -1461,7 +1461,7 @@ class WebSearchWorker(QObject):
 class ComposeMusicDialog(QDialog):
     def __init__(self, music_files: list[Path], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Music Compose")
+        self.setWindowTitle("Buat Video Final")
         self.music_combo = QComboBox(self)
         self.music_combo.addItem("(Tanpa music)", "")
         for path in music_files:
@@ -1475,10 +1475,15 @@ class ComposeMusicDialog(QDialog):
         self.upscale_input = QComboBox(self)
         for label, value in UPSCALE_OPTIONS:
             self.upscale_input.addItem(label, value)
+        self.compose_song_input = QCheckBox("Compose Lagu", self)
+        self.compose_song_input.setToolTip(
+            "Potong 4 frame extra pada video S2V, hindari audio ganda, lalu gabungkan lagu."
+        )
 
         layout = QFormLayout(self)
         layout.addRow("File Music", self.music_combo)
         layout.addRow("Upscale", self.upscale_input)
+        layout.addRow("Mode", self.compose_song_input)
         layout.addRow("Volume (0.00 - 2.00)", self.volume_input)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
@@ -1491,6 +1496,7 @@ class ComposeMusicDialog(QDialog):
             str(self.music_combo.currentData() or "").strip(),
             float(self.volume_input.value()),
             float(self.upscale_input.currentData() or 1.0),
+            bool(self.compose_song_input.isChecked()),
         )
 
 
@@ -6550,13 +6556,15 @@ class SceneEditorWindow(QMainWindow):
         dialog = ComposeMusicDialog(music_files, self)
         if dialog.exec() != QDialog.Accepted:
             return
-        music_file, music_volume, upscale_factor = dialog.get_values()
+        music_file, music_volume, upscale_factor, compose_song = dialog.get_values()
         args = []
         args.extend(["--project", self.current_project_name])
         if music_file:
             args.extend(["--music-file", music_file, "--music-volume", f"{music_volume:.2f}"])
         if float(upscale_factor) > 1.0:
             args.extend(["--upscale-factor", f"{float(upscale_factor):.2f}"])
+        if compose_song:
+            args.append("--compose-song")
 
         self.start_process(
             COMPOSE_SCRIPT,

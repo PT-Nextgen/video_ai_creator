@@ -103,6 +103,7 @@ history_fetch/
 prompt_planning/
 backup_production/
 outputs/
+output-music/
 userdata/
 
 # Build artifacts / models / large files
