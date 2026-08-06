@@ -20,6 +20,7 @@ SCENE_VOICE_OPTIONS = [
     ("Dakocan (media sosial)", "dakocan"),
     ("Candy (anak perempuan bersemangat)", "candy"),
     ("Lily (anak perempuan kalem)", "lily"),
+    ("Lily - Ngaji", "lily_ngaji"),
     ("Finn (anak laki-laki bersemangat)", "finn"),
     ("Kevin (anak laki-laki kalem)", "kevin"),
 ]
@@ -59,6 +60,12 @@ VOICE_CHARACTER_MAP = {
         "profile_file": "Lily.txt",
         "elevenlabs_voice_id": "Pt5YrLNyu6d2s3s4CVMg",
         "gemini_profile_text": "7 years old Indonesian youthful female voice with a soft and cute tone. Perfect for animated characters and storytelling. Ideal for bringing warmth and sweetness to playful or gentle characters.",
+    },
+    "lily_ngaji": {
+        "display_name": "Lily - Ngaji",
+        "profile_file": "Lily - Ngaji.txt",
+        "elevenlabs_voice_id": "Pt5YrLNyu6d2s3s4CVMg",
+        "gemini_profile_text": "Soft, clear, youthful female Quran reciter with a gentle and beautiful tone. Melodious Quranic tilawah with a gentle murattal style and light Maqam Bayati-inspired melodic contour. Use clear makhraj, tajwid-aware pronunciation, smooth connected phrasing, tasteful melodic rises and falls, and very short natural pauses between ayahs. Keep the recitation flowing and devotional, not like ordinary speech or a pop song. Do not add instruments, background music, harmony, chorus, echo, or sound effects. Recite exactly the Arabic text provided.",
     },
     "finn": {
         "display_name": "Finn",
