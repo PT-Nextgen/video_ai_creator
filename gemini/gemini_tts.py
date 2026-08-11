@@ -24,6 +24,7 @@ GEMINI_VOICE_NAME_BY_CHARACTER = {
     "candy": "Leda",
     "lily": "Leda",
     "lily_ngaji": "Leda",
+    "lily_arab": "Leda",
     "finn": "Puck",
     "kevin": "Charon",
 }

@@ -21,6 +21,7 @@ SCENE_VOICE_OPTIONS = [
     ("Candy (anak perempuan bersemangat)", "candy"),
     ("Lily (anak perempuan kalem)", "lily"),
     ("Lily - Ngaji", "lily_ngaji"),
+    ("Lily - Arab", "lily_arab"),
     ("Finn (anak laki-laki bersemangat)", "finn"),
     ("Kevin (anak laki-laki kalem)", "kevin"),
 ]
@@ -63,9 +64,15 @@ VOICE_CHARACTER_MAP = {
     },
     "lily_ngaji": {
         "display_name": "Lily - Ngaji",
-        "profile_file": "Lily - Ngaji.txt",
+        "profile_file": "Lily Ngaji.txt",
         "elevenlabs_voice_id": "Pt5YrLNyu6d2s3s4CVMg",
-        "gemini_profile_text": "Soft, clear, youthful female Quran reciter with a gentle and beautiful tone. Melodious Quranic tilawah with a gentle murattal style and light Maqam Bayati-inspired melodic contour. Use clear makhraj, tajwid-aware pronunciation, smooth connected phrasing, tasteful melodic rises and falls, and very short natural pauses between ayahs. Keep the recitation flowing and devotional, not like ordinary speech or a pop song. Do not add instruments, background music, harmony, chorus, echo, or sound effects. Recite exactly the Arabic text provided.",
+        "gemini_profile_text": "Soft, clear, youthful female Quran reciter with a gentle and beautiful tone. Use standardized, accurate Arabic pronunciation: preserve every harakah, makhraj, sifat, shaddah, sukun, hamzah, tanwin, grammatical ending, and short or long vowel (madd) exactly. Apply tajwid and natural waqaf correctly. Never shorten madd, lengthen short vowels, omit or merge consonants, guess unclear text, or silently alter the supplied Arabic. Melodious Quranic tilawah with a gentle murattal style and light Maqam Bayati-inspired contour, without instruments, background music, harmony, chorus, echo, or sound effects. Recite exactly the Arabic text provided.",
+    },
+    "lily_arab": {
+        "display_name": "Lily - Arab",
+        "profile_file": "Lily Arab.txt",
+        "elevenlabs_voice_id": "Pt5YrLNyu6d2s3s4CVMg",
+        "gemini_profile_text": "Soft, clear, youthful female Arabic reciter with a brisk flowing delivery that remains melodic, beautiful, peaceful, and easy to understand. Use standardized, accurate Arabic pronunciation: preserve every harakah, makhraj, sifat, shaddah, sukun, hamzah, tanwin, grammatical ending, and short or long vowel (madd) exactly. Apply tajwid and natural waqaf correctly. Never shorten madd, lengthen short vowels, omit or merge consonants, guess unclear text, or silently alter the supplied Arabic. Keep consonants intelligible, with no dragging or blurring. Recite exactly the Arabic text provided, without instruments, background music, harmony, chorus, echo, or sound effects.",
     },
     "finn": {
         "display_name": "Finn",

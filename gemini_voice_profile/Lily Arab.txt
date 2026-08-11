@@ -19,7 +19,7 @@ Style:
 * Use clear Arabic makhraj and tajwid-aware pronunciation. Connect phrases
   smoothly and give the natural madd letters tasteful melodic length.
 
-Pace: Slow-medium and flowing. Keep the recitation melodious and expressive,
+Pace: Fast and flowing. Keep the recitation melodious and expressive,
 but avoid long silence or dramatic pauses. Use only a short natural pause of
 approximately 0.2 to 0.4 seconds between ayahs. Keep the total delivery
 compact and avoid making it sound like a spoken reading.
@@ -37,5 +37,14 @@ families, with warmth, sweetness, clear diction, and a graceful melodic flow.
   effects.
 * Recite exactly the Arabic text provided. Do not add, remove, translate,
   paraphrase, or repeat any words.
+* Arabic pronunciation must be standardized, accurate, and linguistically
+  correct. Preserve every harakah, makhraj, sifat of the letters, shaddah,
+  sukun, hamzah, tanwin, and grammatical ending exactly as written.
+* Respect every short vowel and long vowel (madd) precisely. Do not shorten a
+  long vowel, lengthen a short vowel, merge letters incorrectly, omit a
+  consonant, or introduce a sound that is not present in the supplied text.
+* Apply correct tajwid and natural waqaf rules where relevant. Never guess,
+  normalize, or silently correct the Arabic text; if the text is unclear, read
+  it exactly as provided without inventing an alternative.
 
 #### TRANSCRIPT

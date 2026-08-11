@@ -533,7 +533,7 @@ Perilaku UI:
 - jika ComfyUI tidak menjawab saat startup UI, akan muncul popup error berbahasa Indonesia dan daftar LoRa tidak dimuat
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_text` diisi
-- pilihan suara scene tersedia di metadata scene melalui `voice_character`
+  - pilihan suara scene tersedia di metadata scene melalui `voice_character`, termasuk `lily_arab` (Lily - Arab)
 - language TTS runtime dipaksa ke `id-ID`
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
@@ -954,7 +954,7 @@ Fungsi:
   - model fixed `gemini-3.1-flash-tts-preview`
   - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Candy/Lily/Finn/Kevin)
   - profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
-    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Candy.txt`, `Lily.txt`, `Finn.txt`, `Kevin.txt`
+    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Candy.txt`, `Lily.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
   - format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
   - `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
   - jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
