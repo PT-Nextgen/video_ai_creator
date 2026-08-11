@@ -119,6 +119,7 @@ models/
 
 # Other
 *.log
+*.log.*
 
 # Local music assets
 music/
