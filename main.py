@@ -46,6 +46,16 @@ from wan22_s2v.wan22_s2v import (
     send_workflow as send_s2v_workflow,
     trim_video_to_speech_duration,
 )
+from minimax_h3_t2v.minimax_h3_t2v import (
+    DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_T2V_PROMPT,
+    build_minimax_h3_t2v_workflow,
+    send_workflow as send_minimax_h3_t2v_workflow,
+)
+from minimax_h3_i2v.minimax_h3_i2v import (
+    DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_I2V_PROMPT,
+    build_minimax_h3_i2v_workflow,
+    send_workflow as send_minimax_h3_i2v_workflow,
+)
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
 from scripts.generate_caption import apply_caption_to_video
 from scripts.generate_compose import compose_scene, ffprobe_fps, ffprobe_size, run as run_ffmpeg
@@ -66,6 +76,7 @@ API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
 POLL_INTERVAL = 10.0
 POLL_TIMEOUT = 600
+MINIMAX_H3_POLL_TIMEOUT = 3600
 WAN22_S2V_POLL_TIMEOUT = 2400
 I2V_FPS = 16
 WEB_SCROLL_FPS = 16
@@ -555,6 +566,294 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             i2v_video_out_path,
             is_s2v=False,
             success_message=f"Completed processing {scene_dir}",
+        )
+
+    if scene_type == 'minimax-h3_t2v_i2v':
+        try:
+            scene_duration = int(scene_meta.get('duration_seconds', 0))
+        except Exception:
+            scene_duration = 0
+        if scene_duration not in {1, 5, 10, 15, 20, 25, 30}:
+            write_log(
+                "minimax-h3_t2v_i2v scene duration must be 1, 5, 10, 15, 20, 25, or 30 seconds: "
+                f"{scene_duration}"
+            )
+            return False
+
+        _ensure_scene_json(
+            scene_dir,
+            'minimax_h3_t2v_prompt.json',
+            DEFAULT_MINIMAX_H3_T2V_PROMPT,
+        )
+        _ensure_scene_json(
+            scene_dir,
+            'minimax_h3_i2v_prompt.json',
+            DEFAULT_MINIMAX_H3_I2V_PROMPT,
+        )
+
+        try:
+            t2v_prompt = _read_scene_json(
+                scene_dir,
+                'minimax_h3_t2v_prompt.json',
+                required=True,
+            )
+            t2v_prompt = copy.deepcopy(t2v_prompt) if isinstance(t2v_prompt, dict) else {}
+            i2v_prompt = {}
+            if scene_duration > 15:
+                i2v_prompt = _read_scene_json(
+                    scene_dir,
+                    'minimax_h3_i2v_prompt.json',
+                    required=True,
+                )
+                i2v_prompt = copy.deepcopy(i2v_prompt) if isinstance(i2v_prompt, dict) else {}
+
+        except Exception as e:
+            write_log(f"Failed to read MiniMax H3 prompt files for {scene_dir}: {e}")
+            return False
+
+        t2v_duration = scene_duration if scene_duration <= 15 else 15
+        try:
+            t2v_workflow = build_minimax_h3_t2v_workflow(
+                t2v_prompt,
+                scene_meta,
+                duration_override=t2v_duration,
+            )
+        except Exception as e:
+            write_log(f"Failed to build MiniMax H3 T2V workflow for {scene_dir}: {e}")
+            return False
+
+        t2v_result = send_minimax_h3_t2v_workflow(
+            t2v_workflow,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'minimax_h3_t2v_prompt.json'),
+        )
+        if not t2v_result:
+            write_log(f"send_minimax_h3_t2v_workflow failed for {scene_dir}")
+            return False
+        prompt_id = t2v_result.get('prompt_id') or t2v_result.get('id')
+        write_log(f"Posted MiniMax H3 T2V workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(
+                server,
+                prompt_id,
+                output_type='video',
+                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                interval=POLL_INTERVAL,
+            )
+        if not video_out:
+            write_log(f"No MiniMax H3 T2V video found for {scene_dir} (prompt_id={prompt_id})")
+            return False
+
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine MiniMax H3 T2V video filename: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(
+            server,
+            video_filename,
+            subfolder=video_subfolder,
+            type_=video_type,
+        )
+        t2v_video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, t2v_video_out_path)
+            if not os.path.exists(t2v_video_out_path) or os.path.getsize(t2v_video_out_path) == 0:
+                write_log(f"Downloaded MiniMax H3 T2V file missing or empty: {t2v_video_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Failed to download MiniMax H3 T2V video {video_filename}: {e}")
+            return False
+
+        if scene_duration <= 15:
+            return _finalize_scene_success(
+                t2v_video_out_path,
+                is_s2v=False,
+                success_message=(
+                    f"Completed minimax-h3_t2v_i2v T2V-only processing for {scene_dir}"
+                ),
+            )
+
+        last_frame_path = os.path.join(scene_dir, 'minimax_h3_t2v_last_frame.png')
+        try:
+            _extract_last_frame_image(t2v_video_out_path, last_frame_path)
+        except Exception as e:
+            write_log(f"Failed to extract MiniMax H3 T2V last frame for {scene_dir}: {e}")
+            return False
+
+        uploaded_name = _upload_to_comfy(last_frame_path)
+        if not uploaded_name:
+            write_log(f"Failed to upload MiniMax H3 T2V last frame for {scene_dir}")
+            return False
+
+        i2v_duration = scene_duration - 15
+        try:
+            i2v_workflow = build_minimax_h3_i2v_workflow(
+                i2v_prompt,
+                scene_meta,
+                uploaded_name=uploaded_name,
+                duration_override=i2v_duration,
+            )
+        except Exception as e:
+            write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
+            return False
+
+        i2v_result = send_minimax_h3_i2v_workflow(
+            i2v_workflow,
+            uploaded_name,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'minimax_h3_i2v_prompt.json'),
+        )
+        if not i2v_result:
+            write_log(f"send_minimax_h3_i2v_workflow failed for {scene_dir}")
+            return False
+        prompt_id = i2v_result.get('prompt_id') or i2v_result.get('id')
+        write_log(f"Posted MiniMax H3 I2V workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(
+                server,
+                prompt_id,
+                output_type='video',
+                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                interval=POLL_INTERVAL,
+            )
+        if not video_out:
+            write_log(f"No MiniMax H3 I2V video found for {scene_dir} (prompt_id={prompt_id})")
+            return False
+
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine MiniMax H3 I2V video filename: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(
+            server,
+            video_filename,
+            subfolder=video_subfolder,
+            type_=video_type,
+        )
+        i2v_video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, i2v_video_out_path)
+            if not os.path.exists(i2v_video_out_path) or os.path.getsize(i2v_video_out_path) == 0:
+                write_log(f"Downloaded MiniMax H3 I2V file missing or empty: {i2v_video_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
+            return False
+
+        try:
+            concat_tmp_path = os.path.join(scene_dir, "__minimax_h3_t2v_i2v_concat_tmp__.mp4")
+            _concat_video_segments([t2v_video_out_path, i2v_video_out_path], concat_tmp_path)
+            os.replace(concat_tmp_path, i2v_video_out_path)
+            write_log(
+                f"Combined MiniMax H3 T2V + I2V stages into final video: {i2v_video_out_path}"
+            )
+        except Exception as e:
+            write_log(f"Failed to concat MiniMax H3 T2V + I2V for {scene_dir}: {e}")
+            return False
+        return _finalize_scene_success(
+            i2v_video_out_path,
+            is_s2v=False,
+            success_message=f"Completed minimax-h3_t2v_i2v processing for {scene_dir}",
+        )
+
+    if scene_type == 'minimax-h3_i2v':
+        try:
+            scene_duration = int(scene_meta.get('duration_seconds', 0))
+        except Exception:
+            scene_duration = 0
+        if scene_duration not in {1, 5, 10, 15}:
+            write_log(
+                "minimax-h3_i2v scene duration must be 1, 5, 10, or 15 seconds: "
+                f"{scene_duration}"
+            )
+            return False
+
+        _ensure_scene_json(
+            scene_dir,
+            'minimax_h3_i2v_prompt.json',
+            DEFAULT_MINIMAX_H3_I2V_PROMPT,
+        )
+        img_path = _find_latest_root_image(scene_dir)
+        if not img_path:
+            write_log(f"minimax-h3_i2v scene requires at least one input image in root folder {scene_dir}")
+            return False
+        write_log(f"Using latest root image for minimax-h3_i2v: {img_path}")
+        uploaded_name = _upload_to_comfy(img_path)
+        if not uploaded_name:
+            write_log(f"Failed to upload image for minimax-h3_i2v in {scene_dir}")
+            return False
+        try:
+            i2v_prompt = _read_scene_json(
+                scene_dir,
+                'minimax_h3_i2v_prompt.json',
+                required=True,
+            )
+            i2v_workflow = build_minimax_h3_i2v_workflow(
+                i2v_prompt,
+                scene_meta,
+                uploaded_name=uploaded_name,
+                duration_override=scene_duration,
+            )
+        except Exception as e:
+            write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
+            return False
+        i2v_result = send_minimax_h3_i2v_workflow(
+            i2v_workflow,
+            uploaded_name,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'minimax_h3_i2v_prompt.json'),
+        )
+        if not i2v_result:
+            write_log(f"send_minimax_h3_i2v_workflow failed for {scene_dir}")
+            return False
+        prompt_id = i2v_result.get('prompt_id') or i2v_result.get('id')
+        write_log(f"Posted MiniMax H3 I2V workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(
+                server,
+                prompt_id,
+                output_type='video',
+                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                interval=POLL_INTERVAL,
+            )
+        if not video_out:
+            write_log(f"No MiniMax H3 I2V video found for {scene_dir} (prompt_id={prompt_id})")
+            return False
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine MiniMax H3 I2V video filename: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(
+            server,
+            video_filename,
+            subfolder=video_subfolder,
+            type_=video_type,
+        )
+        video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, video_out_path)
+            if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
+                write_log(f"Downloaded MiniMax H3 I2V file missing or empty: {video_out_path}")
+                return False
+        except Exception as e:
+            write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
+            return False
+        return _finalize_scene_success(
+            video_out_path,
+            is_s2v=False,
+            success_message=f"Completed minimax-h3_i2v processing for {scene_dir}",
         )
 
     if scene_type == 'wan22_t2v_batch':

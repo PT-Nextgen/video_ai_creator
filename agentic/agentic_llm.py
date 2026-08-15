@@ -1,4 +1,5 @@
 """Gemini text-only API and prompt builder for agentic variations."""
+import copy
 import json
 import re
 import time
@@ -8,6 +9,9 @@ import requests
 
 from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
+from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
+from prompt_localization import get_prompt_translator, prepare_prompt_payload_for_save
+from minimax_h3_prompt import validate_structured_prompt
 
 LOCAL_PROMPT_PROVIDER = "llama.cpp"
 LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
@@ -332,7 +336,39 @@ def _normalize_schema_template(filename: str, data: dict | None) -> dict | None:
     if filename == "image_edit_prompt.json":
         normalized.pop("image_model", None)
         normalized.pop("gemini_model_id", None)
+    if filename in {
+        "z_image_prompt.json",
+        "wan22_i2v_prompt.json",
+        "wan22_t2v_prompt.json",
+        "minimax_h3_t2v_prompt.json",
+        "minimax_h3_i2v_prompt.json",
+        "wan22_s2v_prompt.json",
+        "z_image_extra_prompts.json",
+        "wan22_t2v_batch_extra_prompts.json",
+    }:
+        # Older scene files may still contain plain prompt strings. Convert
+        # them before constructing the Agentic schema so every generated
+        # variation is forced to use id_old/id_new/en objects.
+        normalized = prepare_prompt_payload_for_save(filename, normalized)
     return normalized
+
+
+MINIMAX_AGENTIC_SCENE_TYPES = {"minimax-h3_i2v", "minimax-h3_t2v_i2v"}
+MINIMAX_AGENTIC_PROMPT_FILES = {
+    "minimax_h3_t2v_prompt.json",
+    "minimax_h3_i2v_prompt.json",
+}
+
+
+def _minimax_agentic_llm_template(filename: str, payload: dict) -> dict:
+    """Expose only positive_prompt.en to the LLM for MiniMax prompt files."""
+    result = copy.deepcopy(payload)
+    if filename not in MINIMAX_AGENTIC_PROMPT_FILES:
+        return result
+    positive_prompt = result.get("positive_prompt")
+    en = positive_prompt.get("en") if isinstance(positive_prompt, dict) else None
+    result["positive_prompt"] = {"en": copy.deepcopy(en) if isinstance(en, dict) else {}}
+    return result
 
 
 def _variation_sort_key(path: Path):
@@ -417,7 +453,15 @@ def _prune_to_prompt_only(value, path_parts: tuple[str, ...] = ()):
 def _blank_prompt_fields(value, path_parts: tuple[str, ...] = ()):
     if isinstance(value, dict):
         if PROMPT_VALUE_KEYS.issubset({str(key) for key in value.keys()}):
-            return {key: "" for key in value.keys()}
+            result = {}
+            for key, child in value.items():
+                if key in {"id_old", "id_new"}:
+                    result[key] = ""
+                elif key == "en" and isinstance(child, dict):
+                    result[key] = _blank_prompt_fields(child, path_parts + (str(key),))
+                else:
+                    result[key] = _blank_prompt_fields(child, path_parts + (str(key),))
+            return result
         return {
             key: _blank_prompt_fields(child, path_parts + (str(key),))
             for key, child in value.items()
@@ -488,6 +532,27 @@ def _json_schema_from_template(value):
     return {"type": "string"}
 
 
+def _allow_minimax_multishot(schema: dict):
+    """Allow Agentic MiniMax schemas to expand the template shot array."""
+    if not isinstance(schema, dict):
+        return
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        shots = properties.get("shots")
+        if isinstance(shots, dict) and shots.get("type") == "array":
+            shots["minItems"] = 1
+            shots.pop("maxItems", None)
+        for child in properties.values():
+            _allow_minimax_multishot(child)
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _allow_minimax_multishot(items)
+    prefix_items = schema.get("prefixItems")
+    if isinstance(prefix_items, list):
+        for child in prefix_items:
+            _allow_minimax_multishot(child)
+
+
 def build_agentic_output_schema(
     scene_dir: Path,
     scene_type: str,
@@ -502,7 +567,11 @@ def build_agentic_output_schema(
         template_payload = _normalize_schema_template(filename, _read_json_file(template_path))
         if not isinstance(template_payload, dict):
             continue
+        if scene_type in MINIMAX_AGENTIC_SCENE_TYPES:
+            template_payload = _minimax_agentic_llm_template(filename, template_payload)
         properties[filename] = _json_schema_from_template(template_payload)
+        if scene_type in {"minimax-h3_i2v", "minimax-h3_t2v_i2v"} and filename.startswith("minimax_h3_"):
+            _allow_minimax_multishot(properties[filename])
         required.append(filename)
     return {
         "type": "object",
@@ -544,6 +613,26 @@ SCENE_TYPE_FILES = {
             "TEXT-TO-VIDEO.md",
             "TEXT-TO-VIDEO-PROMPT.md",
             "IMAGE-TO-VIDEO-PROMPT.md",
+        ],
+    ),
+    "minimax-h3_t2v_i2v": (
+        ["minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"],
+        [
+            "SCENE-GENERAL.md",
+            "SCENE-MINIMAX-H3-T2V-I2V.md",
+            "MINIMAX-H3/SKILL.md",
+            "MINIMAX-H3/references/base-en.txt",
+        ],
+    ),
+    "minimax-h3_i2v": (
+        ["z_image_prompt.json", "minimax_h3_i2v_prompt.json"],
+        [
+            "SCENE-GENERAL.md",
+            "SCENE-MINIMAX-H3-I2V.md",
+            "TEXT-TO-IMAGE.md",
+            "IMAGE-PROMPT.md",
+            "MINIMAX-H3/SKILL.md",
+            "MINIMAX-H3/references/base-en.txt",
         ],
     ),
     "wan22_t2v_batch": (
@@ -599,6 +688,8 @@ SCENE_TYPE_FILES = {
 SCENE_TYPE_OUTPUTS = {
     "wan22_i2v": ["z_image_prompt.json", "wan22_i2v_prompt.json"],
     "wan22_t2v_i2v": ["wan22_t2v_prompt.json", "wan22_i2v_prompt.json"],
+    "minimax-h3_t2v_i2v": ["minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"],
+    "minimax-h3_i2v": ["z_image_prompt.json", "minimax_h3_i2v_prompt.json"],
     "wan22_t2v_batch": ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
     "wan22_s2v": ["wan22_s2v_prompt.json", "z_image_prompt.json"],
     "i2v": ["z_image_prompt.json"],
@@ -610,6 +701,8 @@ PROMPT_VALUE_KEYS = {"id_old", "id_new", "en"}
 STRICT_NON_EMPTY_AGENTIC_PROMPT_FILES = {
     "wan22_t2v_prompt.json",
     "wan22_i2v_prompt.json",
+    "minimax_h3_t2v_prompt.json",
+    "minimax_h3_i2v_prompt.json",
     "z_image_prompt.json",
     "z_image_extra_prompts.json",
     "wan22_t2v_batch_extra_prompts.json",
@@ -776,6 +869,7 @@ def build_agentic_prompt(
             content = _read_md_file(md_path)
             if content:
                 lines.append("")
+                lines.append(f"REFERENCE MARKDOWN FILE: {mf}")
                 lines.append(content)
 
     if scene_type == "wan22_i2v":
@@ -800,6 +894,30 @@ def build_agentic_prompt(
                 "TEXT-TO-VIDEO-PROMPT.md",
                 "IMAGE-TO-VIDEO-PROMPT.md",
             ],
+        )
+    elif scene_type == "minimax-h3_t2v_i2v":
+        append_md_group(
+            "2. Scene minimax-h3_t2v_i2v",
+            [
+                "SCENE-GENERAL.md",
+                "SCENE-MINIMAX-H3-T2V-I2V.md",
+                "MINIMAX-H3/SKILL.md",
+                "MINIMAX-H3/references/base-en.txt",
+            ],
+            "CATATAN: T2VA dipakai untuk durasi 1/5/10/15 detik. Untuk 20/25/30 detik, T2VA berjalan 15 detik lalu I2VA melanjutkan dari frame terakhir T2VA.",
+        )
+    elif scene_type == "minimax-h3_i2v":
+        append_md_group(
+            "3. Scene minimax-h3_i2v",
+            [
+                "SCENE-GENERAL.md",
+                "SCENE-MINIMAX-H3-I2V.md",
+                "TEXT-TO-IMAGE.md",
+                "IMAGE-PROMPT.md",
+                "MINIMAX-H3/SKILL.md",
+                "MINIMAX-H3/references/base-en.txt",
+            ],
+            "CATATAN: scene ini memakai gambar terbaru di root scene sebagai Picture 1 untuk workflow MiniMax H3 I2VA; durasi hanya 1, 5, 10, atau 15 detik.",
         )
     elif scene_type == "wan22_t2v_batch":
         append_md_group(
@@ -932,32 +1050,64 @@ def build_agentic_prompt(
     for of in output_files:
         lines.append(f'- {of}')
     lines.append("")
-    lines.append("Struktur setiap file output HARUS sama persis dengan file input aslinya.")
+    if scene_type in MINIMAX_AGENTIC_SCENE_TYPES:
+        lines.append(
+            "Ikuti schema respons di bawah. Untuk file MiniMax, schema sengaja diringkas "
+            "agar positive_prompt hanya memiliki field en."
+        )
+    else:
+        lines.append("Struktur setiap file output HARUS sama persis dengan file input aslinya.")
     lines.append("Gunakan schema contoh berikut sebagai acuan langsung:")
     for of in output_files:
         template_path = scene_dir / of
         template_payload = _normalize_schema_template(of, _read_json_file(template_path))
         if template_payload is not None:
+            if scene_type in MINIMAX_AGENTIC_SCENE_TYPES:
+                template_payload = _minimax_agentic_llm_template(of, template_payload)
             lines.append(f"\n--- SCHEMA WAJIB {of} ---")
             lines.append(json.dumps(_blank_prompt_fields(template_payload), ensure_ascii=False, indent=2))
     lines.append("")
 
-    lines.append(
-        "Setiap file JSON harus memiliki struktur yang sama dengan file aslinya, "
-        "hanya saja field prompt (id_new, id_old, en) diisi dengan prompt baru yang sudah divariasikan.\n"
-    )
+    if scene_type in MINIMAX_AGENTIC_SCENE_TYPES:
+        lines.append(
+            "KHUSUS file minimax_h3_*_prompt.json: LLM hanya boleh mengisi "
+            "positive_prompt.en sebagai object JSON nested berbahasa Inggris. "
+            "Jangan mengembalikan positive_prompt.id_new atau positive_prompt.id_old. "
+            "Pipeline akan menerjemahkan setiap field teks en menjadi id_new, mempertahankan "
+            "key/array/angka/timing/reference, lalu menyalin id_new ke id_old.\n"
+        )
+        lines.append(
+            "File output MiniMax harus mengikuti schema respons ringkas yang ditampilkan di atas. "
+            "Field non-prompt tetap sama dengan input. File non-MiniMax tetap mengikuti aturan bilingual normal.\n"
+        )
+    else:
+        lines.append(
+            "Setiap file JSON harus memiliki struktur yang sama dengan file aslinya, "
+            "hanya saja field prompt (id_new, id_old, en) diisi dengan prompt baru yang sudah divariasikan.\n"
+        )
 
-    lines.append(
-        "Aturan untuk field prompt:\n"
-        "- Field `id_new` dan `id_old` isinya sama dan dalam bahasa Indonesia\n"
-        "- Field `en` berisi versi bahasa Inggris\n"
-        "- Jangan mengganti nama key, jangan menambah key baru, dan jangan menghapus key yang sudah ada\n"
-        "- Jangan mengubah struktur list/dict, termasuk `groups` harus tetap bernama `groups`\n"
-        "- Prompt harus mengikuti panduan yang diberikan di atas\n"
-        "- Buat prompt yang kreatif, detail, dan sesuai dengan konteks project serta scene\n"
-        "- Bandingkan dengan semua variasi sebelumnya yang diberikan di atas, lalu pastikan isi JSON output ini bervariasi dan tidak sama dengan variasi yang sudah ada sebelumnya\n"
-        "- Jangan mengulang komposisi, angle, urutan edit, framing, visual emphasis, atau wording prompt secara identik dengan variasi sebelumnya\n"
-    )
+    if scene_type in MINIMAX_AGENTIC_SCENE_TYPES:
+        lines.append(
+            "Aturan untuk field prompt:\n"
+            "- Pada file minimax_h3_*_prompt.json, isi HANYA object JSON `positive_prompt.en` dalam bahasa Inggris\n"
+            "- Jangan tulis key `id_new` atau `id_old` pada file MiniMax; pipeline yang akan membuat keduanya\n"
+            "- Pada file non-MiniMax seperti z_image_prompt.json, tetap isi `id_new`, `id_old`, dan `en` sesuai schema\n"
+            "- Jangan mengganti nama key, menambah key baru, atau menghapus key yang diwajibkan schema respons\n"
+            "- Prompt harus mengikuti panduan, kreatif, detail, sesuai konteks, dan berbeda dari semua variasi sebelumnya\n"
+            "- Jangan mengulang komposisi, angle, urutan edit, framing, visual emphasis, atau wording secara identik\n"
+        )
+    else:
+        lines.append(
+            "Aturan untuk field prompt:\n"
+            "- Field `id_new` dan `id_old` isinya sama dan dalam bahasa Indonesia\n"
+            "- Field `en` berisi versi bahasa Inggris\n"
+            "- Jangan mengganti nama key, jangan menambah key baru, dan jangan menghapus key yang sudah ada\n"
+            "- Jangan mengubah struktur list/dict, termasuk `groups` harus tetap bernama `groups`\n"
+            "- Prompt harus mengikuti panduan yang diberikan di atas\n"
+            "- Buat prompt yang kreatif, detail, dan sesuai dengan konteks project serta scene\n"
+            "- Bandingkan dengan semua variasi sebelumnya yang diberikan di atas, lalu pastikan isi JSON output ini bervariasi dan tidak sama dengan variasi yang sudah ada sebelumnya\n"
+            "- Jangan mengulang komposisi, angle, urutan edit, framing, visual emphasis, atau wording prompt secara identik dengan variasi sebelumnya\n"
+        )
 
     lines.append(
         "PENTING: Kembalikan HANYA JSON valid tanpa teks tambahan di luar JSON. "
@@ -1010,6 +1160,13 @@ def _is_prompt_path(path_parts: tuple[str, ...]) -> bool:
     current_key = str(path_parts[-1]).strip().lower()
     if "prompt" in current_key:
         return True
+    # Nested structured MiniMax leaves such as
+    # positive_prompt.en.overall_soundscape are prompt content too. Skip the
+    # first path component because it is the filename (which may itself contain
+    # the word "prompt") and must not make fields such as LoRA editable.
+    for ancestor_key in path_parts[1:-1]:
+        if "prompt" in str(ancestor_key).strip().lower():
+            return True
     if current_key in PROMPT_VALUE_KEYS:
         for parent_key in reversed(path_parts[:-1]):
             parent_text = str(parent_key).strip().lower()
@@ -1051,6 +1208,11 @@ def _validate_output_structure_and_changes(
     if isinstance(input_value, list):
         if not isinstance(output_value, list):
             errors.append(f"{path_text}: output harus berupa array/list")
+            return
+        if path_text.endswith("positive_prompt.en.shots"):
+            for index, item_out in enumerate(output_value):
+                if not isinstance(item_out, dict):
+                    errors.append(f"{path_text}[{index}]: setiap shot harus berupa object")
             return
         if len(input_value) != len(output_value):
             errors.append(
@@ -1112,6 +1274,11 @@ def _validate_output_structure(
     if isinstance(input_value, list):
         if not isinstance(output_value, list):
             errors.append(f"{path_text}: output harus berupa array/list")
+            return
+        if path_text.endswith("positive_prompt.en.shots"):
+            for index, item_out in enumerate(output_value):
+                if not isinstance(item_out, dict):
+                    errors.append(f"{path_text}[{index}]: setiap shot harus berupa object")
             return
         if len(input_value) != len(output_value):
             errors.append(
@@ -1177,6 +1344,85 @@ def _validate_non_empty_prompt_triplets(
             )
 
 
+def _validate_minimax_h3_i2v_prompt_format(
+    filename: str,
+    value,
+    errors: list[str],
+):
+    """Require the exact first-frame alignment and core I2VA sections."""
+    if filename not in {"minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"}:
+        return
+    if not isinstance(value, dict):
+        return
+    positive_prompt = value.get("positive_prompt")
+    if not isinstance(positive_prompt, dict):
+        return
+    mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"
+    errors.extend(f"{filename}: {error}" for error in validate_structured_prompt(positive_prompt, expected_mode=mode))
+
+
+def _normalize_minimax_agentic_output(
+    scene_dir: Path,
+    filename: str,
+    input_payload: dict,
+    output_payload: dict,
+) -> tuple[dict | None, list[str]]:
+    """Expand an en-only MiniMax LLM response into the stored bilingual triplet."""
+    errors: list[str] = []
+    llm_template = _minimax_agentic_llm_template(filename, input_payload)
+    _validate_output_structure_and_changes(
+        llm_template,
+        output_payload,
+        (filename,),
+        errors,
+    )
+    if errors:
+        return None, errors
+
+    positive_prompt = output_payload.get("positive_prompt")
+    en = positive_prompt.get("en") if isinstance(positive_prompt, dict) else None
+    if not isinstance(en, dict):
+        return None, [f"{filename}.positive_prompt.en harus berupa object JSON."]
+
+    mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"
+    probe = {
+        "id_old": copy.deepcopy(en),
+        "id_new": copy.deepcopy(en),
+        "en": copy.deepcopy(en),
+    }
+    format_errors = validate_structured_prompt(probe, expected_mode=mode)
+    if format_errors:
+        return None, [f"{filename}: {error}" for error in format_errors]
+
+    try:
+        translator = get_prompt_translator(project_dir=Path(scene_dir).parent)
+        id_new = translator.translate_structured_prompt_to_indonesian(en, mode=mode)
+    except Exception as exc:
+        return None, [f"{filename}: gagal menerjemahkan en per field ke id_new: {exc}"]
+
+    result = copy.deepcopy(input_payload)
+    original_entry = input_payload.get("positive_prompt")
+    entry_keys = list(original_entry.keys()) if isinstance(original_entry, dict) else ["id_old", "id_new", "en"]
+    expanded_entry = {}
+    for key in entry_keys:
+        if key == "id_old":
+            expanded_entry[key] = copy.deepcopy(id_new)
+        elif key == "id_new":
+            expanded_entry[key] = copy.deepcopy(id_new)
+        elif key == "en":
+            expanded_entry[key] = copy.deepcopy(en)
+        elif isinstance(original_entry, dict):
+            expanded_entry[key] = copy.deepcopy(original_entry.get(key))
+    for required_key, required_value in (
+        ("id_old", id_new),
+        ("id_new", id_new),
+        ("en", en),
+    ):
+        if required_key not in expanded_entry:
+            expanded_entry[required_key] = copy.deepcopy(required_value)
+    result["positive_prompt"] = expanded_entry
+    return result, []
+
 def _normalize_output_against_input(
     input_value,
     output_value,
@@ -1189,12 +1435,14 @@ def _normalize_output_against_input(
             output_dict = output_value if isinstance(output_value, dict) else {}
             id_old = _clean_text(output_dict.get("id_old", ""))
             id_new = _clean_text(output_dict.get("id_new", ""))
-            en = _clean_text(output_dict.get("en", ""))
+            en_value = output_dict.get("en", "")
+            en = en_value if isinstance(en_value, dict) else _clean_text(en_value)
+            en_fallback = "" if isinstance(en, dict) else en
 
             if not id_new:
-                id_new = id_old or en
+                id_new = id_old or en_fallback
             if not id_old:
-                id_old = id_new or en
+                id_old = id_new or en_fallback
             if id_new and id_old != id_new:
                 id_old = id_new
             if not id_new and id_old:
@@ -1226,6 +1474,8 @@ def _normalize_output_against_input(
         return normalized
 
     if isinstance(input_value, list):
+        if not input_value and path_parts[-2:] == ("en", "shots"):
+            return copy.deepcopy(output_value) if isinstance(output_value, list) else []
         return [
             _normalize_output_against_input(item_in, item_out, path_parts + (f"[{index}]",))
             for index, (item_in, item_out) in enumerate(zip(input_value, output_value))
@@ -1270,12 +1520,37 @@ def validate_llm_variations(
             errors.append(f"{filename}: file input pembanding tidak ditemukan atau tidak valid.")
             continue
 
+        if scene_type in MINIMAX_AGENTIC_SCENE_TYPES and filename in MINIMAX_AGENTIC_PROMPT_FILES:
+            llm_template = _minimax_agentic_llm_template(filename, input_payload)
+            _validate_output_structure_and_changes(
+                llm_template,
+                output_payload,
+                (filename,),
+                errors,
+            )
+            positive_prompt = output_payload.get("positive_prompt")
+            en = positive_prompt.get("en") if isinstance(positive_prompt, dict) else None
+            if isinstance(en, dict):
+                mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"
+                probe = {"id_old": en, "id_new": en, "en": en}
+                errors.extend(
+                    f"{filename}: {error}"
+                    for error in validate_structured_prompt(probe, expected_mode=mode)
+                )
+            else:
+                errors.append(f"{filename}.positive_prompt.en harus berupa object JSON.")
+            continue
+
         _validate_output_structure_and_changes(
             input_payload,
             output_payload,
             (filename,),
             errors,
         )
+        format_errors: list[str] = []
+        _validate_minimax_h3_i2v_prompt_format(filename, output_payload, format_errors)
+        if format_errors:
+            errors.extend(format_errors)
 
     return errors
 
@@ -1315,6 +1590,19 @@ def normalize_llm_variations(
             errors.append(f"{filename}: file input pembanding tidak ditemukan atau tidak valid.")
             continue
 
+        if scene_type in MINIMAX_AGENTIC_SCENE_TYPES and filename in MINIMAX_AGENTIC_PROMPT_FILES:
+            minimax_output, minimax_errors = _normalize_minimax_agentic_output(
+                scene_dir,
+                filename,
+                input_payload,
+                output_payload,
+            )
+            if minimax_errors:
+                errors.extend(minimax_errors)
+                continue
+            normalized[filename] = minimax_output
+            continue
+
         structure_errors: list[str] = []
         _validate_output_structure(input_payload, output_payload, (filename,), structure_errors)
         if structure_errors:
@@ -1330,6 +1618,12 @@ def normalize_llm_variations(
         )
         if prompt_triplet_errors:
             errors.extend(prompt_triplet_errors)
+            continue
+
+        format_errors: list[str] = []
+        _validate_minimax_h3_i2v_prompt_format(filename, output_payload, format_errors)
+        if format_errors:
+            errors.extend(format_errors)
             continue
 
         normalized[filename] = _normalize_output_against_input(

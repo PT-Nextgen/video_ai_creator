@@ -187,9 +187,18 @@ def wait_for_output(server: str, prompt_id: str, output_type: str = 'image', tim
         return None
 
     while time.time() < deadline:
-        hist = get_history_for_prompt(server, prompt_id)
+        # Do not nest the default 500-second history wait inside this timeout.
+        # Poll history for at most one interval so the caller's deadline remains
+        # authoritative (previously a 600-second wait could last ~17 minutes).
+        remaining = max(0.0, deadline - time.time())
+        history_timeout = min(max(float(interval), 0.1), remaining)
+        hist = get_history_for_prompt(
+            server,
+            prompt_id,
+            timeout=history_timeout,
+            interval=min(max(float(interval), 0.1), history_timeout),
+        )
         if not isinstance(hist, dict):
-            time.sleep(interval)
             continue
 
         outputs = hist.get('outputs')
@@ -198,7 +207,9 @@ def wait_for_output(server: str, prompt_id: str, output_type: str = 'image', tim
             if info:
                 return info
 
-        time.sleep(interval)
+        remaining = deadline - time.time()
+        if remaining > 0 and outputs:
+            time.sleep(min(float(interval), remaining))
     return None
 
 

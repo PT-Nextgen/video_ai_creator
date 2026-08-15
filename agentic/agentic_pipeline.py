@@ -37,20 +37,28 @@ from agentic.agentic_llm import expected_output_files, generate_variations
 VARIATION_DIR_PATTERN = re.compile(r"^variasi_?\d+$", re.IGNORECASE)
 STATUS_DONE_FILENAME = "status.done"
 VARIATION_FAIL_FILENAME = "variasi_gagal.txt"
+DEFAULT_SCRIPT_TIMEOUT = 1800
+MINIMAX_H3_I2V_SCRIPT_TIMEOUT = 3900
+MINIMAX_H3_T2V_I2V_SCRIPT_TIMEOUT = 7800
 
 
-def _run_script(script_path: Path, args: list[str], cwd: Path | None = None) -> bool:
+def _run_script(
+    script_path: Path,
+    args: list[str],
+    cwd: Path | None = None,
+    timeout: int = DEFAULT_SCRIPT_TIMEOUT,
+) -> bool:
     """Run a Python script as a subprocess. Returns True on success."""
     python_executable = VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)
     cmd = [str(python_executable), str(script_path)] + args
-    write_log(f"[agentic] Running: {' '.join(cmd)}")
+    write_log(f"[agentic] Running (timeout={int(timeout)}s): {' '.join(cmd)}")
     try:
         result = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
-            timeout=1800,
+            timeout=int(timeout),
         )
         if result.stdout:
             for line in result.stdout.strip().split("\n"):
@@ -61,7 +69,10 @@ def _run_script(script_path: Path, args: list[str], cwd: Path | None = None) -> 
         write_log(f"[agentic] Script selesai: {script_path.name} (exit={result.returncode})")
         return result.returncode == 0
     except subprocess.TimeoutExpired:
-        write_log(f"[agentic] Script timeout: {script_path.name}", level="error")
+        write_log(
+            f"[agentic] Script timeout setelah {int(timeout)} detik: {script_path.name}",
+            level="error",
+        )
         return False
     except Exception as e:
         write_log(f"[agentic] Script error: {script_path.name}: {e}", level="error")
@@ -153,10 +164,14 @@ def _record_variation_failure(project_dir: Path, scene_dir: Path, variation_dir:
         return False
 
 
-def _delete_media_files(scene_dir: Path) -> int:
-    """Delete all .mp4 and .png files in scene_dir. Returns count of deleted files."""
+def _delete_media_files(scene_dir: Path, preserve_images: bool = False) -> int:
+    """Delete generated media, optionally preserving root reference images."""
     count = 0
-    for ext in ("*.mp4", "*.png"):
+    # Standalone MiniMax H3 I2V accepts png/jpg/jpeg/webp root references. When
+    # image generation is disabled, all of those references must survive the
+    # per-variation cleanup; only generated videos are removed.
+    extensions = ["*.mp4"] if preserve_images else ["*.mp4", "*.png"]
+    for ext in extensions:
         for f in glob.glob(str(scene_dir / ext)):
             try:
                 os.remove(f)
@@ -175,6 +190,15 @@ def _existing_variation_dirs(scene_dir: Path) -> list[Path]:
         dirs,
         key=lambda d: int(re.search(r"(\d+)$", d.name).group(1)) if re.search(r"(\d+)$", d.name) else 999999,
     )
+
+
+def _pending_variation_dirs(scene_dir: Path) -> list[Path]:
+    """Return every variation that has not completed, independent of Agentic count."""
+    return [
+        variation_dir
+        for variation_dir in _existing_variation_dirs(scene_dir)
+        if not (variation_dir / STATUS_DONE_FILENAME).is_file()
+    ]
 
 
 def _existing_variation_indices(scene_dir: Path) -> list[int]:
@@ -319,7 +343,15 @@ def _generate_image_edits(scene_dir: Path, project_name: str, server: str) -> bo
 def _process_scene_with_main(scene_dir: Path, project_name: str, server: str) -> bool:
     main_script = Path(ROOT) / "main.py"
     args = ["--project", project_name, "--scene", scene_dir.name, "--server", server]
-    return _run_script(main_script, args, cwd=scene_dir)
+    scene_meta = _load_scene_meta(scene_dir) or {}
+    scene_type = str(scene_meta.get("scene_type", "")).strip()
+    if scene_type == "minimax-h3_t2v_i2v":
+        timeout = MINIMAX_H3_T2V_I2V_SCRIPT_TIMEOUT
+    elif scene_type == "minimax-h3_i2v":
+        timeout = MINIMAX_H3_I2V_SCRIPT_TIMEOUT
+    else:
+        timeout = DEFAULT_SCRIPT_TIMEOUT
+    return _run_script(main_script, args, cwd=scene_dir, timeout=timeout)
 
 
 def _load_scene_meta(scene_dir: Path) -> dict | None:
@@ -455,6 +487,12 @@ def generate_variation_configs_for_scene(
         f"[agentic] {scene_dir.name}: Selesai generate konfigurasi "
         f"(berhasil={generated_count}, skip={skipped_count}, total={number_of_variations})"
     )
+    if generated_count == 0:
+        write_log(
+            f"[agentic] {scene_dir.name}: Tidak ada konfigurasi variasi yang berhasil dibuat.",
+            level="error",
+        )
+        return False
     return True
 
 
@@ -468,14 +506,10 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
     scene_type = str(scene_meta.get("scene_type", "wan22_i2v")).strip()
     create_initial_image = bool(agentic_config.get("create_initial_image", True))
     image_extra_mode = str(agentic_config.get("image_extra_mode", "image_extra")).strip()
-    if scene_type == "wan22_t2v_i2v":
+    if scene_type in {"wan22_t2v_i2v", "minimax-h3_t2v_i2v"}:
         create_initial_image = False
 
-    pending_variations = [
-        variation_dir
-        for variation_dir in _existing_variation_dirs(scene_dir)
-        if not (variation_dir / STATUS_DONE_FILENAME).exists()
-    ]
+    pending_variations = _pending_variation_dirs(scene_dir)
     if not pending_variations:
         write_log(f"[agentic] {scene_dir.name}: Tidak ada variasi yang perlu dieksekusi")
         return True
@@ -483,13 +517,14 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
     write_log(
         f"[agentic] {scene_dir.name}: Eksekusi {len(pending_variations)} variasi pending"
     )
+    preserve_root_images = scene_type == "minimax-h3_i2v" and not create_initial_image
 
     for variation_dir in pending_variations:
         write_log(f"\n{'=' * 60}")
         write_log(f"[agentic] {scene_dir.name}: === eksekusi {variation_dir.name} ===")
         write_log(f"{'=' * 60}")
 
-        deleted_before = _delete_media_files(scene_dir)
+        deleted_before = _delete_media_files(scene_dir, preserve_images=preserve_root_images)
         if deleted_before:
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Cleanup awal root, hapus {deleted_before} media")
 
@@ -526,7 +561,7 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal tulis status.done: {e}", level="error")
             return False
 
-        deleted_after = _delete_media_files(scene_dir)
+        deleted_after = _delete_media_files(scene_dir, preserve_images=preserve_root_images)
         write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Selesai, hapus {deleted_after} media dari root")
 
     write_log(f"[agentic] {scene_dir.name}: Selesai eksekusi semua variasi pending")
@@ -595,9 +630,6 @@ def run_agentic_execute_for_project(project_dir: Path, server: str, target_scene
     write_log(f"{'=' * 60}\n")
 
     for scene_dir in scene_dirs:
-        if load_agentic_config(scene_dir).get("number_of_variations", 0) <= 0:
-            write_log(f"[agentic] {scene_dir.name}: number_of_variations=0, skip execute")
-            continue
         if not execute_variations_for_scene(scene_dir, project_name, server):
             write_log(f"[agentic] Project {project_name}: Gagal execute di {scene_dir.name}", level="error")
             return False

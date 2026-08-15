@@ -61,6 +61,8 @@ Tipe scene yang didukung:
 
 - `wan22_i2v`
 - `wan22_t2v_i2v`
+- `minimax-h3_t2v_i2v`
+- `minimax-h3_i2v`
 - `wan22_t2v_batch`
 - `wan22_s2v`
 - `i2v`
@@ -72,6 +74,14 @@ Contoh tambahan:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat." --duration 15
+```
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type minimax-h3_t2v_i2v --title "Intro MiniMax H3" --scene-description "Scene MiniMax H3 T2V lalu I2V." --voice-text "Halo teman-teman! Kita mulai dengan gerakan yang halus." --duration 20
+```
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type minimax-h3_i2v --title "Intro MiniMax H3 I2V" --scene-description "Scene MiniMax H3 I2V dari gambar referensi." --voice-text "Halo teman-teman! Kita mulai dari gambar referensi." --duration 10
 ```
 
 ```powershell

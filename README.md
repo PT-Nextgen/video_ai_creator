@@ -40,6 +40,8 @@ File utama:
 - `wan22_t2v_batch_extra_prompts.json` (untuk `wan22_t2v_batch`)
 - `wan22_s2v_prompt.json`
 - `wan22_i2v_prompt.json` (untuk `wan22_i2v` dan stage 2 `wan22_t2v_i2v`)
+- `minimax_h3_t2v_prompt.json` (untuk stage T2V `minimax-h3_t2v_i2v`)
+- `minimax_h3_i2v_prompt.json` (untuk scene `minimax-h3_i2v` dan stage I2V `minimax-h3_t2v_i2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
 - `image_zoom_prompt.json` (untuk `image_zoom`)
@@ -50,19 +52,24 @@ Catatan pembuatan file scene:
 - tujuannya agar scene bisa langsung diganti `scene_type` tanpa perlu membuat file JSON tambahan secara manual
 
 Catatan format prompt:
-- prompt yang tampil di UI selalu memakai nilai `id_new`
-- di JSON, field prompt disimpan sebagai object bilingual:
+- prompt bilingual biasa yang tampil di UI memakai nilai `id_new`
+- di JSON, field prompt bilingual biasa disimpan sebagai object:
   - `id_old`
   - `id_new`
   - `en`
-- `id_old` dan `id_new` selalu disamakan oleh runtime; kalau salah satu kosong, yang ada akan disalin ke yang kosong
+- prompt MiniMax H3 juga memakai tiga field tersebut, tetapi nilai setiap field adalah object JSON nested, bukan string
+- editor Prompt Positif MiniMax di UI menampilkan object `id_new` sebagai JSON berindentasi yang dapat diedit
+- `id_old` dan `id_new` disamakan oleh runtime
 - `en` adalah versi Inggris untuk runtime
 - prompt generation dan translate memakai konfigurasi yang sama di `project_settings.json.prompt_generation`
 - provider `gemini` memakai default model API tanpa setting `temperature`
 - provider `llama.cpp` memakai endpoint OpenAI-compatible bila tersedia
 - runtime akan mencoba `v1/chat/completions` untuk text generation dan `v1/models` untuk daftar model
 - jika endpoint modern tidak tersedia, runtime akan fallback ke endpoint legacy yang kompatibel
-- saat `Save` di UI, prompt hanya disimpan ke format bilingual dan tidak langsung diterjemahkan
+- tombol `Buat Prompt` tidak melakukan `Save Scene` terlebih dahulu; input dan konteks diambil langsung dari nilai yang sedang tampil di UI
+- khusus MiniMax H3, jika `id_new == id_old`, `Save` tidak menerjemahkan atau mengubah prompt
+- khusus MiniMax H3, jika JSON `id_new` diedit sehingga berbeda dari `id_old`, `Save` menerjemahkan field teks `id_new` satu per satu untuk membentuk ulang `en`, lalu menyalin `id_new` ke `id_old`
+- jika JSON MiniMax di UI tidak valid, Save menampilkan error dan tidak merusak file prompt
 - `lora_trigger_words` disimpan sebagai text biasa dan tidak diterjemahkan
 - `lora_trigger_words` hanya disisipkan ke awal prompt positif versi Inggris saat runtime, bukan ditulis permanen ke field prompt
 
@@ -176,6 +183,15 @@ Kebutuhan prompt per `scene_type`:
   - durasi scene hanya `5`, `10`, atau `15`
   - jika durasi `5`, hanya stage `WAN22_T2V` yang dijalankan
   - jika durasi `10` atau `15`, stage `WAN22_T2V` dijalankan dulu lalu frame terakhir (frame ke 81) dipakai sebagai input untuk stage `WAN22_I2V`
+- `minimax-h3_t2v_i2v`
+  - membutuhkan `scene_meta.json`, `minimax_h3_t2v_prompt.json`, dan `minimax_h3_i2v_prompt.json`
+  - durasi scene hanya `1`, `5`, `10`, `15`, `20`, `25`, atau `30`
+  - durasi `1`, `5`, `10`, dan `15` hanya menjalankan stage MiniMax H3 T2V
+  - durasi `20`, `25`, dan `30` menjalankan T2V `15` detik lalu I2V dengan frame terakhir T2V sebagai gambar awal
+- `minimax-h3_i2v`
+  - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_i2v_prompt.json`, dan minimal satu gambar di root folder scene
+  - durasi scene hanya `1`, `5`, `10`, atau `15`
+  - memakai gambar terbaru dari root folder scene sebagai `Picture 1` untuk workflow MiniMax H3 I2VA
 - `wan22_t2v_batch`
   - membutuhkan `scene_meta.json`, `wan22_t2v_prompt.json`, dan `wan22_t2v_batch_extra_prompts.json`
   - durasi scene hanya `5` atau `10`
@@ -214,6 +230,9 @@ Catatan sumber image:
   - memakai satu gambar terbaru dari root folder scene
   - durasi gerak WAN mengikuti `wan22_i2v_prompt.json.duration_seconds` (`5` / `10`)
   - `lora_trigger_words` dari `wan22_i2v_prompt.json` otomatis ditambahkan ke awal `positive_prompt_one` dan `positive_prompt_two` versi `en` saat runtime
+- `minimax-h3_i2v`
+  - memakai satu gambar terbaru dari root folder scene sebagai input first frame
+  - durasi workflow MiniMax H3 I2VA mengikuti durasi scene (`1`, `5`, `10`, atau `15`)
 - `wan22_t2v_i2v`
   - stage `WAN22_T2V` selalu dijalankan terlebih dahulu
   - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
@@ -339,6 +358,8 @@ Subcommand:
 Pilihan `scene_type`:
 - `wan22_i2v`
 - `wan22_t2v_i2v`
+- `minimax-h3_t2v_i2v`
+- `minimax-h3_i2v`
 - `wan22_t2v_batch`
 - `wan22_s2v`
 - `i2v`
@@ -374,6 +395,14 @@ Fungsi:
   - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
   - jika durasi scene `10` atau `15`, frame terakhir dari video T2V (frame ke 81) dipakai sebagai input image untuk stage `WAN22_I2V`
   - stage `WAN22_I2V` tetap memakai script yang sudah ada di repo
+- `scene_type=minimax-h3_t2v_i2v`
+  - stage MiniMax H3 T2V dijalankan lebih dahulu
+  - untuk durasi di atas `15`, frame terakhir T2V dipakai sebagai input `first_frame` stage MiniMax H3 I2V
+  - hasil kedua stage digabung menjadi satu video final
+- `scene_type=minimax-h3_i2v`
+  - ambil satu gambar terbaru dari root folder scene
+  - upload image ke ComfyUI
+  - generate video dari `minimax_h3_i2v_prompt.json` menggunakan workflow MiniMax H3 I2V
 - `scene_type=wan22_t2v_batch`
   - ambil video dari stage `WAN22_T2V` untuk prompt utama dan setiap prompt tambahan yang terisi
   - jumlah frame per video dihitung dengan `ceil((duration * 16) / total_video)`
@@ -535,10 +564,10 @@ Perilaku UI:
 - `voice` hanya wajib jika `voice_text` diisi
   - pilihan suara scene tersedia di metadata scene melalui `voice_character`, termasuk `lily_arab` (Lily - Arab)
 - language TTS runtime dipaksa ke `id-ID`
-- semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`
-- `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON
+- semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`; untuk MiniMax, nilainya ditampilkan sebagai object JSON berindentasi, sedangkan scene lain memakai string
+- `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON; editor MiniMax hanya membuka object `id_new`
 - `Generate Config Agentic` hanya membuat JSON variasi dan menyimpannya ke folder `variasiN`
-- `Execute Agentic` menjalankan variasi yang belum punya `status.done`
+- `Execute Agentic` menjalankan setiap folder variasi yang belum punya file `status.done`, tanpa bergantung pada nilai `Jumlah Variasi`
 - untuk `wan22_t2v_batch`, agentic memakai panduan khusus `SCENE-WAN22-T2V-BATCH.md`
 - output agentic untuk scene ini mencakup `wan22_t2v_prompt.json` dan `wan22_t2v_batch_extra_prompts.json`
 - ukuran video project menjadi sumber ukuran tunggal untuk tab:
@@ -548,13 +577,27 @@ Perilaku UI:
   - `Web Scroll`
   - `Image Pan`
   - `Image Zoom`
-  - `Gambar Awal` hanya untuk scene type `wan22_i2v`, `wan22_s2v`, `i2v`
+  - `Gambar Awal` hanya untuk scene type `wan22_i2v`, `wan22_s2v`, `minimax-h3_i2v`, `i2v`
 - dropdown ukuran pada tab-tab tersebut dikunci (disabled) dan hanya menampilkan ukuran project aktif
 - scene type `wan22_t2v_i2v` hanya menampilkan 4 tab:
   - `Meta`
   - `WAN22_T2V`
   - `WAN22_I2V`
   - `Aset`
+- scene type `minimax-h3_i2v` menampilkan tab berurutan:
+  - `Meta`
+  - `Gambar Awal`
+  - `Image Edit`
+  - `MINIMAX-H3_I2V`
+  - `Agentic`
+  - `Aset`
+- scene type `minimax-h3_t2v_i2v` menampilkan tab berurutan:
+  - `Meta`
+  - `MINIMAX-H3_T2V`
+  - `MINIMAX-H3_I2V`
+  - `Agentic`
+  - `Aset`
+- urutan tab selalu di-reset ke urutan canonical saat berpindah scene sehingga tidak dipengaruhi scene yang sebelumnya dibuka
 - scene type `wan22_t2v_batch` menampilkan:
   - `Meta`
   - `WAN22_T2V`
@@ -572,6 +615,14 @@ Perilaku UI:
   - `Prompt Negatif`
   - tombol `Buat Prompt` pada `Prompt Positif`
 - tab `WAN22_I2V` juga menyediakan tombol `Edit Variasi` dengan fungsi serupa untuk file `wan22_i2v_prompt.json`
+- tab MiniMax T2V dan I2V masing-masing menyediakan:
+  - `Ukuran` yang mengikuti ukuran video project
+  - `Lora` dan kekuatannya
+  - `Prompt Positif` berupa JSON `id_new`
+  - tombol `Buat Prompt`
+  - tombol `Edit Variasi`
+- `Edit Variasi` MiniMax T2V hanya mengkopikan `lora_name` dan `lora_strength` dari `minimax_h3_t2v_prompt.json` ke file T2V semua variasi
+- `Edit Variasi` MiniMax I2V melakukan hal yang sama secara terpisah dari `minimax_h3_i2v_prompt.json`; LoRA T2V dan I2V tidak harus sama
 - tombol `Edit Variasi` hanya aktif saat `Root Scene` sedang dipilih dan scene aktif memang memiliki folder variasi
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
@@ -645,7 +696,9 @@ Perilaku UI:
   - mempertahankan audio bawaan setiap video S2V dan menyusun video/audio per-scene secara bersamaan agar lip-sync tetap terjaga
 - tombol `Upscale Video` pada group `Scene` membuka dialog kecil untuk memilih `1.5x` atau `2x`
 - hasil tombol `Upscale Video` disimpan sebagai file video baru di root scene aktif tanpa mengekspor frame PNG
-- tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` juga punya tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
+- tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` mempunyai tombol `Buat Prompt` dengan alur bilingual string sesuai tipe prompt masing-masing
+- tombol `Buat Prompt` pada semua tab MiniMax T2V/I2V memakai referensi scene MiniMax yang sesuai dan hanya meminta LLM membuat object JSON `en`; pipeline kemudian menerjemahkan field teks per-field menjadi `id_new` dan menyalin `id_new` ke `id_old`
+- setelah Buat Prompt MiniMax berhasil, JSON `id_new` langsung dimuat ke UI tanpa menunggu reload scene dan tanpa Save Scene pendahuluan
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup
 - setelah proses selesai dari UI, akan muncul popup:
@@ -671,29 +724,49 @@ Agentic dipakai untuk membuat dan menjalankan variasi per scene dalam dua tahap:
      - file JSON/template input
      - file `.md` referensi
      - untuk `wan22_t2v_batch`, referensi markdown yang ditempel adalah `SCENE-GENERAL.md`, `SCENE-WAN22-T2V-BATCH.md`, `TEXT-TO-VIDEO-BATCH.md`, dan `TEXT-TO-VIDEO-PROMPT.md`
+     - untuk `minimax-h3_i2v`, output wajib berupa `z_image_prompt.json` dan `minimax_h3_i2v_prompt.json`, dengan referensi `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, dan `MINIMAX-H3/references/base-en.txt`
+     - untuk `minimax-h3_t2v_i2v`, output wajib mencakup `minimax_h3_t2v_prompt.json` dan `minimax_h3_i2v_prompt.json`, dengan referensi `SCENE-MINIMAX-H3-T2V-I2V.md`, `MINIMAX-H3/SKILL.md`, dan `MINIMAX-H3/references/base-en.txt`
      - isi JSON dari variasi yang sudah ada sebagai referensi anti-duplikasi
    - jika LLM gagal membuat variasi prompt setelah 3 percobaan, catatan akan ditulis ke `variasi_gagal.txt` di root project berisi nama scene dan variasi
    - pada section input JSON dan schema output, field prompt ditampilkan sebagai string kosong `""` agar LLM jelas mengisi bagian itu saja
    - output JSON divalidasi ketat:
      - struktur harus sama dengan input
      - field prompt harus konsisten
-     - untuk `wan22_t2v_prompt.json`, `wan22_i2v_prompt.json`, `z_image_prompt.json`, `z_image_extra_prompts.json`, dan `wan22_t2v_batch_extra_prompts.json`, setiap field prompt bilingual wajib mengisi `id_old`, `id_new`, dan `en`
-     - jika salah satu dari `id_old`, `id_new`, atau `en` kosong pada field prompt di file-file di atas, hasil LLM dianggap gagal dan request akan di-retry ulang
-     - `id_old` dan `id_new` disamakan oleh runtime
+     - untuk prompt non-MiniMax, kontrak bilingual `id_old`, `id_new`, dan `en` tetap berlaku
+     - khusus `minimax_h3_t2v_prompt.json` dan `minimax_h3_i2v_prompt.json`, schema respons LLM hanya memuat `positive_prompt.en` sebagai object JSON nested berbahasa Inggris
+     - LLM Agentic MiniMax tidak diminta dan tidak diizinkan menghasilkan `positive_prompt.id_new` atau `positive_prompt.id_old`
+     - pipeline memvalidasi `en` sebagai T2VA/I2VA, menerjemahkan setiap field teks natural-language satu per satu menjadi object Indonesia `id_new`, lalu membuat `id_old` sebagai deep-copy `id_new`
+     - key, array, angka, timing, `shot_id`, `mode`, dan object `reference` disalin tanpa diterjemahkan
+     - hasil file variasi MiniMax yang disimpan tetap lengkap dengan `positive_prompt.id_old`, `positive_prompt.id_new`, dan `positive_prompt.en`
+     - I2VA wajib memiliki reference `<Picture 1>` pada `0.00` dari `[Shot 1]`; T2VA tidak boleh memiliki `reference`
+     - array `shots` boleh berisi satu atau lebih shot dan setiap shot wajib memiliki `shot_id`, `start`, `end`, `visual`, `action`, `camera`, `dialogue`, dan `diegetic_sound`
+     - perubahan field nested di bawah `positive_prompt.en`, termasuk `overall_soundscape`, dikenali sebagai perubahan prompt yang valid; field non-prompt seperti LoRA tetap tidak boleh diubah LLM
 
 2. `Execute Agentic`
-   - mencari folder variasi yang belum punya `status.done`
+   - mencari semua folder `variasiN`/`variasi_N` yang belum mempunyai file `status.done`
+   - tidak membaca `number_of_variations`; nilai itu hanya menentukan jumlah konfigurasi pada tahap Generate Config
    - copy isi folder variasi ke root scene
    - jalankan proses scene dari root
    - copy hasil root scene kembali ke folder variasi
    - buat `status.done`
    - bersihkan file `.png` dan `.mp4` di root scene
+   - untuk `minimax-h3_i2v` saat `Buat Image Awal` dimatikan, gambar referensi `.png` di root dipertahankan agar tetap dapat dipakai sebagai `Picture 1`
 
 Perilaku `status.done`:
 - hanya mempengaruhi tahap `Execute Agentic`
-- folder variasi yang sudah punya `status.done` akan di-skip pada eksekusi berikutnya
+- file `status.done` adalah satu-satunya penanda variasi sudah selesai dan harus di-skip pada eksekusi berikutnya
+- variasi tanpa `status.done` tetap dieksekusi meskipun `number_of_variations=0`
+- variasi dengan `status.failed` atau kegagalan sebelumnya tetap dianggap pending dan dapat dicoba ulang
 - `Generate Config Agentic` tetap bisa membuat variasi baru walaupun variasi lama sudah ada `status.done`
 - nomor variasi selalu lanjut dari indeks terbesar yang ada
+
+Timeout Agentic per variasi:
+- timeout dihitung ulang untuk setiap variasi dalam setiap scene, bukan dibagi ke seluruh project
+- `minimax-h3_t2v_i2v`: wrapper `main.py` maksimal `7800` detik (2 jam 10 menit), mencakup T2V, ekstraksi/upload frame terakhir, I2V, penggabungan, dan compose
+- `minimax-h3_i2v`: wrapper `main.py` maksimal `3900` detik (1 jam 5 menit)
+- scene type lain: wrapper script tetap maksimal `1800` detik
+- polling output setiap stage MiniMax di `main.py` maksimal `3600` detik
+- jika proses gagal atau timeout, `status.done` tidak dibuat sehingga variasi tetap dapat dieksekusi ulang
 
 Catatan:
 - kalau ada variasi gagal karena prompt kosong atau output LLM tidak valid, proses akan skip variasi itu dan lanjut ke variasi berikutnya
@@ -1149,6 +1222,170 @@ Contoh:
 Di UI:
 - tombol `Save` ada di grup `Backup`
 - saat diklik, UI akan konfirmasi backup project aktif dengan nama file tetap `<project_name>.zip`
+
+## MiniMax H3 T2V-I2V Workflow
+
+Scene type: `minimax-h3_t2v_i2v`
+
+Implementasi adapter:
+
+- `minimax_h3_t2v/minimax_h3_t2v.py`
+- `minimax_h3_i2v/minimax_h3_i2v.py`
+- `api_template/minimax_h3_t2v_api.json`
+- `api_template/minimax_h3_i2v_api.json`
+
+File prompt scene:
+
+- `minimax_h3_t2v_prompt.json`
+- `minimax_h3_i2v_prompt.json`
+
+Kedua file memakai satu `positive_prompt` nested dengan field `id_old`, `id_new`, dan `en`; ketiganya berupa object JSON dengan struktur yang sama. Scene MiniMax H3 tidak memakai `negative_prompt`. Konfigurasi `lora_name` dan `lora_strength` untuk stage T2V dan I2V terpisah, tidak harus sama, dan masing-masing harus berasal dari folder `MINIMAX-H3` di ComfyUI.
+
+Aturan durasi:
+
+- `1`, `5`, `10`, `15`: hanya menjalankan T2V, dengan durasi langsung di node `PrimitiveFloat` workflow T2V.
+- `20`: T2V `15` detik lalu I2V `5` detik.
+- `25`: T2V `15` detik lalu I2V `10` detik.
+- `30`: T2V `15` detik lalu I2V `15` detik.
+
+Untuk durasi 20 detik atau lebih, frame terakhir video T2V diekstrak, di-upload ke ComfyUI, lalu dipakai sebagai `first_frame` pada workflow I2V.
+
+Node workflow utama:
+
+- T2V:
+  - durasi: node `133`, input `value`
+  - resolusi: node `115` (`ResolutionSelector`)
+  - LoRA: node `135`
+- I2V:
+  - durasi: node `135`, input `value`
+  - resolusi: node `115` (`ResolutionSelector`)
+  - gambar awal: node `114`
+  - LoRA: node `136`
+
+Prompt MiniMax H3 mengikuti:
+
+- `api_production/AGENT-SKILLS/MINIMAX-H3/SKILL.md`
+- `api_production/AGENT-SKILLS/MINIMAX-H3/references/base-en.txt`
+- `api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V-I2V.md`
+
+## MiniMax H3 I2V Workflow
+
+Scene type: `minimax-h3_i2v`
+
+- durasi hanya `1`, `5`, `10`, atau `15` detik
+- tab berurutan: `Meta`, `Gambar Awal`, `Image Edit`, `MINIMAX-H3_I2V`, `Agentic`, `Aset`
+- gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
+- hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
+- prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
+- jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
+- LoRA dibaca dari `lora_name`/`lora_strength` file I2V dan folder `MINIMAX-H3`
+- ukuran project diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`
+- tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
+
+## Format Prompt MiniMax H3
+
+Kontrak file yang disimpan:
+
+```json
+{
+  "positive_prompt": {
+    "id_old": { "mode": "T2VA", "shots": [], "overall_soundscape": "...", "non_diegetic_music": "..." },
+    "id_new": { "mode": "T2VA", "shots": [], "overall_soundscape": "...", "non_diegetic_music": "..." },
+    "en": { "mode": "T2VA", "shots": [], "overall_soundscape": "...", "non_diegetic_music": "..." }
+  },
+  "lora_name": "MINIMAX-H3/example.safetensors",
+  "lora_strength": 1.0,
+  "width": 368,
+  "height": 640
+}
+```
+
+Aturan bahasa dan sinkronisasi:
+
+- `en` berisi object berbahasa Inggris dan merupakan satu-satunya object yang diserialisasi untuk ComfyUI
+- `id_new` berisi object Indonesia yang ditampilkan dan dapat diedit di UI
+- `id_old` selalu deep-copy dari `id_new` setelah generate/translate/save berhasil
+- Buat Prompt MiniMax meminta LLM menghasilkan object `en` saja, bukan `id_new` dan `id_old`
+- pipeline menerjemahkan hanya field teks natural-language di `en` satu per satu menjadi `id_new`; nilai angka dan struktur dikopikan secara lokal
+- jika `id_new == id_old`, Save tidak melakukan translasi
+- jika `id_new != id_old`, Save menerjemahkan field teks `id_new` satu per satu ke Inggris untuk memperbarui `en`, kemudian menyalin `id_new` ke `id_old`
+
+Struktur satu item `shots`:
+
+```json
+{
+  "shot_id": "Shot 1",
+  "start": 0.0,
+  "end": 2.5,
+  "visual": "Deskripsi komposisi, subjek, lingkungan, gaya, dan pencahayaan.",
+  "action": "Aksi atau perubahan keadaan subjek selama shot.",
+  "camera": "Framing, posisi, atau gerakan kamera.",
+  "dialogue": "Dialog pada shot atau string kosong.",
+  "diegetic_sound": "Suara yang benar-benar terjadi di dalam adegan."
+}
+```
+
+Aturan multi-shot:
+
+- `shots` minimal berisi satu item
+- `shot_id` wajib string berurutan: `Shot 1`, `Shot 2`, dan seterusnya
+- shot pertama mulai pada `0.0`; waktu harus meningkat, tidak tumpang tindih, dan akhir shot terakhir mengikuti durasi stage
+- setiap shot wajib mempunyai `visual`, `action`, `camera`, `dialogue`, dan `diegetic_sound`
+- `overall_soundscape` dan `non_diegetic_music` berada di luar `shots` karena berlaku untuk keseluruhan video
+- perubahan kecil jarak/sudut sebaiknya dinyatakan sebagai camera motion dalam shot yang sama; cut baru harus memberikan informasi visual, ruang, keadaan, sudut pandang, atau waktu yang baru
+- identitas karakter, pakaian, objek, layout, pencahayaan, serta ID pembicara harus konsisten lintas shot
+
+T2VA tidak memiliki field `reference`. I2VA wajib menambahkan:
+
+```json
+"reference": {
+  "instruction": "fully referenced",
+  "picture": "Picture 1",
+  "source": "[Shot 1]",
+  "time": 0.0
+}
+```
+
+Saat dikirim ke ComfyUI, object `en` diserialisasi menjadi tiga bagian:
+
+```text
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description:
+[Shot 1] From 0.00 to 2.50 seconds, visual: ...; action: ...; camera: ...; dialogue: ...; diegetic sound: ....
+[Shot 2] From 2.50 to 5.00 seconds, visual: ...; action: ...; camera: ...; dialogue: ...; diegetic sound: ....
+
+overall_soundscape: ...
+
+non_diegetic_music: ...
+```
+
+Baris reference hanya ada untuk I2VA. T2VA langsung dimulai dari `integrated_multimodal_description`.
+
+Token yang wajib dipertahankan persis selama translasi per-field:
+
+- semua substring dalam `<...>`, termasuk `<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>` dan nomor aktualnya
+- token kontrol `<d>`, `</d>`, `<scenetrans>`, dan `<cutoff>`
+- identifier `[Shot N]`, `(S1)`, `(S2)`, `(S1,S2)`, serta mode `T2VA`, `I2VA`, `FL2VA`, `L2VA`, dan `Ref2VA`
+
+Mapping ukuran project ke `ResolutionSelector`:
+
+| Ukuran | `aspect_ratio` | `megapixels` |
+| --- | --- | ---: |
+| `368x640` | `9:16 (Portrait Widescreen)` | `0.2` |
+| `480x848` | `9:16 (Portrait Widescreen)` | `0.4` |
+| `720x1280` | `9:16 (Portrait Widescreen)` | `0.9` |
+| `640x368` | `16:9 (Widescreen)` | `0.2` |
+| `848x480` | `16:9 (Widescreen)` | `0.4` |
+| `1280x720` | `16:9 (Widescreen)` | `0.9` |
+
+Semua mapping memakai `multiple=32`.
+
+Timeout runtime:
+
+- polling output satu stage MiniMax: maksimal `3600` detik
+- wrapper Agentic per variasi `minimax-h3_i2v`: `3900` detik
+- wrapper Agentic per variasi `minimax-h3_t2v_i2v`: `7800` detik karena dapat menjalankan dua stage
 
 ## Logging
 
