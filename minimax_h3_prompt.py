@@ -23,6 +23,34 @@ REQUIRED_SHOT_KEYS = (
     "diegetic_sound",
 )
 REQUIRED_AUDIO_KEYS = ("overall_soundscape", "non_diegetic_music")
+REF2VA_SECTION_KEYS = (
+    "subject_definitions",
+    "summary",
+    "retention_analysis",
+    "detailed_description",
+    "overall_soundscape",
+    "non_diegetic_music",
+)
+
+
+def empty_ref2va_prompt() -> dict:
+    return {key: "" for key in REF2VA_SECTION_KEYS}
+
+
+def validate_ref2va_prompt(value) -> list[str]:
+    if not isinstance(value, dict):
+        return ["Ref2VA prompt harus berupa object JSON."]
+    errors = []
+    for key in REF2VA_SECTION_KEYS:
+        if not isinstance(value.get(key), str) or not value.get(key, "").strip():
+            errors.append(f"Ref2VA.{key} harus berupa string tidak kosong.")
+    return errors
+
+
+def serialize_ref2va_prompt(value) -> str:
+    if not isinstance(value, dict):
+        return str(value or "").strip()
+    return "\n\n".join(f"{key}:\n{value.get(key, '')}" for key in REF2VA_SECTION_KEYS).strip()
 
 
 def empty_structured_prompt(mode: str) -> dict:

@@ -56,9 +56,24 @@ from minimax_h3_i2v.minimax_h3_i2v import (
     build_minimax_h3_i2v_workflow,
     send_workflow as send_minimax_h3_i2v_workflow,
 )
+from minimax_h3_r2v.minimax_h3_r2v import (
+    DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_S2V_PROMPT,
+    MAX_AUDIO_DURATION as MINIMAX_H3_S2V_MAX_AUDIO_DURATION,
+    build_minimax_h3_r2v_workflow,
+    send_workflow as send_minimax_h3_s2v_workflow,
+)
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
 from scripts.generate_caption import apply_caption_to_video
-from scripts.generate_compose import compose_scene, ffprobe_fps, ffprobe_size, run as run_ffmpeg
+from scripts.generate_compose import (
+    COMFY_AUDIO_SOURCE_DIRNAME,
+    COMFY_AUDIO_SOURCE_FILENAME,
+    compose_scene,
+    ffprobe_duration,
+    ffprobe_fps,
+    ffprobe_has_audio,
+    ffprobe_size,
+    run as run_ffmpeg,
+)
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
 from scripts.generate_image_zoom_video import generate_image_zoom_video
@@ -183,7 +198,7 @@ def _extract_last_frame_image(video_path: str, output_path: str):
     return output_path
 
 
-def _concat_video_segments(segment_paths: list[str], output_path: str):
+def _concat_video_segments(segment_paths: list[str], output_path: str, *, preserve_audio: bool = False):
     valid_segments = [str(path) for path in segment_paths if str(path or "").strip() and os.path.exists(path)]
     if len(valid_segments) < 2:
         raise RuntimeError("Minimal dua video diperlukan untuk concat.")
@@ -195,12 +210,49 @@ def _concat_video_segments(segment_paths: list[str], output_path: str):
         normalized_paths = []
         for idx, src in enumerate(valid_segments):
             dst = os.path.join(td, f"norm_{idx:02d}.mp4")
-            run_ffmpeg(
-                f'ffmpeg -y -i "{src}" '
-                f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
-                f'-an -c:v libx264 -preset fast -pix_fmt yuv420p "{dst}"'
-            )
+            if preserve_audio and ffprobe_has_audio(src):
+                run_ffmpeg(
+                    f'ffmpeg -y -i "{src}" '
+                    f'-map 0:v:0 -map 0:a:0 '
+                    f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                    f'-af "aresample=44100:async=1:first_pts=0,'
+                    f'aformat=sample_rates=44100:channel_layouts=stereo" '
+                    f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                    f'-c:a aac -b:a 192k -ac 2 -ar 44100 "{dst}"'
+                )
+            elif preserve_audio:
+                segment_duration = max(0.1, ffprobe_duration(src))
+                run_ffmpeg(
+                    f'ffmpeg -y -i "{src}" '
+                    f'-f lavfi -t {segment_duration:.6f} '
+                    f'-i anullsrc=channel_layout=stereo:sample_rate=44100 '
+                    f'-map 0:v:0 -map 1:a:0 '
+                    f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                    f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                    f'-c:a aac -b:a 192k -ac 2 -ar 44100 -shortest "{dst}"'
+                )
+            else:
+                run_ffmpeg(
+                    f'ffmpeg -y -i "{src}" '
+                    f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                    f'-an -c:v libx264 -preset fast -pix_fmt yuv420p "{dst}"'
+                )
             normalized_paths.append(dst)
+
+        if preserve_audio:
+            inputs = " ".join(f'-i "{path}"' for path in normalized_paths)
+            streams = "".join(
+                f'[{index}:v:0][{index}:a:0]'
+                for index in range(len(normalized_paths))
+            )
+            run_ffmpeg(
+                f'ffmpeg -y {inputs} '
+                f'-filter_complex "{streams}concat=n={len(normalized_paths)}:v=1:a=1[v][a]" '
+                f'-map "[v]" -map "[a]" '
+                f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                f'-c:a aac -b:a 192k -ac 2 -ar 44100 "{output_path}"'
+            )
+            return output_path
 
         list_path = os.path.join(td, "concat_list.txt")
         with open(list_path, "w", encoding="utf-8") as f:
@@ -216,6 +268,33 @@ def _concat_video_segments(segment_paths: list[str], output_path: str):
                 f'-c:v libx264 -preset fast -pix_fmt yuv420p -an "{output_path}"'
             )
     return output_path
+
+
+def _save_comfy_audio_source(scene_dir: str, video_path: str) -> str | None:
+    """Persist pristine ComfyUI audio so later compose runs stay idempotent."""
+    source_dir = os.path.join(scene_dir, COMFY_AUDIO_SOURCE_DIRNAME)
+    source_path = os.path.join(source_dir, COMFY_AUDIO_SOURCE_FILENAME)
+    os.makedirs(source_dir, exist_ok=True)
+    if not ffprobe_has_audio(video_path):
+        if os.path.exists(source_path):
+            os.remove(source_path)
+        write_log(f"No embedded ComfyUI audio found in {video_path}")
+        return None
+
+    temp_path = os.path.join(source_dir, "audio.tmp.wav")
+    try:
+        run_ffmpeg(
+            f'ffmpeg -y -i "{video_path}" -vn '
+            f'-af "aresample=44100:async=1:first_pts=0,'
+            f'aformat=sample_rates=44100:channel_layouts=stereo" '
+            f'-c:a pcm_s16le -ac 2 -ar 44100 "{temp_path}"'
+        )
+        os.replace(temp_path, source_path)
+        write_log(f"Saved pristine ComfyUI audio source: {source_path}")
+        return source_path
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 
@@ -253,8 +332,18 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             write_log(f"Failed to apply caption for {scene_dir}: {e}")
             return False
 
-    def _finalize_scene_success(video_path, *, is_s2v=False, success_message=None):
-        if not _mix_scene_audio_to_video(video_path, is_s2v=is_s2v):
+    def _finalize_scene_success(
+        video_path,
+        *,
+        is_s2v=False,
+        preserve_comfy_audio=False,
+        success_message=None,
+    ):
+        if not _mix_scene_audio_to_video(
+            video_path,
+            is_s2v=is_s2v,
+            preserve_comfy_audio=preserve_comfy_audio,
+        ):
             return False
         if not _apply_caption_if_enabled(video_path):
             return False
@@ -262,9 +351,10 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             write_log(success_message)
         return True
 
-    def _mix_scene_audio_to_video(video_path, is_s2v=False):
+    def _mix_scene_audio_to_video(video_path, is_s2v=False, preserve_comfy_audio=False):
         # Mix using the exact compose-scene pipeline, but target only this generated video.
-        # For s2v, keep the original video speech and only mix sound effects.
+        # S2V keeps embedded speech and excludes standalone speech. MiniMax H3
+        # T2V/I2V keeps embedded ComfyUI audio and also includes scene speech.
         tmp_out = os.path.join(scene_dir, "__scene_mix_tmp__.mp4")
         if os.path.exists(tmp_out):
             try:
@@ -278,7 +368,8 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 speech_volume=0.0 if is_s2v else 1.0,
                 video_files=[video_path],
                 out_path_override=tmp_out,
-                include_video_audio=is_s2v,
+                include_video_audio=is_s2v or preserve_comfy_audio,
+                include_scene_speech=(not is_s2v),
             )
             if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) <= 0:
                 write_log(f"Mixed scene output missing or empty: {tmp_out}")
@@ -669,9 +760,15 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             return False
 
         if scene_duration <= 15:
+            try:
+                _save_comfy_audio_source(scene_dir, t2v_video_out_path)
+            except Exception as e:
+                write_log(f"Failed to preserve MiniMax H3 T2V ComfyUI audio for {scene_dir}: {e}")
+                return False
             return _finalize_scene_success(
                 t2v_video_out_path,
                 is_s2v=False,
+                preserve_comfy_audio=True,
                 success_message=(
                     f"Completed minimax-h3_t2v_i2v T2V-only processing for {scene_dir}"
                 ),
@@ -750,7 +847,11 @@ def process_scene(scene_dir, server, project_generate_caption=True):
 
         try:
             concat_tmp_path = os.path.join(scene_dir, "__minimax_h3_t2v_i2v_concat_tmp__.mp4")
-            _concat_video_segments([t2v_video_out_path, i2v_video_out_path], concat_tmp_path)
+            _concat_video_segments(
+                [t2v_video_out_path, i2v_video_out_path],
+                concat_tmp_path,
+                preserve_audio=True,
+            )
             os.replace(concat_tmp_path, i2v_video_out_path)
             write_log(
                 f"Combined MiniMax H3 T2V + I2V stages into final video: {i2v_video_out_path}"
@@ -758,9 +859,15 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to concat MiniMax H3 T2V + I2V for {scene_dir}: {e}")
             return False
+        try:
+            _save_comfy_audio_source(scene_dir, i2v_video_out_path)
+        except Exception as e:
+            write_log(f"Failed to preserve MiniMax H3 T2V-I2V ComfyUI audio for {scene_dir}: {e}")
+            return False
         return _finalize_scene_success(
             i2v_video_out_path,
             is_s2v=False,
+            preserve_comfy_audio=True,
             success_message=f"Completed minimax-h3_t2v_i2v processing for {scene_dir}",
         )
 
@@ -850,9 +957,15 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
             return False
+        try:
+            _save_comfy_audio_source(scene_dir, video_out_path)
+        except Exception as e:
+            write_log(f"Failed to preserve MiniMax H3 I2V ComfyUI audio for {scene_dir}: {e}")
+            return False
         return _finalize_scene_success(
             video_out_path,
             is_s2v=False,
+            preserve_comfy_audio=True,
             success_message=f"Completed minimax-h3_i2v processing for {scene_dir}",
         )
 
@@ -1123,6 +1236,95 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             )
         except Exception as e:
             write_log(f"Failed to trim wan22_s2v video for {scene_dir}: {e}")
+            return False
+        return _finalize_scene_success(
+            video_out_path,
+            is_s2v=True,
+            success_message=f"Completed processing {scene_dir}",
+        )
+
+    if scene_type == 'minimax-h3_s2v':
+        _ensure_scene_json(scene_dir, 'minimax_h3_s2v_prompt.json', DEFAULT_MINIMAX_H3_S2V_PROMPT)
+        img_path = _find_latest_root_image(scene_dir)
+        if not img_path:
+            write_log(f"minimax-h3_s2v scene requires at least one input image in root folder {scene_dir}")
+            return False
+        speech_path = _find_latest_root_speech(scene_dir)
+        if not speech_path:
+            write_log(f"minimax-h3_s2v scene requires at least one speech audio in root folder {scene_dir}")
+            return False
+        try:
+            audio_duration = get_s2v_audio_duration(speech_path)
+        except Exception as e:
+            write_log(f"Failed to read speech duration for {speech_path}: {e}")
+            return False
+        if audio_duration > MINIMAX_H3_S2V_MAX_AUDIO_DURATION:
+            write_log(
+                f"minimax-h3_s2v speech duration must be at most {MINIMAX_H3_S2V_MAX_AUDIO_DURATION:g} seconds: "
+                f"{speech_path} ({audio_duration:.2f}s)"
+            )
+            return False
+
+        uploaded_image_name = _upload_to_comfy(img_path)
+        if not uploaded_image_name:
+            write_log(f"Failed to upload image for minimax-h3_s2v in {scene_dir}")
+            return False
+        uploaded_audio_name = _upload_to_comfy_audio(speech_path)
+        if not uploaded_audio_name:
+            write_log(f"Failed to upload speech audio for minimax-h3_s2v in {scene_dir}")
+            return False
+        try:
+            s2v_prompt = _read_scene_json(scene_dir, 'minimax_h3_s2v_prompt.json', required=True)
+            s2v_workflow = build_minimax_h3_r2v_workflow(
+                s2v_prompt,
+                scene_meta=scene_meta,
+                image_name=uploaded_image_name,
+                audio_name=uploaded_audio_name,
+                duration_override=audio_duration,
+                remove_picture_2_reference=True,
+                remove_picture_3_reference=True,
+                remove_video_1_reference=True,
+                remove_audio_2_reference=True,
+                remove_audio_3_reference=True,
+            )
+        except Exception as e:
+            write_log(f"Failed to build minimax-h3_s2v workflow for {scene_dir}: {e}")
+            return False
+        s2v_result = send_minimax_h3_s2v_workflow(
+            s2v_workflow,
+            server,
+            log_file=LOG_FILE,
+            source_label=os.path.join(scene_dir, 'minimax_h3_s2v_prompt.json'),
+        )
+        prompt_id = s2v_result.get('prompt_id') or s2v_result.get('id')
+        write_log(f"Posted minimax-h3_s2v workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(
+                server,
+                prompt_id,
+                output_type='video',
+                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                interval=POLL_INTERVAL,
+            )
+        if not video_out:
+            write_log(f"No MiniMax H3 S2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
+            return False
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine video filename from output: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
+        video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, video_out_path)
+        except Exception as e:
+            write_log(f"Failed to download video {video_filename} from {video_url}: {e}")
+            return False
+        if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
+            write_log(f"Downloaded file missing or empty: {video_out_path}")
             return False
         return _finalize_scene_success(
             video_out_path,

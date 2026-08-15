@@ -15,6 +15,9 @@ from scripts.project_settings import load_project_settings
 from scripts.server_config import load_server_config
 from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
 from minimax_h3_prompt import (
+    REF2VA_SECTION_KEYS,
+    serialize_ref2va_prompt,
+    validate_ref2va_prompt,
     normalize_minimax_prompt_payload,
     parse_structured_response,
     serialize_structured_prompt,
@@ -67,6 +70,7 @@ PROMPT_TOP_LEVEL_FIELDS = {
     "wan22_t2v_prompt.json": ["positive_prompt", "negative_prompt"],
     "minimax_h3_t2v_prompt.json": ["positive_prompt"],
     "minimax_h3_i2v_prompt.json": ["positive_prompt"],
+    "minimax_h3_s2v_prompt.json": ["positive_prompt"],
     "wan22_s2v_prompt.json": ["positive_prompt", "negative_prompt"],
     "project_settings_cover.json": ["positive_prompt", "negative_prompt"],
 }
@@ -557,7 +561,16 @@ class PromptTranslator:
         text = _clean_text(text)
         if not text:
             return {"en": "", "id_new": ""}
-        if "MiniMax H3" in str(context or ""):
+        if "Active MiniMax H3 mode: Ref2VA" in str(context or ""):
+            instruction = (
+                "You are a senior MiniMax H3 Ref2VA video prompt engineer.\n"
+                "Generate only the English workflow prompt as JSON. Do not return id_new or id_old.\n"
+                "The JSON must contain exactly one top-level key en. en must be an object with exactly these six string fields: "
+                + ", ".join(REF2VA_SECTION_KEYS) + ".\n"
+                "This scene uses only <Picture 1> and <Audio 1>. Preserve every token in angle brackets, such as <Picture 1>, <Subject 1>, and <Audio 1>, character-for-character.\n"
+                'Return JSON only in this shape: {"en":{"subject_definitions":"...","summary":"...","retention_analysis":"...","detailed_description":"...","overall_soundscape":"...","non_diegetic_music":"..."}}'
+            )
+        elif "MiniMax H3" in str(context or ""):
             active_mode = str(context or "")
             expected_mode = "I2VA" if "Active MiniMax H3 mode: I2VA" in active_mode else "T2VA"
             mode_instruction = (
@@ -610,6 +623,16 @@ class PromptTranslator:
                 timeout=120,
                 phase="generate_prompt_multilang",
             )
+        if "Active MiniMax H3 mode: Ref2VA" in str(context or ""):
+            raw_payload = _parse_json_object_response(response_text)
+            raw_en = raw_payload.get("en") if isinstance(raw_payload, dict) else None
+            if isinstance(raw_en, dict) and isinstance(raw_en.get("en"), dict):
+                raw_en = raw_en["en"]
+            errors = validate_ref2va_prompt(raw_en)
+            if errors:
+                raise RuntimeError("Response MiniMax H3 Ref2VA fase en tidak valid: " + "; ".join(errors[:3]))
+            raw_id_new = self._translate_ref2va_fields_to_indonesian(raw_en)
+            return {"id_old": copy.deepcopy(raw_id_new), "id_new": copy.deepcopy(raw_id_new), "en": raw_en}
         if "MiniMax H3" in str(context or ""):
             raw_payload = _parse_json_object_response(response_text)
             raw_en = raw_payload.get("en") if isinstance(raw_payload, dict) else None
@@ -677,6 +700,39 @@ class PromptTranslator:
         if not isinstance(translated, dict):
             raise RuntimeError("Hasil translasi field MiniMax tidak berupa object JSON.")
         return translated
+
+    def _translate_ref2va_fields_to_indonesian(self, value: dict) -> dict:
+        errors = validate_ref2va_prompt(value)
+        if errors:
+            raise ValueError("Prompt Ref2VA tidak valid: " + "; ".join(errors[:3]))
+        translated = {}
+        for key in REF2VA_SECTION_KEYS:
+            text = value[key]
+            if not text.strip() or text.strip().upper() == "N/A":
+                translated[key] = text
+                continue
+            translated[key] = self.translate_to_indonesian(
+                text,
+                context=("MiniMax H3 Ref2VA field translation. Translate only this field to Indonesian. "
+                         "Preserve every token enclosed in <...>, including <Picture 1>, <Subject 1>, and <Audio 1>, exactly.")
+            ) or text
+        return translated
+
+    def translate_ref2va_prompt_to_indonesian(self, en: dict) -> dict:
+        return self._translate_ref2va_fields_to_indonesian(en)
+
+    def translate_ref2va_prompt_to_english(self, id_new: dict) -> dict:
+        errors = validate_ref2va_prompt(id_new)
+        if errors:
+            raise ValueError("Prompt Ref2VA tidak valid: " + "; ".join(errors[:3]))
+        result = {}
+        for key in REF2VA_SECTION_KEYS:
+            text = id_new[key]
+            if not text.strip() or text.strip().upper() == "N/A":
+                result[key] = text
+                continue
+            result[key] = self.translate_to_english(text) or text
+        return result
 
     def translate_structured_prompt_to_indonesian(self, en: dict, mode: str = "T2VA") -> dict:
         """Translate MiniMax English leaf fields while preserving its JSON structure."""
@@ -1204,6 +1260,8 @@ def convert_prompt_payload_for_ui(filename: str, data: dict) -> dict:
         return normalize_minimax_prompt_payload(result, "T2VA")
     elif filename == "minimax_h3_i2v_prompt.json":
         return normalize_minimax_prompt_payload(result, "I2VA")
+    elif filename == "minimax_h3_s2v_prompt.json":
+        return result
     for key in _top_level_fields_for(filename):
         result[key] = _normalize_prompt_entry(result.get(key)).id_new
 
@@ -1224,6 +1282,16 @@ def convert_prompt_payload_for_ui(filename: str, data: dict) -> dict:
 def prepare_prompt_payload_for_save(filename: str, data: dict, existing_data: dict | None = None) -> dict:
     result = copy.deepcopy(data or {})
     existing = existing_data if isinstance(existing_data, dict) else {}
+
+    if filename == "minimax_h3_s2v_prompt.json":
+        incoming = result.get("positive_prompt")
+        if isinstance(incoming, dict):
+            normalized = dict(incoming)
+            synced_id = normalized.get("id_new") or normalized.get("id_old") or {}
+            normalized["id_old"] = copy.deepcopy(synced_id)
+            normalized["id_new"] = copy.deepcopy(synced_id)
+            result["positive_prompt"] = normalized
+        return result
 
     if filename in {"minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"}:
         mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"
@@ -1292,6 +1360,16 @@ def resolve_prompt_payload_for_runtime(
         translate_provider,
         project_dir,
     )
+
+    if filename == "minimax_h3_s2v_prompt.json":
+        structured = source.get("positive_prompt")
+        if isinstance(structured, dict) and isinstance(structured.get("en"), dict):
+            errors = validate_ref2va_prompt(structured["en"])
+            if errors:
+                raise ValueError("Prompt MiniMax H3 Ref2VA tidak valid: " + "; ".join(errors[:3]))
+            resolved["positive_prompt"] = serialize_ref2va_prompt(structured["en"])
+            stored["positive_prompt"] = structured
+            return resolved, stored, changed
 
     if filename in {"minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"}:
         mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"

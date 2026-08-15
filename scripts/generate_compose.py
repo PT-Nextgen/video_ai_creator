@@ -31,6 +31,8 @@ API_PRODUCTION = None
 VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.mkv')
 AUDIO_EXTS = ('.m4a', '.wav', '.mp3')
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
+COMFY_AUDIO_SOURCE_DIRNAME = '.comfy_audio_source'
+COMFY_AUDIO_SOURCE_FILENAME = 'audio.wav'
 
 # Background music volume for final merged video (0.0 to 1.0)
 BACKGROUND_MUSIC_VOLUME = 0.3
@@ -317,6 +319,30 @@ def ffprobe_has_audio(path):
         return bool(out)
     except Exception:
         return False
+
+
+def ffprobe_audio_signature(path):
+    """Return the primary audio stream parameters used for concat safety."""
+    cmd = (
+        f'ffprobe -v error -select_streams a:0 '
+        f'-show_entries stream=codec_name,sample_rate,channels,channel_layout '
+        f'-of json "{path}"'
+    )
+    try:
+        raw = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL)
+        payload = json.loads(raw.decode("utf-8", errors="ignore"))
+        streams = payload.get("streams") if isinstance(payload, dict) else None
+        stream = streams[0] if isinstance(streams, list) and streams else None
+        if not isinstance(stream, dict):
+            return None
+        return (
+            str(stream.get("codec_name") or ""),
+            str(stream.get("sample_rate") or ""),
+            str(stream.get("channels") or ""),
+            str(stream.get("channel_layout") or ""),
+        )
+    except Exception:
+        return None
 
 
 def _clear_directory_contents(directory: str):
@@ -626,7 +652,10 @@ def compose_scene(
     video_files=None,
     out_path_override=None,
     include_video_audio=False,
+    include_scene_speech=None,
+    embedded_audio_source=None,
     compose_song=False,
+    trim_s2v_extra_frames=False,
 ):
     files = sorted(os.listdir(scene_dir))
     if video_files is None:
@@ -669,22 +698,34 @@ def compose_scene(
                 sound_vols[full_path] = v
                 logger.debug('Found sound prompt file: %s with volume %s', full_path, v)
 
+    if include_scene_speech is None:
+        # Backward-compatible default: embedded S2V speech replaces the
+        # standalone speech file, while ordinary scenes use scene speech.
+        include_scene_speech = not include_video_audio
+
     selected_audios = []
-    if latest_speech and not include_video_audio:
+    if latest_speech and include_scene_speech:
         selected_audios.append(latest_speech)
     for snd_path in sound_vols.keys():
         if snd_path not in selected_audios:
             selected_audios.append(snd_path)
     audios = selected_audios
+    embedded_audio_source = str(embedded_audio_source or '').strip()
+    has_embedded_audio_source = bool(
+        embedded_audio_source and os.path.isfile(embedded_audio_source)
+    )
 
     video_durations = [ffprobe_duration(v) for v in videos]
     audio_durations = [ffprobe_duration(a) for a in audios]
+    if has_embedded_audio_source:
+        audio_durations.append(ffprobe_duration(embedded_audio_source))
     max_video_dur = max(video_durations) if video_durations else 0
     max_audio_dur = max(audio_durations) if audio_durations else 0
     target_dur = max(max_video_dur, max_audio_dur)
-    if compose_song and include_video_audio and latest_speech:
-        # S2V may contain up to four extra frames. Song compose uses the
-        # original speech chunk as the exact scene duration.
+    if compose_song and trim_s2v_extra_frames and latest_speech:
+        # WAN22 S2V may contain up to four extra frames. Song compose uses
+        # the original speech chunk as the exact scene duration. MiniMax H3
+        # S2V already follows the audio duration and must not use this trim.
         target_dur = ffprobe_duration(latest_speech)
     if target_dur < 0.1:
         logger.warning('No media duration found in %s, skipping', scene_dir)
@@ -702,7 +743,7 @@ def compose_scene(
             concat_path = os.path.join(tmpdir, 'concat.mp4')
             concat_videos(videos, concat_path)
             base_video = concat_path
-        if compose_song and include_video_audio and latest_speech and len(videos) == 1:
+        if compose_song and trim_s2v_extra_frames and latest_speech and len(videos) == 1:
             exact_path = os.path.join(tmpdir, 's2v_exact_duration.mp4')
             trim_video_to_exact_duration(base_video, exact_path, target_dur, ffprobe_fps(base_video))
             base_video = exact_path
@@ -753,6 +794,12 @@ def compose_scene(
         logger.info('Audio file: %s -> volume: %s%s', os.path.basename(a), vol, ' (speech)' if is_speech else '')
 
     audio_inputs = padded_audio_inputs
+
+    if has_embedded_audio_source:
+        padded_embedded_audio = os.path.join(tmpdir, 'padded_embedded_audio.wav')
+        pad_audio_to_duration(embedded_audio_source, padded_embedded_audio, target_dur)
+        audio_inputs.append(padded_embedded_audio)
+        volumes[padded_embedded_audio] = 1.0
 
     if include_video_audio and ffprobe_has_audio(video_normalized):
         base_audio_path = os.path.join(tmpdir, 'base_video_audio.wav')
@@ -822,6 +869,15 @@ def _get_latest_scene_video(scene_dir):
         return None
     videos.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return videos[0]
+
+
+def _get_comfy_audio_source(scene_dir):
+    source_path = os.path.join(
+        scene_dir,
+        COMFY_AUDIO_SOURCE_DIRNAME,
+        COMFY_AUDIO_SOURCE_FILENAME,
+    )
+    return source_path if os.path.isfile(source_path) else None
 
 
 def export_scene_video_to_combined(scene_dir):
@@ -959,10 +1015,19 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
             cover_clip = os.path.join(td, "cover_intro.mp4")
             _create_cover_clip(cover_src, cover_clip, master_fps, master_w, master_h)
 
-        # Check if all videos already have same fps/resolution
+        # Check if all videos already have compatible video and audio streams.
+        # Concatenating AAC streams with different sample rates/channel layouts
+        # using -c copy creates a mid-stream codec configuration change. The
+        # resulting file may look valid to ffprobe but fail when decoded later
+        # by the background-music mix.
         all_same = True
+        master_audio_signature = ffprobe_audio_signature(videos[0])
         for v in videos[1:]:
-            if ffprobe_fps(v) != master_fps or ffprobe_size(v) != (master_w, master_h):
+            if (
+                ffprobe_fps(v) != master_fps
+                or ffprobe_size(v) != (master_w, master_h)
+                or ffprobe_audio_signature(v) != master_audio_signature
+            ):
                 all_same = False
                 break
         # If cover intro exists, safest path is normalize+reencode merge.
@@ -1116,13 +1181,47 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             except Exception:
                 scene_type = ''
 
-            # For WAN22 S2V, prefer speech embedded in generated video.
-            is_s2v = scene_type == 'wan22_s2v'
+            # S2V keeps embedded speech and excludes standalone scene speech.
+            # MiniMax H3 T2V/I2V keeps its original ComfyUI audio and combines
+            # that source with standalone scene speech and sound effects.
+            is_wan22_s2v = scene_type == 'wan22_s2v'
+            is_s2v = scene_type in {'wan22_s2v', 'minimax-h3_s2v'}
+            is_minimax_h3_av = scene_type in {
+                'minimax-h3_i2v',
+                'minimax-h3_t2v_i2v',
+            }
+            selected_video_files = None
+            embedded_audio_source = None
+            include_video_audio = is_s2v
+            include_scene_speech = not is_s2v
+            if is_minimax_h3_av:
+                latest_video = _get_latest_scene_video(scene_dir)
+                selected_video_files = [latest_video] if latest_video else []
+                embedded_audio_source = _get_comfy_audio_source(scene_dir)
+                if embedded_audio_source:
+                    # Ignore the already-composed audio track in the root video
+                    # and rebuild from the pristine ComfyUI audio master.
+                    include_video_audio = False
+                    include_scene_speech = True
+                else:
+                    # Legacy scenes have no pristine master. Preserve their
+                    # existing root-video audio without adding speech twice.
+                    include_video_audio = True
+                    include_scene_speech = False
+                    logger.warning(
+                        'MiniMax H3 ComfyUI audio master not found in %s; '
+                        'preserving existing video audio as legacy fallback.',
+                        scene_dir,
+                    )
             compose_scene(
                 scene_dir,
                 speech_volume=0.0 if is_s2v else speech_volume,
-                include_video_audio=is_s2v,
+                video_files=selected_video_files,
+                include_video_audio=include_video_audio,
+                include_scene_speech=include_scene_speech,
+                embedded_audio_source=embedded_audio_source,
                 compose_song=compose_song,
+                trim_s2v_extra_frames=is_wan22_s2v,
             )
         except Exception as e:
             logger.error('Failed to compose %s: %s', scene_dir, e)
@@ -1162,7 +1261,11 @@ if __name__ == '__main__':
     parser.add_argument('--music-file', default='', help='Optional background music file path for final combined video')
     parser.add_argument('--music-volume', type=float, default=BACKGROUND_MUSIC_VOLUME, help='Background music volume in range 0.0 to 2.0')
     parser.add_argument('--upscale-factor', type=float, default=1.0, help='Optional final upscale factor, e.g. 1.5 or 2.0')
-    parser.add_argument('--compose-song', action='store_true', help='Trim S2V videos to exact speech duration before merging the song.')
+    parser.add_argument(
+        '--compose-song',
+        action='store_true',
+        help='Use speech chunks as the song timeline; only WAN22 S2V discards its extra frames.',
+    )
     args = parser.parse_args()
     music_volume = max(0.0, min(2.0, float(args.music_volume)))
     raise SystemExit(main(

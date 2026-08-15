@@ -453,11 +453,11 @@ def generate_variation_configs_for_scene(
     generated_count = 0
     skipped_count = 0
     for offset in range(number_of_variations):
-        variation_index = start_variation_index + offset
+        # Failed LLM requests do not reserve a variation number. Successful
+        # folders therefore remain contiguous and no empty gap is published.
+        variation_index = start_variation_index + generated_count
         variation_dir = scene_dir / _variation_dir_name(variation_index)
         write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Generate JSON variasi")
-        if not _copy_scene_baseline_files(scene_dir, variation_dir):
-            return False
         variations, input_prompt_text, output_prompt_text = generate_variations(
             scene_dir=scene_dir,
             scene_type=scene_type,
@@ -467,8 +467,6 @@ def generate_variation_configs_for_scene(
             model_name=model_name,
             current_variation_index=variation_index,
         )
-        if not _write_variation_prompt_logs(variation_dir, input_prompt_text, output_prompt_text):
-            return False
         if not variations:
             skipped_count += 1
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal generate, skip", level="warning")
@@ -479,7 +477,15 @@ def generate_variation_configs_for_scene(
                 "LLM gagal membuat variasi prompt setelah 3 percobaan.",
             )
             continue
+        if not _copy_scene_baseline_files(scene_dir, variation_dir):
+            if variation_dir.exists():
+                shutil.rmtree(variation_dir, ignore_errors=True)
+            return False
+        if not _write_variation_prompt_logs(variation_dir, input_prompt_text, output_prompt_text):
+            shutil.rmtree(variation_dir, ignore_errors=True)
+            return False
         if not _write_variation_payloads(variation_dir, variations, allowed_output_files):
+            shutil.rmtree(variation_dir, ignore_errors=True)
             return False
         generated_count += 1
 

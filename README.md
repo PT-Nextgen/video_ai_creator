@@ -42,6 +42,7 @@ File utama:
 - `wan22_i2v_prompt.json` (untuk `wan22_i2v` dan stage 2 `wan22_t2v_i2v`)
 - `minimax_h3_t2v_prompt.json` (untuk stage T2V `minimax-h3_t2v_i2v`)
 - `minimax_h3_i2v_prompt.json` (untuk scene `minimax-h3_i2v` dan stage I2V `minimax-h3_t2v_i2v`)
+- `minimax_h3_s2v_prompt.json` (untuk scene `minimax-h3_s2v`)
 - `web_scroll_prompt.json` (untuk `web_scroll`)
 - `image_pan_prompt.json` (untuk `image_pan`)
 - `image_zoom_prompt.json` (untuk `image_zoom`)
@@ -59,8 +60,9 @@ Catatan format prompt:
   - `en`
 - prompt MiniMax H3 juga memakai tiga field tersebut, tetapi nilai setiap field adalah object JSON nested, bukan string
 - editor Prompt Positif MiniMax di UI menampilkan object `id_new` sebagai JSON berindentasi yang dapat diedit
-- `id_old` dan `id_new` disamakan oleh runtime
-- `en` adalah versi Inggris untuk runtime
+- `en` adalah versi Inggris untuk runtime dan tidak dikirim ke ComfyUI sebagai representasi dictionary Python
+- `id_old` selalu merupakan salinan persis dari `id_new`
+- `id_new` adalah JSON Bahasa Indonesia yang ditampilkan dan diedit di UI
 - prompt generation dan translate memakai konfigurasi yang sama di `project_settings.json.prompt_generation`
 - provider `gemini` memakai default model API tanpa setting `temperature`
 - provider `llama.cpp` memakai endpoint OpenAI-compatible bila tersedia
@@ -72,6 +74,28 @@ Catatan format prompt:
 - jika JSON MiniMax di UI tidak valid, Save menampilkan error dan tidak merusak file prompt
 - `lora_trigger_words` disimpan sebagai text biasa dan tidak diterjemahkan
 - `lora_trigger_words` hanya disisipkan ke awal prompt positif versi Inggris saat runtime, bukan ditulis permanen ke field prompt
+
+Aturan khusus MiniMax H3 untuk tombol `Buat Prompt` dan Agentic:
+- LLM hanya diminta menghasilkan `positive_prompt.en` dalam bentuk object JSON nested; LLM tidak diminta membuat `id_new` atau `id_old`
+- setelah respons `en` lolos validasi, aplikasi menerjemahkan field teks satu per satu ke Bahasa Indonesia untuk membentuk `id_new`
+- `id_old` kemudian dibuat sebagai deep-copy dari `id_new`, sehingga keduanya selalu identik setelah generate atau normalisasi Agentic
+- field angka, array timeline, identifier, dan token referensi tidak diterjemahkan atau diubah
+- token dalam tanda `<...>` wajib dipertahankan persis, termasuk `<Picture 1>`, `<Subject 1>`, `<Video 1>`, `<Audio 1>`, dan token kontrol lain yang ditentukan skill
+- schema respons Agentic MiniMax tidak menyertakan field non-prompt seperti `lora_name`, `lora_strength`, `width`, dan `height`; setelah respons lolos validasi, field tersebut selalu dipulihkan dari file input tanpa perubahan
+- hanya `positive_prompt.en` yang boleh diisi/diubah oleh LLM
+- schema Agentic T2VA/I2VA mendefinisikan item `shots` secara eksplisit walaupun prompt scene awal masih kosong; `shot_id` wajib string dan blok `reference` I2VA memakai nilai kontrol tetap
+- representasi ekuivalen dari provider seperti `shot_id: 1` dan `reference.time: 0` dinormalisasi menjadi `"Shot 1"` dan `0.0` sebelum validasi struktur
+
+Schema prompt MiniMax H3 T2VA/I2VA:
+- `positive_prompt.en` adalah object JSON dengan `mode`, `shots`, `overall_soundscape`, dan `non_diegetic_music`
+- setiap item `shots` wajib memiliki `shot_id`, `start`, `end`, `visual`, `action`, `camera`, `dialogue`, dan `diegetic_sound`
+- `shot_id` berbentuk string seperti `Shot 1`; `start` dan `end` berbentuk angka
+- I2VA juga wajib memiliki alignment `Picture 1` pada awal prompt; T2VA tidak boleh memiliki alignment image tersebut
+
+Schema prompt MiniMax H3 S2V/Ref2VA:
+- `positive_prompt.en` adalah object dengan tepat enam field: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`
+- scene S2V hanya menggunakan `<Picture 1>` dan `<Audio 1>`; referensi Picture 2/3, Video 1, dan Audio 2/3 tidak boleh muncul
+- keenam field tersebut diterjemahkan satu per satu ke `id_new`; hasil prompt Inggris yang dikirim ke workflow diserialisasi dari `positive_prompt.en`
 
 Field utama:
 - `scene_meta.json`
@@ -192,6 +216,12 @@ Kebutuhan prompt per `scene_type`:
   - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_i2v_prompt.json`, dan minimal satu gambar di root folder scene
   - durasi scene hanya `1`, `5`, `10`, atau `15`
   - memakai gambar terbaru dari root folder scene sebagai `Picture 1` untuk workflow MiniMax H3 I2VA
+- `minimax-h3_s2v`
+  - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_`
+  - durasi voice dikirim sebagai float ke workflow; output video MiniMax dipertahankan utuh tanpa post-trim sehingga frame padding dari perhitungan workflow tetap tersedia
+  - durasi audio speech tidak boleh lebih dari 15 detik; jika melebihi batas, scene diblokir
+  - workflow memakai `minimax_h3_r2v_api.json` secara in-memory dan menghapus referensi Picture 2, Picture 3, Video 1, Audio 2, dan Audio 3
+  - Picture 1 berasal dari gambar root terbaru dan Audio 1 berasal dari audio speech root terbaru
 - `wan22_t2v_batch`
   - membutuhkan `scene_meta.json`, `wan22_t2v_prompt.json`, dan `wan22_t2v_batch_extra_prompts.json`
   - durasi scene hanya `5` atau `10`
@@ -290,7 +320,8 @@ Catatan voice dan caption:
   - caption tidak membuat file `__captioned` tambahan pada alur otomatis; video final ditimpa dengan versi yang sudah bercaption
 
 Catatan trimming video:
-- pemotongan video mengikuti durasi speech hanya berlaku untuk `scene_type=wan22_s2v`
+- `wan22_s2v` dipotong mengikuti durasi speech dengan tambahan maksimal empat frame
+- `minimax-h3_s2v` tidak dipotong otomatis setelah output ComfyUI diunduh
 - scene type lain tidak dipotong otomatis mengikuti speech
 
 ## Server Config
@@ -567,8 +598,14 @@ Perilaku UI:
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`; untuk MiniMax, nilainya ditampilkan sebagai object JSON berindentasi, sedangkan scene lain memakai string
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON; editor MiniMax hanya membuka object `id_new`
 - `Generate Config Agentic` hanya membuat JSON variasi dan menyimpannya ke folder `variasiN`
+- folder `variasiN` baru dibuat setelah respons LLM lolos validasi; jika seluruh 3 percobaan gagal, kegagalan hanya dicatat ke `variasi_gagal.txt` dan tidak dibuat folder variasi kosong
+- nomor folder variasi hanya bertambah setelah variasi berhasil disimpan, sehingga kegagalan tidak menimbulkan celah nomor
 - `Execute Agentic` menjalankan setiap folder variasi yang belum punya file `status.done`, tanpa bergantung pada nilai `Jumlah Variasi`
 - untuk `wan22_t2v_batch`, agentic memakai panduan khusus `SCENE-WAN22-T2V-BATCH.md`
+- Agentic MiniMax H3 untuk `minimax-h3_i2v`, `minimax-h3_t2v_i2v`, dan `minimax-h3_s2v` meminta LLM mengisi hanya `positive_prompt.en` sesuai schema scene
+- setelah Agentic berhasil, aplikasi menerjemahkan `en` per field, membuat `id_new`, lalu menyalin `id_new` ke `id_old`
+- pada S2V/Ref2VA, Agentic hanya boleh menggunakan enam field Ref2VA dan referensi `<Picture 1>` serta `<Audio 1>`
+- schema respons Agentic S2V menetapkan keenam field Ref2VA tersebut secara eksplisit sebagai string wajib; field teknis tetap dipulihkan dari root scene dan kegagalan 3 attempt mengikuti aturan tanpa folder `variasiN`
 - output agentic untuk scene ini mencakup `wan22_t2v_prompt.json` dan `wan22_t2v_batch_extra_prompts.json`
 - ukuran video project menjadi sumber ukuran tunggal untuk tab:
   - `WAN22_T2V`
@@ -589,6 +626,12 @@ Perilaku UI:
   - `Gambar Awal`
   - `Image Edit`
   - `MINIMAX-H3_I2V`
+  - `Agentic`
+  - `Aset`
+- scene type `minimax-h3_s2v` menampilkan tab berurutan:
+  - `Meta`
+  - `Gambar Awal`
+  - `MINIMAX-H3_S2V`
   - `Agentic`
   - `Aset`
 - scene type `minimax-h3_t2v_i2v` menampilkan tab berurutan:
@@ -623,6 +666,7 @@ Perilaku UI:
   - tombol `Edit Variasi`
 - `Edit Variasi` MiniMax T2V hanya mengkopikan `lora_name` dan `lora_strength` dari `minimax_h3_t2v_prompt.json` ke file T2V semua variasi
 - `Edit Variasi` MiniMax I2V melakukan hal yang sama secara terpisah dari `minimax_h3_i2v_prompt.json`; LoRA T2V dan I2V tidak harus sama
+- tab `MINIMAX-H3_S2V` tidak menampilkan CFG atau Negative Prompt; prompt positif memakai JSON `id_new` Ref2VA dan tombol `Buat Prompt` mengikuti schema enam field Ref2VA
 - tombol `Edit Variasi` hanya aktif saat `Root Scene` sedang dipilih dan scene aktif memang memiliki folder variasi
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
@@ -1167,11 +1211,17 @@ Script: `scripts/generate_compose.py`
 
 Fungsi:
 - compose per scene ke folder `api_production/<project_name>/combined` dengan mix audio:
-  - `wan22_s2v`: mempertahankan speech bawaan video dan tidak mencampurkan ulang file `speech_*.mp3`
+  - `wan22_s2v` dan `minimax-h3_s2v`: mempertahankan speech/audio bawaan video dan tidak mencampurkan ulang file `speech_*`
+  - `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`: mempertahankan audio hasil ComfyUI lalu mencampurkannya dengan file `speech_*` dan sound effect scene
+  - master audio ComfyUI kedua scene MiniMax tersebut disimpan di `.comfy_audio_source/audio.wav` agar Compose Scene/Compose All dapat membangun ulang mix tanpa menggandakan audio scene
+  - Compose All memakai satu video final terbaru untuk scene MiniMax H3, sehingga file stage T2V tidak tergabung ulang bersama hasil T2V-I2V
   - scene type lain: mix speech + sound ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
-- opsi `--compose-song` menjadikan audio `speech_chunk_*.mp3` sebagai master timeline: semua chunk didekode dan digabung tanpa jeda, lalu video tiap scene dipotong/diatur mengikuti durasi audio tersebut
-- pada mode `--compose-song`, audio scene bawaan video tidak dipakai sebagai timeline akhir agar padding encoder tidak menimbulkan jeda antar scene
+- sebelum merge dengan `-c copy`, parameter audio utama (codec, sample rate, jumlah channel, dan layout) dibandingkan; jika berbeda antar-scene, setiap video dinormalisasi ke AAC stereo `44100 Hz` agar konfigurasi AAC tidak berubah di tengah `combined_all.mp4`
+- jika `--compose-song` aktif, semua video scene selalu dinormalisasi dan di-re-encode sebelum penggabungan, walaupun fps, resolusi, dan signature audio awalnya sama; hal ini mencegah encoder padding membuat celah audio di batas scene
+- opsi `--compose-song` menjadikan audio `speech_chunk_*` dari setiap scene sebagai master timeline: semua chunk didekode, di-resample ke `44100 Hz` stereo, timestamp di-reset, lalu digabung tanpa jeda; setiap video scene dipotong/diatur mengikuti durasi chunk audionya
+- pada `--compose-song`, trim empat frame ekstra hanya diterapkan pada `wan22_s2v`; `minimax-h3_s2v` tidak menjalankan trim empat frame tersebut
+- pada mode `--compose-song`, audio scene bawaan video tidak dipakai sebagai timeline akhir; video scene digabung tanpa audio, kemudian master audio Lagu di-mux sebagai AAC `192 kbps`, `44100 Hz`, stereo
 - pada merge akhir bisa menambahkan background music opsional:
   - file music dari folder `music` dengan ekstensi `.m4a`, `.mp3`, `.wav`
   - music bisa kosong (tidak dipilih)
@@ -1179,10 +1229,13 @@ Fungsi:
   - music dipotong jika lebih panjang dari video
   - music diulang jika lebih pendek dari video
   - fade out `0.5` detik pada akhir setiap segmen music (termasuk saat loop dan akhir video)
+  - track music dinormalisasi ke `44100 Hz` stereo sebelum di-mix dengan audio utama
+  - audio utama dan music diubah ke format `44100 Hz` stereo sebelum `amix`; speech/audio scene tetap dipertahankan sebagai track utama
 - jika folder `cover` berisi gambar, gambar pertama dipakai sebagai intro `2 frame` di awal video final
 - merge akhir dibuat sederhana:
-  - jika format scene seragam (fps/resolusi), concat langsung `-c copy`
-  - jika berbeda, normalisasi lalu merge
+  - jika fps, resolusi, dan signature audio scene seragam, concat langsung `-c copy`
+  - jika fps, resolusi, atau signature audio berbeda, normalisasi lalu merge
+  - jika `Compose Lagu` aktif, selalu gunakan jalur normalisasi dan re-encode khusus Lagu
 
 Di UI:
 - tersedia tombol `Compose Semua Adegan`
@@ -1250,6 +1303,8 @@ Aturan durasi:
 
 Untuk durasi 20 detik atau lebih, frame terakhir video T2V diekstrak, di-upload ke ComfyUI, lalu dipakai sebagai `first_frame` pada workflow I2V.
 
+Audio hasil ComfyUI dipertahankan. Pada alur dua stage, audio T2V dan I2V dinormalisasi lalu disusun berurutan mengikuti segmen videonya. Setelah itu audio gabungan ComfyUI dicampur dengan speech dan sound effect scene. Master audio asli disimpan di `.comfy_audio_source/audio.wav` untuk compose ulang yang idempotent.
+
 Node workflow utama:
 
 - T2V:
@@ -1276,11 +1331,143 @@ Scene type: `minimax-h3_i2v`
 - tab berurutan: `Meta`, `Gambar Awal`, `Image Edit`, `MINIMAX-H3_I2V`, `Agentic`, `Aset`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
+- audio hasil ComfyUI dipertahankan dan dicampur dengan speech serta sound effect scene; master audio aslinya disimpan di `.comfy_audio_source/audio.wav`
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA dibaca dari `lora_name`/`lora_strength` file I2V dan folder `MINIMAX-H3`
 - ukuran project diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`
 - tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
+
+## MiniMax H3 R2V Workflow
+
+Template workflow:
+
+- `api_template/minimax_h3_r2v_api.json`
+- node utama: `136` (`MiniMaxH3ReferenceToVideo`)
+- prompt dikirim langsung ke `136.inputs.prompt`
+- resolusi dibaca dari node `115` (`ResolutionSelector`)
+- durasi dibaca dari node `132` (`PrimitiveFloat`)
+- output video disimpan melalui node `92`
+
+Workflow ini memakai mode full-reference `Ref2VA` dari skill `MINIMAX-H3`. Formatnya berbeda dari `T2VA`/`I2VA`: prompt harus mempunyai enam section berikut secara berurutan:
+
+1. `subject_definitions`
+2. `summary`
+3. `retention_analysis`
+4. `detailed_description`
+5. `overall_soundscape`
+6. `non_diegetic_music`
+
+Semua section ditulis dalam bahasa Inggris. Bahasa asli hanya dipertahankan untuk dialog, lirik, dan teks yang terlihat di dalam scene.
+
+### Pemetaan input R2V
+
+| Label prompt | Slot workflow |
+| --- | --- |
+| `<Picture 1>` | `ref_images.ref_image_0` |
+| `<Picture 2>` | `ref_images.ref_image_1` |
+| `<Picture 3>` | `ref_images.ref_image_2` |
+| `<Video 1>` | `ref_videos.ref_video_0` |
+| audio sinkron dari `<Video 1>` | `ref_video_audios.ref_video_audio_0` |
+| `<Audio 1>` | `ref_audios.ref_audio_0` |
+| `<Audio 2>` | `ref_audios.ref_audio_1` |
+| `<Audio 3>` | `ref_audios.ref_audio_2` |
+
+`<Picture N>`, `<Video N>`, dan `<Audio N>` memiliki penomoran independen. Audio yang ikut di dalam `Video 1` dapat diberi label audio tersendiri apabila perannya perlu dijelaskan secara eksplisit, misalnya:
+
+```text
+<Video 1> is the source video for the target video edit.
+<Audio 4> is the synchronized audio track of <Video 1> and is reused in the target video.
+```
+
+`<Audio 4>` adalah label semantik prompt, bukan berarti audio tersebut masuk ke `ref_audios.ref_audio_3`. Koneksi teknisnya tetap `ref_video_audios.ref_video_audio_0`.
+
+### Aturan label referensi
+
+- `<Subject N>` mengidentifikasi orang, hewan, objek, lingkungan, pakaian, pose, aksi, atau konten visual yang digunakan dalam video.
+- `<Picture N>` digunakan jika gambar menjadi frame awal, keyframe, frame akhir, atau anchor komposisi/storyboard.
+- `<Video N>` digunakan untuk sumber editing, continuation, gerakan kamera, cut, ritme, atau struktur temporal.
+- `<Audio N>` digunakan untuk audio yang disalin atau direferensikan: musik, voice timbre, dialog, lirik, sound effect, beat, atau continuity.
+- Jika karakter dari `Video 1` dipakai sebagai konten visual, karakter tersebut tetap diberi `<Subject N>`; `<Video 1>` hanya menandai sumber video.
+- Label yang sudah ditetapkan harus konsisten di keenam section.
+- Token dalam tanda `<...>` tidak boleh diterjemahkan atau diubah, termasuk `<Subject N>`, `<Picture N>`, `<Video N>`, dan `<Audio N>`.
+
+### Bentuk prompt Ref2VA
+
+Contoh minimal yang mengikuti skill:
+
+```text
+subject_definitions:
+<Subject 1> is the woman whose appearance comes from <Picture 1> and whose movement comes from <Video 1>.
+<Picture 1> is the opening composition reference for [Shot 1].
+<Video 1> is the source video for the target video edit.
+<Audio 1> is the standalone voice-timbre reference for <Subject 1> (S1).
+<Audio 4> is the synchronized audio track of <Video 1> and is reused in the target video.
+
+summary:
+[video editing + audio reuse + keyframe completion] The target video adapts <Video 1> while preserving <Subject 1>, beginning from the composition established by <Picture 1>, and reusing the synchronized audio from <Audio 4>.
+
+retention_analysis:
+<Subject 1> (appears in [Shot 1]): fully_preserved - the subject's identity and clothing are retained.
+<Picture 1> ([Shot 1] first frame): fully_preserved - its opening composition is retained.
+<Video 1> (source video structure): partially_preserved - its movement and timing are adapted.
+<Audio 1>: reference - its voice timbre guides <Subject 1> (S1) without copying the signal.
+<Audio 4>: fully_copy - the synchronized audio from <Video 1> is reused in the target video.
+
+detailed_description:
+The target video uses a cinematic live-action style with soft natural lighting.
+[Shot 1] The scene begins from <Picture 1>. <Subject 1> stands in the same position and clothing while the adapted motion and temporal structure of <Video 1> unfold. The synchronized audio from <Audio 4> remains audible throughout the shot. <Subject 1> (S1) speaks using the voice timbre referenced from <Audio 1>, saying, <d>[English] Welcome home.</d>
+
+overall_soundscape:
+The copied ambient layer from <Audio 4> continues throughout the target video.
+
+non_diegetic_music:
+N/A
+```
+
+Aturan tambahan:
+
+- `summary` dimulai dengan task-type dalam tanda kurung siku, misalnya `[reference generation]`, `[video editing + audio reuse]`, atau gabungan beberapa task type.
+- Jangan menganggap keberadaan video/audio otomatis berarti `video editing` atau `audio reuse`; gunakan task type sesuai peran sebenarnya.
+- `retention_analysis` memakai marker tetap: `fully_preserved`, `partially_preserved`, `attribute_transfer`, `weak_reference`, `fully_copy`, `reference`, atau `weak_reference`.
+- `detailed_description` adalah bagian utama dan menjelaskan video berdasarkan urutan playback, shot, komposisi, subjek, aksi, kamera, suara, dialog, serta titik penggunaan referensi.
+- Shot pertama memakai `[Shot 1]` tanpa timestamp. Shot berikutnya memakai format `[Shot N] At MM:SS.mmm, ...`.
+- Speaker memakai ID stabil `(S1)`, `(S2)`, dan seterusnya. Dialog/lyrics ditulis dalam `<d>[Language] ...</d>`.
+- Dialog dan lirik lengkap hanya ditulis di `detailed_description`, bukan di `overall_soundscape` atau `non_diegetic_music`.
+
+Adapter `minimax_h3_r2v/minimax_h3_r2v.py` sekarang menyediakan builder workflow in-memory. Adapter ini dipakai oleh scene `minimax-h3_s2v` dan dapat menghapus referensi yang tidak digunakan sebelum workflow dikirim ke ComfyUI.
+
+## MiniMax H3 S2V Workflow
+
+Scene type: `minimax-h3_s2v`
+
+Scene ini memakai tab dan alur S2V WAN22, dengan perbedaan berikut:
+
+- tab `Gambar Awal` tetap tersedia;
+- tab utama bernama `MINIMAX-H3_S2V`;
+- tab `Image Edit` tidak tersedia;
+- urutan tab: `Meta`, `Gambar Awal`, `MINIMAX-H3_S2V`, `Agentic`, `Aset`;
+- tab utama hanya memiliki `Ukuran`, `Prompt Positif`, dan `Buat Prompt`;
+- tidak ada `CFG` dan `Prompt Negatif`;
+- workflow sumber selalu `api_template/minimax_h3_r2v_api.json`;
+- hanya Picture 1 dan Audio 1 yang digunakan.
+
+Pemetaan input runtime:
+
+- gambar terbaru di root scene di-upload ke node `143` (`Picture 1`), lalu masuk ke `ref_images.ref_image_0`;
+- audio speech terbaru yang berawalan `speech_` di root scene di-upload ke node `153` (`Audio 1`), lalu masuk ke `ref_audios.ref_audio_0`;
+- node Picture 2 (`144`), Picture 3 (`151`), Video 1 (`152`), Audio 2 (`154`), dan Audio 3 (`155`) dihapus dari workflow in-memory;
+- koneksi `ref_images.ref_image_1`, `ref_images.ref_image_2`, `ref_videos.ref_video_0`, `ref_video_audios.ref_video_audio_0`, `ref_audios.ref_audio_1`, dan `ref_audios.ref_audio_2` juga dihapus.
+
+Durasi:
+
+- durasi scene tidak ditentukan dari dropdown Meta;
+- durasi dibaca dari file audio speech yang dipilih memakai `ffprobe`;
+- audio dengan durasi lebih dari `15` detik membuat scene tidak dapat dijalankan;
+- durasi audio dimasukkan langsung ke node `132` (`PrimitiveFloat`), yang menjadi sumber panjang frame node `131`;
+- output video MiniMax dipertahankan utuh setelah download dan tidak dipotong mengikuti durasi audio; frame padding hasil perhitungan node `131` tetap dipakai.
+
+Ukuran mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan scene MiniMax H3 lainnya. Prompt memakai mode `Ref2VA` dengan enam section skill MINIMAX: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`.
 
 ## Format Prompt MiniMax H3
 

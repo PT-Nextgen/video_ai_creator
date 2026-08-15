@@ -1,0 +1,344 @@
+"""Build an in-memory MiniMax H3 Reference-to-Video workflow.
+
+The adapter starts from ``api_template/minimax_h3_r2v_api.json`` and removes
+reference nodes/connections when the corresponding assets are not available.
+The source template is never modified and no generated workflow is written to
+disk.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import os
+import subprocess
+from collections.abc import Mapping
+
+from scripts import comfyui_api
+from logging_config import write_log
+from minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_prompt
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+API_TEMPLATE = os.path.join(ROOT, "api_template")
+TEMPLATE = "minimax_h3_r2v_api.json"
+MAIN_NODE = "136"
+PICTURE_1_NODE = "143"
+AUDIO_1_NODE = "153"
+MAX_AUDIO_DURATION = 15.0
+
+SIZE_OPTIONS = [
+    ("368x640", 368, 640),
+    ("480x848", 480, 848),
+    ("720x1280", 720, 1280),
+    ("640x368", 640, 368),
+    ("848x480", 848, 480),
+    ("1280x720", 1280, 720),
+]
+
+RESOLUTION_MAP = {
+    (368, 640): ("9:16 (Portrait Widescreen)", 0.2),
+    (480, 848): ("9:16 (Portrait Widescreen)", 0.4),
+    (720, 1280): ("9:16 (Portrait Widescreen)", 0.9),
+    (640, 368): ("16:9 (Widescreen)", 0.2),
+    (848, 480): ("16:9 (Widescreen)", 0.4),
+    (1280, 720): ("16:9 (Widescreen)", 0.9),
+}
+
+DEFAULT_REF2VA_PROMPT = {
+    "subject_definitions": "<Subject 1> is the main subject shown in <Picture 1>. <Audio 1> is the audio reference used in the target video.",
+    "summary": "The target video develops the subject from <Picture 1> while using <Audio 1> as an audio reference.",
+    "retention_analysis": "<Subject 1> and the opening composition from <Picture 1> remain consistent while the relevant audio characteristics of <Audio 1> are retained.",
+    "detailed_description": "The target video uses a cinematic live-action style. [Shot 1] The scene begins from <Picture 1> and the main subject develops naturally while the audio characteristics of <Audio 1> remain relevant.",
+    "overall_soundscape": "The target video's ambient and physical sounds follow the intended scene.",
+    "non_diegetic_music": "N/A",
+}
+
+DEFAULT_PROMPT = {
+    "positive_prompt": {
+        "id_old": copy.deepcopy(DEFAULT_REF2VA_PROMPT),
+        "id_new": copy.deepcopy(DEFAULT_REF2VA_PROMPT),
+        "en": copy.deepcopy(DEFAULT_REF2VA_PROMPT),
+    },
+    "width": 368,
+    "height": 640,
+}
+
+
+def _load_template(name: str = TEMPLATE) -> dict:
+    path = os.path.join(API_TEMPLATE, name)
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def get_audio_duration(audio_path: str) -> float:
+    """Return audio duration in seconds using ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", audio_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe gagal membaca durasi audio: {result.stderr.strip()}")
+    return float(result.stdout.strip())
+
+
+def _remove_node(workflow: dict, node_id: str) -> bool:
+    return workflow.pop(str(node_id), None) is not None
+
+
+def _remove_input(workflow: dict, node_id: str, input_name: str) -> bool:
+    node = workflow.get(str(node_id))
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        return False
+    return inputs.pop(input_name, None) is not None
+
+
+def remove_picture_2(workflow: dict) -> dict:
+    """Remove Picture 2 node 144 and ``ref_image_1`` from node 136."""
+    _remove_node(workflow, "144")
+    _remove_input(workflow, MAIN_NODE, "ref_images.ref_image_1")
+    return workflow
+
+
+def remove_picture_3(workflow: dict) -> dict:
+    """Remove Picture 3 node 151 and ``ref_image_2`` from node 136."""
+    _remove_node(workflow, "151")
+    _remove_input(workflow, MAIN_NODE, "ref_images.ref_image_2")
+    return workflow
+
+
+def remove_video_1(workflow: dict) -> dict:
+    """Remove Video 1 and both its video and synchronized-audio connections."""
+    _remove_node(workflow, "152")
+    _remove_input(workflow, MAIN_NODE, "ref_videos.ref_video_0")
+    _remove_input(workflow, MAIN_NODE, "ref_video_audios.ref_video_audio_0")
+    return workflow
+
+
+def remove_audio_1(workflow: dict) -> dict:
+    """Remove Audio 1 node 153 and ``ref_audio_0`` from node 136."""
+    _remove_node(workflow, "153")
+    _remove_input(workflow, MAIN_NODE, "ref_audios.ref_audio_0")
+    return workflow
+
+
+def remove_audio_2(workflow: dict) -> dict:
+    """Remove Audio 2 node 154 and ``ref_audio_1`` from node 136."""
+    _remove_node(workflow, "154")
+    _remove_input(workflow, MAIN_NODE, "ref_audios.ref_audio_1")
+    return workflow
+
+
+def remove_audio_3(workflow: dict) -> dict:
+    """Remove Audio 3 node 155 and ``ref_audio_2`` from node 136."""
+    _remove_node(workflow, "155")
+    _remove_input(workflow, MAIN_NODE, "ref_audios.ref_audio_2")
+    return workflow
+
+
+def remove_references(
+    workflow: dict,
+    *,
+    remove_picture_2_reference: bool = False,
+    remove_picture_3_reference: bool = False,
+    remove_video_1_reference: bool = False,
+    remove_audio_1_reference: bool = False,
+    remove_audio_2_reference: bool = False,
+    remove_audio_3_reference: bool = False,
+) -> dict:
+    """Remove selected R2V assets from an existing in-memory workflow."""
+    if remove_picture_2_reference:
+        remove_picture_2(workflow)
+    if remove_picture_3_reference:
+        remove_picture_3(workflow)
+    if remove_video_1_reference:
+        remove_video_1(workflow)
+    if remove_audio_1_reference:
+        remove_audio_1(workflow)
+    if remove_audio_2_reference:
+        remove_audio_2(workflow)
+    if remove_audio_3_reference:
+        remove_audio_3(workflow)
+    return workflow
+
+
+def _set_resolution_selector(workflow: dict, width: int, height: int) -> bool:
+    node = workflow.get("115")
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        return False
+    aspect_ratio, megapixels = RESOLUTION_MAP.get(
+        (int(width), int(height)),
+        RESOLUTION_MAP[(368, 640)],
+    )
+    inputs["aspect_ratio"] = aspect_ratio
+    inputs["megapixels"] = megapixels
+    inputs["multiple"] = 32
+    return True
+
+
+def _set_duration(workflow: dict, duration) -> bool:
+    node = workflow.get("132")
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        return False
+    try:
+        inputs["value"] = float(duration)
+    except (TypeError, ValueError):
+        inputs["value"] = 5.0
+    return True
+
+
+def _set_asset(workflow: dict, node_id: str, input_name: str, value) -> bool:
+    node = workflow.get(str(node_id))
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict) or not value:
+        return False
+    inputs[input_name] = str(value)
+    return True
+
+
+def _prompt_text(prompt) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    if not isinstance(prompt, Mapping):
+        return ""
+    if isinstance(prompt.get("prompt"), str):
+        return prompt["prompt"]
+    positive = prompt.get("positive_prompt")
+    if isinstance(positive, str):
+        return positive
+    if isinstance(positive, Mapping):
+        for key in ("en", "id_new", "id_old"):
+            value = positive.get(key)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, Mapping):
+                return serialize_ref2va_prompt(value)
+    return ""
+
+
+def _set_prompt(workflow: dict, prompt) -> bool:
+    node = workflow.get(MAIN_NODE)
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        return False
+    inputs["prompt"] = _prompt_text(prompt)
+    return True
+
+
+def build_workflow(
+    prompt=None,
+    scene_meta: dict | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    duration_override: int | float | None = None,
+    image_name: str | None = None,
+    audio_name: str | None = None,
+    **remove_options,
+) -> dict:
+    """Return a configured R2V workflow in memory.
+
+    ``remove_options`` accepts the keyword flags documented by
+    :func:`remove_references`. Unknown flags are rejected to avoid silently
+    keeping or deleting the wrong reference.
+    """
+    allowed = {
+        "remove_picture_2_reference",
+        "remove_picture_3_reference",
+        "remove_video_1_reference",
+        "remove_audio_1_reference",
+        "remove_audio_2_reference",
+        "remove_audio_3_reference",
+    }
+    unknown = set(remove_options) - allowed
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        raise TypeError(f"Unknown R2V reference removal option(s): {names}")
+
+    workflow = copy.deepcopy(_load_template())
+    _set_prompt(workflow, prompt)
+
+    source = prompt if isinstance(prompt, Mapping) else {}
+    if width is None:
+        width = source.get("width", 368) if isinstance(source, Mapping) else 368
+    if height is None:
+        height = source.get("height", 640) if isinstance(source, Mapping) else 640
+    try:
+        width = int(width)
+    except (TypeError, ValueError):
+        width = 368
+    try:
+        height = int(height)
+    except (TypeError, ValueError):
+        height = 640
+    _set_resolution_selector(workflow, width, height)
+
+    duration = duration_override
+    if duration is None and isinstance(scene_meta, dict):
+        duration = scene_meta.get("duration_seconds")
+    if duration is None and isinstance(source, Mapping):
+        duration = source.get("duration_seconds", source.get("duration"))
+    _set_duration(workflow, 5 if duration is None else duration)
+
+    _set_asset(workflow, PICTURE_1_NODE, "image", image_name)
+    _set_asset(workflow, AUDIO_1_NODE, "audio", audio_name)
+
+    return remove_references(workflow, **remove_options)
+
+
+def build_minimax_h3_r2v_workflow(
+    prompt=None,
+    scene_meta: dict | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    duration_override: int | float | None = None,
+    image_name: str | None = None,
+    audio_name: str | None = None,
+    **remove_options,
+) -> dict:
+    """Named adapter entry point matching the other MiniMax H3 modules."""
+    return build_workflow(
+        prompt,
+        scene_meta=scene_meta,
+        width=width,
+        height=height,
+        duration_override=duration_override,
+        image_name=image_name,
+        audio_name=audio_name,
+        **remove_options,
+    )
+
+
+def get_template_name(prompt: dict | None = None) -> str:
+    return TEMPLATE
+
+
+def get_step_template_name(prompt: dict | None = None) -> str:
+    return TEMPLATE
+
+
+def send_workflow(workflow, server, log_file=None, source_label="in-memory workflow"):
+    """Send an already-built in-memory workflow to ComfyUI."""
+    prompt = ""
+    main_node = workflow.get(MAIN_NODE) if isinstance(workflow, dict) else None
+    if isinstance(main_node, dict):
+        prompt = main_node.get("inputs", {}).get("prompt", "")
+    message = f"Prompt MiniMax H3 R2V dikirim ke ComfyUI untuk {source_label}:\n{prompt}"
+    write_log(message, extra={"source_label": source_label})
+    result = comfyui_api.post_workflow_api(workflow, server)
+    write_log(
+        f"Sent minimax_h3_r2v workflow for {source_label}: {json.dumps(result)}",
+        extra={"source_label": source_label},
+    )
+    if log_file:
+        with open(log_file, "a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
+            handle.write(f"Result: {json.dumps(result)}\n")
+    return result
