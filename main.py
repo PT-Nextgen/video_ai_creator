@@ -270,33 +270,6 @@ def _concat_video_segments(segment_paths: list[str], output_path: str, *, preser
     return output_path
 
 
-def _save_comfy_audio_source(scene_dir: str, video_path: str) -> str | None:
-    """Persist pristine ComfyUI audio so later compose runs stay idempotent."""
-    source_dir = os.path.join(scene_dir, COMFY_AUDIO_SOURCE_DIRNAME)
-    source_path = os.path.join(source_dir, COMFY_AUDIO_SOURCE_FILENAME)
-    os.makedirs(source_dir, exist_ok=True)
-    if not ffprobe_has_audio(video_path):
-        if os.path.exists(source_path):
-            os.remove(source_path)
-        write_log(f"No embedded ComfyUI audio found in {video_path}")
-        return None
-
-    temp_path = os.path.join(source_dir, "audio.tmp.wav")
-    try:
-        run_ffmpeg(
-            f'ffmpeg -y -i "{video_path}" -vn '
-            f'-af "aresample=44100:async=1:first_pts=0,'
-            f'aformat=sample_rates=44100:channel_layouts=stereo" '
-            f'-c:a pcm_s16le -ac 2 -ar 44100 "{temp_path}"'
-        )
-        os.replace(temp_path, source_path)
-        write_log(f"Saved pristine ComfyUI audio source: {source_path}")
-        return source_path
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-
-
 def _remove_video_audio(video_path: str) -> str:
     """Remove every audio stream from a downloaded ComfyUI video in place."""
     video_path = str(video_path)
@@ -334,6 +307,21 @@ def _remove_video_audio(video_path: str) -> str:
                 os.remove(temp_path)
             except OSError:
                 pass
+
+
+def _invalidate_comfy_audio_source(scene_dir: str):
+    """Invalidate a cached Compose audio master after a new video download."""
+    source_path = os.path.join(
+        str(scene_dir),
+        COMFY_AUDIO_SOURCE_DIRNAME,
+        COMFY_AUDIO_SOURCE_FILENAME,
+    )
+    if os.path.isfile(source_path):
+        try:
+            os.remove(source_path)
+            write_log(f"Invalidated stale ComfyUI audio source: {source_path}")
+        except OSError as e:
+            raise RuntimeError(f"Failed to invalidate ComfyUI audio source: {source_path}: {e}")
 
 
 
@@ -376,9 +364,10 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         *,
         is_s2v=False,
         preserve_comfy_audio=False,
+        compose_audio=True,
         success_message=None,
     ):
-        if not _mix_scene_audio_to_video(
+        if compose_audio and not _mix_scene_audio_to_video(
             video_path,
             is_s2v=is_s2v,
             preserve_comfy_audio=preserve_comfy_audio,
@@ -804,17 +793,18 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             except Exception as e:
                 write_log(f"Failed to remove MiniMax H3 T2V sound for {scene_dir}: {e}")
                 return False
+        try:
+            _invalidate_comfy_audio_source(scene_dir)
+        except Exception as e:
+            write_log(f"Failed to invalidate old MiniMax H3 T2V audio source for {scene_dir}: {e}")
+            return False
 
         if scene_duration <= 15:
-            try:
-                _save_comfy_audio_source(scene_dir, t2v_video_out_path)
-            except Exception as e:
-                write_log(f"Failed to preserve MiniMax H3 T2V ComfyUI audio for {scene_dir}: {e}")
-                return False
             return _finalize_scene_success(
                 t2v_video_out_path,
                 is_s2v=False,
                 preserve_comfy_audio=True,
+                compose_audio=False,
                 success_message=(
                     f"Completed minimax-h3_t2v_i2v T2V-only processing for {scene_dir}"
                 ),
@@ -913,14 +903,15 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             write_log(f"Failed to concat MiniMax H3 T2V + I2V for {scene_dir}: {e}")
             return False
         try:
-            _save_comfy_audio_source(scene_dir, i2v_video_out_path)
+            _invalidate_comfy_audio_source(scene_dir)
         except Exception as e:
-            write_log(f"Failed to preserve MiniMax H3 T2V-I2V ComfyUI audio for {scene_dir}: {e}")
+            write_log(f"Failed to invalidate old MiniMax H3 T2V-I2V audio source for {scene_dir}: {e}")
             return False
         return _finalize_scene_success(
             i2v_video_out_path,
             is_s2v=False,
             preserve_comfy_audio=True,
+            compose_audio=False,
             success_message=f"Completed minimax-h3_t2v_i2v processing for {scene_dir}",
         )
 
@@ -1018,14 +1009,15 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 write_log(f"Failed to remove MiniMax H3 I2V sound for {scene_dir}: {e}")
                 return False
         try:
-            _save_comfy_audio_source(scene_dir, video_out_path)
+            _invalidate_comfy_audio_source(scene_dir)
         except Exception as e:
-            write_log(f"Failed to preserve MiniMax H3 I2V ComfyUI audio for {scene_dir}: {e}")
+            write_log(f"Failed to invalidate old MiniMax H3 I2V audio source for {scene_dir}: {e}")
             return False
         return _finalize_scene_success(
             video_out_path,
             is_s2v=False,
             preserve_comfy_audio=True,
+            compose_audio=False,
             success_message=f"Completed minimax-h3_i2v processing for {scene_dir}",
         )
 

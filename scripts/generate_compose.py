@@ -871,13 +871,39 @@ def _get_latest_scene_video(scene_dir):
     return videos[0]
 
 
-def _get_comfy_audio_source(scene_dir):
-    source_path = os.path.join(
-        scene_dir,
-        COMFY_AUDIO_SOURCE_DIRNAME,
-        COMFY_AUDIO_SOURCE_FILENAME,
-    )
-    return source_path if os.path.isfile(source_path) else None
+def _prepare_comfy_audio_source(scene_dir, video_path):
+    """Create the pristine ComfyUI audio cache when Compose first needs it.
+
+    Generated MiniMax videos remain untouched in the scene root. The cache is
+    created only when Compose needs it, preventing the generation step from
+    replacing the original downloaded video with a mixed scene output.
+    """
+    source_dir = os.path.join(scene_dir, COMFY_AUDIO_SOURCE_DIRNAME)
+    source_path = os.path.join(source_dir, COMFY_AUDIO_SOURCE_FILENAME)
+    if not video_path or not os.path.isfile(video_path) or not ffprobe_has_audio(video_path):
+        if os.path.isfile(source_path):
+            _safe_remove_file(source_path)
+        return None
+    if os.path.isfile(source_path):
+        return source_path
+
+    os.makedirs(source_dir, exist_ok=True)
+    temp_path = os.path.join(source_dir, 'audio.tmp.wav')
+    try:
+        run(
+            f'ffmpeg -y -i "{video_path}" -vn '
+            f'-af "aresample=44100:async=0:first_pts=0,'
+            f'aformat=sample_rates=44100:channel_layouts=stereo" '
+            f'-c:a pcm_s16le -ac 2 -ar 44100 "{temp_path}"'
+        )
+        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+            raise RuntimeError(f'ComfyUI audio source missing or empty: {temp_path}')
+        os.replace(temp_path, source_path)
+        logger.info('Prepared ComfyUI audio source for Compose: %s', source_path)
+        return source_path
+    finally:
+        if os.path.isfile(temp_path):
+            _safe_remove_file(temp_path)
 
 
 def export_scene_video_to_combined(scene_dir):
@@ -1197,22 +1223,26 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             if is_minimax_h3_av:
                 latest_video = _get_latest_scene_video(scene_dir)
                 selected_video_files = [latest_video] if latest_video else []
-                embedded_audio_source = _get_comfy_audio_source(scene_dir)
+                embedded_audio_source = _prepare_comfy_audio_source(scene_dir, latest_video)
                 if embedded_audio_source:
-                    # Ignore the already-composed audio track in the root video
-                    # and rebuild from the pristine ComfyUI audio master.
+                    # Rebuild from the raw ComfyUI audio master and add scene
+                    # speech/sound without touching the root video.
                     include_video_audio = False
                     include_scene_speech = True
                 else:
-                    # Legacy scenes have no pristine master. Preserve their
-                    # existing root-video audio without adding speech twice.
-                    include_video_audio = True
-                    include_scene_speech = False
-                    logger.warning(
-                        'MiniMax H3 ComfyUI audio master not found in %s; '
-                        'preserving existing video audio as legacy fallback.',
-                        scene_dir,
-                    )
+                    # Hapus Sound=true scenes have no embedded audio. Keep
+                    # scene speech/sound enabled; if an old legacy video still
+                    # has audio and extraction failed, preserve it without a
+                    # second speech mix.
+                    has_root_audio = bool(latest_video and ffprobe_has_audio(latest_video))
+                    include_video_audio = has_root_audio
+                    include_scene_speech = not has_root_audio
+                    if has_root_audio:
+                        logger.warning(
+                            'Could not prepare MiniMax H3 ComfyUI audio master in %s; '
+                            'preserving existing root-video audio as fallback.',
+                            scene_dir,
+                        )
             compose_scene(
                 scene_dir,
                 speech_volume=0.0 if is_s2v else speech_volume,

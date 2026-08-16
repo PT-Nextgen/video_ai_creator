@@ -1214,7 +1214,8 @@ Fungsi:
 - compose per scene ke folder `api_production/<project_name>/combined` dengan mix audio:
   - `wan22_s2v` dan `minimax-h3_s2v`: mempertahankan speech/audio bawaan video dan tidak mencampurkan ulang file `speech_*`
   - `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`: mempertahankan audio hasil ComfyUI lalu mencampurkannya dengan file `speech_*` dan sound effect scene
-  - master audio ComfyUI kedua scene MiniMax tersebut disimpan di `.comfy_audio_source/audio.wav` agar Compose Scene/Compose All dapat membangun ulang mix tanpa menggandakan audio scene
+  - video root/variasi MiniMax tetap merupakan video asli hasil ComfyUI; master audio tidak dicampurkan dan tidak menimpa file video pada tahap generation
+  - saat Compose Scene/Compose All dijalankan, master audio ComfyUI dibuat dari video root ke `.comfy_audio_source/audio.wav` jika cache belum ada, lalu dipakai untuk membangun mix tanpa menggandakan audio scene
   - Compose All memakai satu video final terbaru untuk scene MiniMax H3, sehingga file stage T2V tidak tergabung ulang bersama hasil T2V-I2V
   - scene type lain: mix speech + sound ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
@@ -1304,7 +1305,7 @@ Aturan durasi:
 
 Untuk durasi 20 detik atau lebih, frame terakhir video T2V diekstrak, di-upload ke ComfyUI, lalu dipakai sebagai `first_frame` pada workflow I2V.
 
-Secara default audio hasil ComfyUI dipertahankan. Pada alur dua stage, audio T2V dan I2V dinormalisasi lalu disusun berurutan mengikuti segmen videonya. Setelah itu audio gabungan ComfyUI dicampur dengan speech dan sound effect scene. Master audio asli disimpan di `.comfy_audio_source/audio.wav` untuk compose ulang yang idempotent.
+Secara default audio hasil ComfyUI dipertahankan di video root/variasi. Pada alur dua stage, audio T2V dan I2V tetap disusun berurutan pada video hasil stage, lalu saat Compose audio tersebut dibuat sebagai master `.comfy_audio_source/audio.wav` jika cache belum ada dan dicampur dengan speech serta sound effect scene.
 
 Kontrol audio per stage:
 
@@ -1339,8 +1340,8 @@ Scene type: `minimax-h3_i2v`
 - tab berurutan: `Meta`, `Gambar Awal`, `Image Edit`, `MINIMAX-H3_I2V`, `Agentic`, `Aset`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
-- secara default audio hasil ComfyUI dipertahankan dan dicampur dengan speech serta sound effect scene; master audio aslinya disimpan di `.comfy_audio_source/audio.wav`
-- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus segera setelah download dan sebelum penyimpanan master audio atau proses audio scene berikutnya
+- secara default audio hasil ComfyUI dipertahankan di video root/variasi dan baru dicampur dengan speech serta sound effect saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
+- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus segera setelah download dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari stage yang sudah tidak memiliki audio
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA dibaca dari `lora_name`/`lora_strength` file I2V dan folder `MINIMAX-H3`
