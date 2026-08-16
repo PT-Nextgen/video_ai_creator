@@ -76,6 +76,16 @@ def load_scene_meta(scene_dir: Path) -> dict:
     return json.loads(meta_path.read_text(encoding="utf-8"))
 
 
+def load_voice_selection(scene_dir: Path) -> dict:
+    selection_path = scene_dir / "voice_selection.json"
+    if not selection_path.exists():
+        return {}
+    try:
+        return json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def ffprobe_duration(path: Path) -> float:
     cmd = [
         "ffprobe",
@@ -278,7 +288,10 @@ def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = 
         write_log(f"Video untuk caption tidak ditemukan: {video_path}", level="error")
         return False
 
-    speech_audio = find_latest_file(scene_dir, AUDIO_EXTS, prefix="speech_")
+    voice_selection = load_voice_selection(scene_dir)
+    selected_filename = str(voice_selection.get("selected_filename", "")).strip()
+    selected_audio = scene_dir / selected_filename if selected_filename else None
+    speech_audio = selected_audio if selected_audio and selected_audio.exists() else find_latest_file(scene_dir, AUDIO_EXTS, prefix="speech_")
     temp_audio = None
     try:
         audio_source = speech_audio
@@ -292,7 +305,9 @@ def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = 
             write_log(f"Durasi audio untuk caption tidak valid di {scene_dir}.", level="error")
             return False
 
-        voice_text = str(scene_meta.get("voice_text", "")).strip()
+        # voice_selection adalah sumber final setelah approval voice. Fallback ke
+        # scene_meta menjaga kompatibilitas project lama yang belum punya file ini.
+        voice_text = str(voice_selection.get("selected_voice_text") or scene_meta.get("voice_text", "")).strip()
         if not strip_audio_tags(voice_text):
             write_log(f"Tidak ada voice_text yang valid untuk caption di {scene_dir}.", level="error")
             return False

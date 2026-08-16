@@ -103,6 +103,25 @@ def _copy_dir_contents(src: Path, dst: Path, exclude_status_done: bool = False) 
         return False
 
 
+def _write_scene_meta(scene_dir: Path, scene_meta: dict) -> bool:
+    """Write the authoritative scene metadata without leaving a partial JSON file."""
+    meta_path = Path(scene_dir) / "scene_meta.json"
+    temp_path = meta_path.with_name(f"{meta_path.name}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as f:
+            json.dump(scene_meta, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        temp_path.replace(meta_path)
+        return True
+    except Exception as e:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        write_log(f"[agentic] Gagal menulis scene_meta.json: {e}", level="error")
+        return False
+
+
 def _copy_scene_baseline_files(src: Path, dst: Path) -> bool:
     """Copy non-media baseline scene files so a variation folder is self-contained."""
     try:
@@ -534,8 +553,18 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
         if deleted_before:
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Cleanup awal root, hapus {deleted_before} media")
 
+        # scene_meta.json di root adalah metadata authoritative setelah voice approval.
+        # Variation lama dapat membawa salinan voice_text sebelum voice terakhir dipilih;
+        # jangan biarkan salinan tersebut menimpa metadata root sebelum main.py berjalan.
+        authoritative_scene_meta = _load_scene_meta(scene_dir)
+        if authoritative_scene_meta is None:
+            write_log(f"[agentic] {scene_dir.name}: scene_meta.json root tidak valid", level="error")
+            return False
+
         if not _copy_dir_contents(variation_dir, scene_dir, exclude_status_done=True):
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal copy variasi ke root", level="error")
+            return False
+        if not _write_scene_meta(scene_dir, authoritative_scene_meta):
             return False
 
         if create_initial_image:
