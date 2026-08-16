@@ -385,8 +385,6 @@ class PromptTranslator:
             "model": model_name,
             "messages": [{"role": "user", "content": prompt_text}],
             "stream": False,
-            "temperature": 1,
-            "top_p": 0.95,
         }
         if phase in {"generate_prompt_multilang", "translate_minimax_structured_id_new"}:
             chat_payload["response_format"] = {"type": "json_object"}
@@ -400,10 +398,6 @@ class PromptTranslator:
                 f"{server_base_url}/completion",
                 {
                     "prompt": prompt_text,
-                    "n_predict": 1024,
-                    "temperature": 1,
-                    "top_p": 0.95,
-                    "stop": [],
                 },
                 _extract_best_llama_cpp_completion_text,
             ),
@@ -413,15 +407,6 @@ class PromptTranslator:
                     "model": model_name,
                     "prompt": prompt_text,
                     "stream": False,
-                    "think": True,
-                    "options": {
-                        "temperature": 1,
-                        "top_k": 20,
-                        "top_p": 0.95,
-                        "presence_penalty": 1.5,
-                        "repeat_penalty": 1,
-                        "draft_num_predict": 4,
-                    },
                 },
                 _extract_best_ollama_text,
             ),
@@ -525,13 +510,29 @@ class PromptTranslator:
             "Return only the Indonesian prompt without explanation.\n\n"
         )
         payload_text = instruction + _compose_prompt_request_text(text, context)
-        result = self._call_local_text_model(
-            self.prompt_generation_model_name,
-            payload_text,
-            timeout=90,
-            phase="translate_to_indonesian",
-        )
-        return result
+        result = ""
+        for attempt in range(3):
+            request_text = payload_text
+            if attempt:
+                request_text += (
+                    "\n\nIMPORTANT: The previous output was identical to the source. "
+                    "Translate it into Indonesian now; do not copy the source unchanged."
+                )
+            result = self._call_local_text_model(
+                self.prompt_generation_model_name,
+                request_text,
+                timeout=90,
+                phase="translate_to_indonesian",
+            )
+            if result.strip().casefold() != text.strip().casefold():
+                break
+            LOGGER.warning(
+                "[%s] translasi Indonesia mengembalikan teks sumber pada percobaan %d/%d; mencoba ulang",
+                LOCAL_PROMPT_PROVIDER,
+                attempt + 1,
+                3,
+            )
+        return result or text
 
     def generate_prompt_to_english(self, text: str, context: str = "") -> str:
         text = _clean_text(text)

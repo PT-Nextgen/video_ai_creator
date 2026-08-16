@@ -104,8 +104,6 @@ def call_llama_cpp_text(
                 "model": str(model_name or "").strip(),
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
-                "temperature": 1,
-                "top_p": 0.95,
                 **(
                     {"response_format": {"type": "json_object"}}
                     if response_format
@@ -118,10 +116,6 @@ def call_llama_cpp_text(
             f"{server_base_url}/completion",
             {
                 "prompt": prompt,
-                "n_predict": 2048,
-                "temperature": 1,
-                "top_p": 0.95,
-                "stop": [],
             },
             _extract_best_llama_cpp_completion_text,
         ),
@@ -131,15 +125,6 @@ def call_llama_cpp_text(
                 "model": str(model_name or "").strip(),
                 "prompt": prompt,
                 "stream": False,
-                "think": True,
-                "options": {
-                    "temperature": 1,
-                    "top_k": 20,
-                    "top_p": 0.95,
-                    "presence_penalty": 1.5,
-                    "repeat_penalty": 1,
-                    "draft_num_predict": 4,
-                },
                 **({"format": response_format} if response_format else {}),
             },
             _extract_best_ollama_text,
