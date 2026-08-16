@@ -297,6 +297,45 @@ def _save_comfy_audio_source(scene_dir: str, video_path: str) -> str | None:
             os.remove(temp_path)
 
 
+def _remove_video_audio(video_path: str) -> str:
+    """Remove every audio stream from a downloaded ComfyUI video in place."""
+    video_path = str(video_path)
+    if not os.path.isfile(video_path):
+        raise FileNotFoundError(video_path)
+    if not ffprobe_has_audio(video_path):
+        write_log(f"No embedded audio to remove from {video_path}")
+        return video_path
+
+    root, extension = os.path.splitext(video_path)
+    temp_path = f"{root}.__remove_sound_tmp__{extension or '.mp4'}"
+    try:
+        try:
+            run_ffmpeg(
+                f'ffmpeg -y -i "{video_path}" -map 0:v:0 -an '
+                f'-c:v copy -movflags +faststart "{temp_path}"'
+            )
+        except Exception:
+            # Some containers do not support stream-copying with the original
+            # muxer. Re-encode video while still guaranteeing no audio stream.
+            run_ffmpeg(
+                f'ffmpeg -y -i "{video_path}" -map 0:v:0 -an '
+                f'-c:v libx264 -preset fast -pix_fmt yuv420p "{temp_path}"'
+            )
+        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+            raise RuntimeError(f"Audio removal output missing or empty: {temp_path}")
+        os.replace(temp_path, video_path)
+        if ffprobe_has_audio(video_path):
+            raise RuntimeError(f"Audio stream still present after removal: {video_path}")
+        write_log(f"Removed embedded ComfyUI audio from downloaded video: {video_path}")
+        return video_path
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
 
 def process_scene(scene_dir, server, project_generate_caption=True):
     """Process a single scene directory.
@@ -759,6 +798,13 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             write_log(f"Failed to download MiniMax H3 T2V video {video_filename}: {e}")
             return False
 
+        if bool(t2v_prompt.get("remove_sound", False)):
+            try:
+                _remove_video_audio(t2v_video_out_path)
+            except Exception as e:
+                write_log(f"Failed to remove MiniMax H3 T2V sound for {scene_dir}: {e}")
+                return False
+
         if scene_duration <= 15:
             try:
                 _save_comfy_audio_source(scene_dir, t2v_video_out_path)
@@ -844,6 +890,13 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
             return False
+
+        if bool(i2v_prompt.get("remove_sound", False)):
+            try:
+                _remove_video_audio(i2v_video_out_path)
+            except Exception as e:
+                write_log(f"Failed to remove MiniMax H3 I2V sound for {scene_dir}: {e}")
+                return False
 
         try:
             concat_tmp_path = os.path.join(scene_dir, "__minimax_h3_t2v_i2v_concat_tmp__.mp4")
@@ -957,6 +1010,13 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
             return False
+
+        if bool(i2v_prompt.get("remove_sound", False)):
+            try:
+                _remove_video_audio(video_out_path)
+            except Exception as e:
+                write_log(f"Failed to remove MiniMax H3 I2V sound for {scene_dir}: {e}")
+                return False
         try:
             _save_comfy_audio_source(scene_dir, video_out_path)
         except Exception as e:

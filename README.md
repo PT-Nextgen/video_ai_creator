@@ -91,6 +91,7 @@ Schema prompt MiniMax H3 T2VA/I2VA:
 - setiap item `shots` wajib memiliki `shot_id`, `start`, `end`, `visual`, `action`, `camera`, `dialogue`, dan `diegetic_sound`
 - `shot_id` berbentuk string seperti `Shot 1`; `start` dan `end` berbentuk angka
 - I2VA juga wajib memiliki alignment `Picture 1` pada awal prompt; T2VA tidak boleh memiliki alignment image tersebut
+- `remove_sound` adalah boolean teknis di level root prompt; field ini tidak dikirim ke ComfyUI dan dipulihkan dari konfigurasi input saat Agentic membuat variasi
 
 Schema prompt MiniMax H3 S2V/Ref2VA:
 - `positive_prompt.en` adalah object dengan tepat enam field: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`
@@ -1303,7 +1304,14 @@ Aturan durasi:
 
 Untuk durasi 20 detik atau lebih, frame terakhir video T2V diekstrak, di-upload ke ComfyUI, lalu dipakai sebagai `first_frame` pada workflow I2V.
 
-Audio hasil ComfyUI dipertahankan. Pada alur dua stage, audio T2V dan I2V dinormalisasi lalu disusun berurutan mengikuti segmen videonya. Setelah itu audio gabungan ComfyUI dicampur dengan speech dan sound effect scene. Master audio asli disimpan di `.comfy_audio_source/audio.wav` untuk compose ulang yang idempotent.
+Secara default audio hasil ComfyUI dipertahankan. Pada alur dua stage, audio T2V dan I2V dinormalisasi lalu disusun berurutan mengikuti segmen videonya. Setelah itu audio gabungan ComfyUI dicampur dengan speech dan sound effect scene. Master audio asli disimpan di `.comfy_audio_source/audio.wav` untuk compose ulang yang idempotent.
+
+Kontrol audio per stage:
+
+- tab `MINIMAX-H3_T2V` memiliki checkbox `Hapus Sound` untuk output T2V;
+- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound` untuk output I2V;
+- jika dicentang, audio output stage dihapus segera setelah file video selesai diunduh dari ComfyUI, sebelum ekstraksi frame, concat T2V-I2V, penyimpanan master audio, atau proses audio scene berikutnya;
+- jika hanya satu stage yang dibisukan, concat memasukkan audio silence pada stage tersebut sehingga audio stage lain tetap berada pada timeline yang benar.
 
 Node workflow utama:
 
@@ -1331,7 +1339,8 @@ Scene type: `minimax-h3_i2v`
 - tab berurutan: `Meta`, `Gambar Awal`, `Image Edit`, `MINIMAX-H3_I2V`, `Agentic`, `Aset`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
-- audio hasil ComfyUI dipertahankan dan dicampur dengan speech serta sound effect scene; master audio aslinya disimpan di `.comfy_audio_source/audio.wav`
+- secara default audio hasil ComfyUI dipertahankan dan dicampur dengan speech serta sound effect scene; master audio aslinya disimpan di `.comfy_audio_source/audio.wav`
+- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus segera setelah download dan sebelum penyimpanan master audio atau proses audio scene berikutnya
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA dibaca dari `lora_name`/`lora_strength` file I2V dan folder `MINIMAX-H3`

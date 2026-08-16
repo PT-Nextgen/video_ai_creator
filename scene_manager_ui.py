@@ -2653,6 +2653,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_lora_name_input.setEditable(False)
         self.minimax_h3_t2v_lora_strength_input = QLineEdit()
         self.minimax_h3_i2v_lora_strength_input = QLineEdit()
+        self.minimax_h3_t2v_remove_sound_input = QCheckBox("Hapus Sound")
+        self.minimax_h3_i2v_remove_sound_input = QCheckBox("Hapus Sound")
         self.minimax_h3_t2v_positive_input = QTextEdit()
         self.minimax_h3_i2v_positive_input = QTextEdit()
         self.minimax_h3_t2v_generate_prompt_button = QToolButton()
@@ -2863,6 +2865,8 @@ class SceneEditorWindow(QMainWindow):
             self.wan_t2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_size_input.currentTextChanged,
             self.minimax_h3_i2v_size_input.currentTextChanged,
+            self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
+            self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.image_pan_size_input.currentTextChanged,
@@ -3096,7 +3100,8 @@ class SceneEditorWindow(QMainWindow):
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_input, 1, 1)
         minimax_t2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_input, 1, 3)
-        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 2, 1, 1, 3, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 2, 1)
+        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 2, 2, 1, 2, Qt.AlignLeft)
         minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 3, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 3, 1, 1, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
@@ -3115,7 +3120,8 @@ class SceneEditorWindow(QMainWindow):
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 1, 1)
         minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 1, 3)
-        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 2, 1, 1, 3, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 2, 1)
+        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 2, 2, 1, 2, Qt.AlignLeft)
         minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 3, 0)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 3, 1, 1, 3)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
@@ -3796,7 +3802,7 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_t2v_prompt.json",
             source_data=minimax_t2v_prompt,
-            keys=["lora_name", "lora_strength"],
+            keys=["lora_name", "lora_strength", "remove_sound"],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
 
@@ -3808,7 +3814,7 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_i2v_prompt.json",
             source_data=minimax_i2v_prompt,
-            keys=["lora_name", "lora_strength"],
+            keys=["lora_name", "lora_strength", "remove_sound"],
             action_title="Edit Variasi MiniMax H3 I2V",
         )
 
@@ -5153,6 +5159,12 @@ class SceneEditorWindow(QMainWindow):
             )
             self.minimax_h3_t2v_lora_strength_input.setText(str(minimax_t2v_lora_strength))
             self.minimax_h3_i2v_lora_strength_input.setText(str(minimax_i2v_lora_strength))
+            self.minimax_h3_t2v_remove_sound_input.setChecked(
+                bool(minimax_h3_t2v_prompt.get("remove_sound", False))
+            )
+            self.minimax_h3_i2v_remove_sound_input.setChecked(
+                bool(minimax_h3_i2v_prompt.get("remove_sound", False))
+            )
             minimax_t2v_entry = normalize_minimax_prompt_payload(minimax_h3_t2v_prompt, "T2VA").get(
                 "positive_prompt", ""
             )
@@ -5320,6 +5332,7 @@ class SceneEditorWindow(QMainWindow):
             ),
             "lora_name": t2v_lora_name,
             "lora_strength": t2v_lora_strength,
+            "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
         }
         i2v_prompt = {
             "width": int(i2v_size[0]),
@@ -5331,6 +5344,7 @@ class SceneEditorWindow(QMainWindow):
             ),
             "lora_name": i2v_lora_name,
             "lora_strength": i2v_lora_strength,
+            "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
         }
         return t2v_prompt, i2v_prompt
 

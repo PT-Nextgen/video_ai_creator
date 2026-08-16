@@ -39,6 +39,7 @@ DEFAULT_PROMPT = {
     "lora_strength": 0,
     "width": 368,
     "height": 640,
+    "remove_sound": False,
 }
 
 
