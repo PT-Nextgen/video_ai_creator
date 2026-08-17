@@ -183,15 +183,22 @@ def _record_variation_failure(project_dir: Path, scene_dir: Path, variation_dir:
         return False
 
 
-def _delete_media_files(scene_dir: Path, preserve_images: bool = False) -> int:
-    """Delete generated media, optionally preserving root reference images."""
+def _delete_media_files(
+    scene_dir: Path,
+    preserve_images: bool = False,
+    preserve_names: set[str] | None = None,
+) -> int:
+    """Delete generated media while retaining explicitly required references."""
     count = 0
     # Standalone MiniMax H3 I2V accepts png/jpg/jpeg/webp root references. When
     # image generation is disabled, all of those references must survive the
     # per-variation cleanup; only generated videos are removed.
     extensions = ["*.mp4"] if preserve_images else ["*.mp4", "*.png"]
+    preserve_names = {str(name).strip() for name in (preserve_names or set()) if str(name).strip()}
     for ext in extensions:
         for f in glob.glob(str(scene_dir / ext)):
+            if Path(f).name in preserve_names:
+                continue
             try:
                 os.remove(f)
                 count += 1
@@ -531,7 +538,7 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
     scene_type = str(scene_meta.get("scene_type", "wan22_i2v")).strip()
     create_initial_image = bool(agentic_config.get("create_initial_image", True))
     image_extra_mode = str(agentic_config.get("image_extra_mode", "image_extra")).strip()
-    if scene_type in {"wan22_t2v_i2v", "minimax-h3_t2v_i2v"}:
+    if scene_type in {"wan22_t2v_i2v", "minimax-h3_t2v_i2v", "minimax-h3_r2v"}:
         create_initial_image = False
 
     pending_variations = _pending_variation_dirs(scene_dir)
@@ -543,13 +550,30 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
         f"[agentic] {scene_dir.name}: Eksekusi {len(pending_variations)} variasi pending"
     )
     preserve_root_images = scene_type == "minimax-h3_i2v" and not create_initial_image
+    preserve_root_reference_media = scene_type == "minimax-h3_r2v"
+    r2v_reference_names: set[str] = set()
+    if preserve_root_reference_media:
+        try:
+            r2v_prompt = json.loads((scene_dir / "minimax_h3_r2v_prompt.json").read_text(encoding="utf-8"))
+            references = r2v_prompt.get("references", {}) if isinstance(r2v_prompt, dict) else {}
+            r2v_reference_names.update(str(name).strip() for name in references.get("images", []) if str(name).strip())
+            r2v_reference_names.update(str(name).strip() for name in references.get("audios", []) if str(name).strip())
+            video_name = str(references.get("video", "") or "").strip()
+            if video_name:
+                r2v_reference_names.add(video_name)
+        except Exception as e:
+            write_log(f"[agentic] {scene_dir.name}: gagal membaca referensi R2V untuk cleanup: {e}", level="warning")
 
     for variation_dir in pending_variations:
         write_log(f"\n{'=' * 60}")
         write_log(f"[agentic] {scene_dir.name}: === eksekusi {variation_dir.name} ===")
         write_log(f"{'=' * 60}")
 
-        deleted_before = _delete_media_files(scene_dir, preserve_images=preserve_root_images)
+        deleted_before = _delete_media_files(
+            scene_dir,
+            preserve_images=preserve_root_images,
+            preserve_names=r2v_reference_names if preserve_root_reference_media else None,
+        )
         if deleted_before:
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Cleanup awal root, hapus {deleted_before} media")
 
@@ -596,7 +620,11 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal tulis status.done: {e}", level="error")
             return False
 
-        deleted_after = _delete_media_files(scene_dir, preserve_images=preserve_root_images)
+        deleted_after = _delete_media_files(
+            scene_dir,
+            preserve_images=preserve_root_images,
+            preserve_names=r2v_reference_names if preserve_root_reference_media else None,
+        )
         write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Selesai, hapus {deleted_after} media dari root")
 
     write_log(f"[agentic] {scene_dir.name}: Selesai eksekusi semua variasi pending")

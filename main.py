@@ -58,7 +58,9 @@ from minimax_h3_i2v.minimax_h3_i2v import (
 )
 from minimax_h3_r2v.minimax_h3_r2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_S2V_PROMPT,
+    DEFAULT_R2V_PROMPT as DEFAULT_MINIMAX_H3_R2V_PROMPT,
     MAX_AUDIO_DURATION as MINIMAX_H3_S2V_MAX_AUDIO_DURATION,
+    MAX_DURATION as MINIMAX_H3_R2V_MAX_DURATION,
     build_minimax_h3_r2v_workflow,
     send_workflow as send_minimax_h3_s2v_workflow,
 )
@@ -143,6 +145,17 @@ def _read_scene_json(scene_dir, filename, required=False):
     except FileNotFoundError:
         raise
     except Exception as e:
+        if filename in {
+            'minimax_h3_t2v_prompt.json',
+            'minimax_h3_i2v_prompt.json',
+            'minimax_h3_s2v_prompt.json',
+            'minimax_h3_r2v_prompt.json',
+        }:
+            # MiniMax must never run with stale English or untranslated
+            # fallback text. A runtime translation/validation failure is a
+            # hard scene failure and must reach the caller.
+            write_log(f"MiniMax prompt runtime validation/translation failed for {path}: {e}", level="error")
+            raise RuntimeError(f"MiniMax prompt gagal divalidasi/diterjemahkan: {filename}") from e
         write_log(f"Prompt localization runtime fallback untuk {path}: {e}", level="warning")
         if required:
             # fallback to non-translated prompt text so runtime can still continue
@@ -469,6 +482,20 @@ def process_scene(scene_dir, server, project_generate_caption=True):
     def _upload_to_comfy_audio(path):
         try:
             upload_info = comfyui_api.upload_file(server, path, file_type='audio')
+            write_log(f"Upload response for {path}: {json.dumps(upload_info)}")
+        except Exception as e:
+            write_log(f"Upload failed for {path}: {e}")
+            return None
+        returned_name = None
+        for key in ('name', 'filename', 'file'):
+            if key in upload_info and upload_info.get(key):
+                returned_name = upload_info.get(key)
+                break
+        return returned_name or os.path.basename(path)
+
+    def _upload_to_comfy_video(path):
+        try:
+            upload_info = comfyui_api.upload_file(server, path, file_type='video')
             write_log(f"Upload response for {path}: {json.dumps(upload_info)}")
         except Exception as e:
             write_log(f"Upload failed for {path}: {e}")
@@ -1288,6 +1315,84 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             )
         except Exception as e:
             write_log(f"Failed to trim wan22_s2v video for {scene_dir}: {e}")
+            return False
+        return _finalize_scene_success(
+            video_out_path,
+            is_s2v=True,
+            success_message=f"Completed processing {scene_dir}",
+        )
+
+    if scene_type == 'minimax-h3_r2v':
+        _ensure_scene_json(scene_dir, 'minimax_h3_r2v_prompt.json', DEFAULT_MINIMAX_H3_R2V_PROMPT)
+        try:
+            r2v_prompt = _read_scene_json(scene_dir, 'minimax_h3_r2v_prompt.json', required=True)
+            references = r2v_prompt.get('references', {}) if isinstance(r2v_prompt, dict) else {}
+            references = references if isinstance(references, dict) else {}
+            image_names = [str(value).strip() for value in references.get('images', []) if str(value).strip()][:3]
+            audio_names = [str(value).strip() for value in references.get('audios', []) if str(value).strip()][:3]
+            video_name = str(references.get('video', '')).strip()
+            if not image_names and not audio_names and not video_name:
+                raise ValueError('minimal satu reference image, audio, atau video wajib dipilih')
+            duration = int(scene_meta.get('duration_seconds', 0))
+            if duration not in (1, 5, 10, 15):
+                raise ValueError('durasi R2V harus 1, 5, 10, atau 15 detik')
+            image_paths = [os.path.join(scene_dir, name) for name in image_names]
+            audio_paths = [os.path.join(scene_dir, name) for name in audio_names]
+            video_path = os.path.join(scene_dir, video_name) if video_name else None
+            missing = [path for path in image_paths + audio_paths + ([video_path] if video_path else []) if not os.path.isfile(path)]
+            if missing:
+                raise FileNotFoundError('reference tidak ditemukan: ' + ', '.join(os.path.basename(path) for path in missing[:3]))
+            uploaded_images = [_upload_to_comfy(path) for path in image_paths]
+            uploaded_audios = [_upload_to_comfy_audio(path) for path in audio_paths]
+            uploaded_video = _upload_to_comfy_video(video_path) if video_path else None
+            if any(not value for value in uploaded_images + uploaded_audios) or video_path and not uploaded_video:
+                raise RuntimeError('gagal upload satu atau lebih reference R2V ke ComfyUI')
+            r2v_workflow = build_minimax_h3_r2v_workflow(
+                r2v_prompt,
+                scene_meta=scene_meta,
+                image_names=uploaded_images,
+                audio_names=uploaded_audios,
+                video_name=uploaded_video,
+                duration_override=duration,
+            )
+            r2v_result = send_minimax_h3_s2v_workflow(
+                r2v_workflow,
+                server,
+                log_file=LOG_FILE,
+                source_label=os.path.join(scene_dir, 'minimax_h3_r2v_prompt.json'),
+            )
+        except Exception as e:
+            write_log(f"Failed to build minimax-h3_r2v workflow for {scene_dir}: {e}")
+            return False
+        prompt_id = r2v_result.get('prompt_id') or r2v_result.get('id')
+        write_log(f"Posted minimax-h3_r2v workflow for {scene_dir}, prompt_id={prompt_id}")
+        video_out = None
+        if prompt_id:
+            video_out = comfyui_api.wait_for_output(
+                server,
+                prompt_id,
+                output_type='video',
+                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                interval=POLL_INTERVAL,
+            )
+        if not video_out:
+            write_log(f"No MiniMax H3 R2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
+            return False
+        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+        video_subfolder = video_out.get('subfolder')
+        video_type = video_out.get('type')
+        if not video_filename:
+            write_log(f"Cannot determine video filename from output: {json.dumps(video_out)}")
+            return False
+        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
+        video_out_path = os.path.join(scene_dir, video_filename)
+        try:
+            comfyui_api.download_file_url(video_url, video_out_path)
+        except Exception as e:
+            write_log(f"Failed to download video {video_filename} from {video_url}: {e}")
+            return False
+        if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
+            write_log(f"Downloaded file missing or empty: {video_out_path}")
             return False
         return _finalize_scene_success(
             video_out_path,

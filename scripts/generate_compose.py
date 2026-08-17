@@ -1211,7 +1211,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             # MiniMax H3 T2V/I2V keeps its original ComfyUI audio and combines
             # that source with standalone scene speech and sound effects.
             is_wan22_s2v = scene_type == 'wan22_s2v'
-            is_s2v = scene_type in {'wan22_s2v', 'minimax-h3_s2v'}
+            is_s2v = scene_type in {'wan22_s2v', 'minimax-h3_s2v', 'minimax-h3_r2v'}
             is_minimax_h3_av = scene_type in {
                 'minimax-h3_i2v',
                 'minimax-h3_t2v_i2v',

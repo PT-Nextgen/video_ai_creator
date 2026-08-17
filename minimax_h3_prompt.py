@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import copy
 import ast
+import re
 from numbers import Real
 
 
@@ -32,6 +33,9 @@ REF2VA_SECTION_KEYS = (
     "non_diegetic_music",
 )
 
+_REF2VA_TOKEN_PATTERN = re.compile(r"<[^<>]+>")
+_REF2VA_REFERENCE_PATTERN = re.compile(r"<(Picture|Video|Audio)\s+(\d+)>")
+
 
 def empty_ref2va_prompt() -> dict:
     return {key: "" for key in REF2VA_SECTION_KEYS}
@@ -45,6 +49,61 @@ def validate_ref2va_prompt(value) -> list[str]:
         if not isinstance(value.get(key), str) or not value.get(key, "").strip():
             errors.append(f"Ref2VA.{key} harus berupa string tidak kosong.")
     return errors
+
+
+def validate_ref2va_reference_tokens(
+    value: dict,
+    *,
+    image_count: int = 0,
+    audio_count: int = 0,
+    has_video: bool = False,
+) -> list[str]:
+    """Ensure Ref2VA references mentioned in text exist in the active scene."""
+    errors = []
+    if not isinstance(value, dict):
+        return ["Ref2VA prompt harus berupa object JSON."]
+    allowed = {f"Picture {index}" for index in range(1, max(0, int(image_count)) + 1)}
+    allowed.update(f"Audio {index}" for index in range(1, max(0, int(audio_count)) + 1))
+    if has_video:
+        allowed.add("Video 1")
+        # Audio 4 is the semantic label commonly used for synchronized audio
+        # carried by Video 1; it is not a fourth uploaded audio slot.
+        allowed.add("Audio 4")
+    found = set()
+    for section in REF2VA_SECTION_KEYS:
+        text = value.get(section, "")
+        if not isinstance(text, str):
+            continue
+        for kind, number in _REF2VA_REFERENCE_PATTERN.findall(text):
+            token = f"{kind} {number}"
+            found.add(token)
+            if token not in allowed:
+                errors.append(f"Token <{token}> tidak tersedia pada reference aktif.")
+    return list(dict.fromkeys(errors))
+
+
+def protect_ref2va_tokens(text: str) -> tuple[str, dict[str, str]]:
+    """Replace angle-bracket technical tokens with stable placeholders."""
+    replacements: dict[str, str] = {}
+
+    def replace(match):
+        token = match.group(0)
+        placeholder = f"__REF2VA_TOKEN_{len(replacements) + 1:03d}__"
+        replacements[placeholder] = token
+        return placeholder
+
+    return _REF2VA_TOKEN_PATTERN.sub(replace, str(text or "")), replacements
+
+
+def restore_ref2va_tokens(text: str, replacements: dict[str, str]) -> str:
+    """Restore protected technical tokens and fail if a token disappeared."""
+    result = str(text or "")
+    missing = [placeholder for placeholder in replacements if placeholder not in result]
+    if missing:
+        raise ValueError("Translasi menghilangkan token teknis Ref2VA: " + ", ".join(missing))
+    for placeholder, token in replacements.items():
+        result = result.replace(placeholder, token)
+    return result
 
 
 def serialize_ref2va_prompt(value) -> str:
@@ -68,6 +127,24 @@ def empty_structured_prompt(mode: str) -> dict:
             "time": 0.0,
             "instruction": "fully referenced",
         }
+    return value
+
+
+def default_structured_prompt(mode: str) -> dict:
+    """Return a non-empty, saveable MiniMax H3 T2VA/I2VA prompt."""
+    value = empty_structured_prompt(mode)
+    value["shots"] = [{
+        "shot_id": "Shot 1",
+        "start": 0.0,
+        "end": 5.0,
+        "visual": "A clear cinematic scene with a primary subject and coherent composition.",
+        "action": "The primary subject moves naturally within the scene.",
+        "camera": "The camera uses a stable medium shot with smooth movement.",
+        "dialogue": "No dialogue.",
+        "diegetic_sound": "Natural environmental sound follows the visible action.",
+    }]
+    value["overall_soundscape"] = "A coherent cinematic soundscape follows the environment and visible action."
+    value["non_diegetic_music"] = "N/A"
     return value
 
 

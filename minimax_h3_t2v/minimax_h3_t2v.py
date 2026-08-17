@@ -3,7 +3,7 @@ import json
 import os
 import random
 
-from minimax_h3_prompt import empty_structured_prompt, serialize_structured_prompt, structured_prompt_entry
+from minimax_h3_prompt import default_structured_prompt, serialize_structured_prompt, structured_prompt_entry
 
 from scripts import comfyui_api
 from logging_config import get_logger, write_log
@@ -24,7 +24,11 @@ SIZE_OPTIONS = [
 ]
 
 DEFAULT_PROMPT = {
-    "positive_prompt": structured_prompt_entry("T2VA", en=empty_structured_prompt("T2VA")),
+    "positive_prompt": structured_prompt_entry(
+        "T2VA",
+        id_new=default_structured_prompt("T2VA"),
+        en=default_structured_prompt("T2VA"),
+    ),
     "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength": 0,
     "width": 368,

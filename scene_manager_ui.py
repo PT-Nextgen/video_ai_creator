@@ -47,7 +47,9 @@ from minimax_h3_i2v.minimax_h3_i2v import (
 )
 from minimax_h3_r2v.minimax_h3_r2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_S2V_PROMPT,
+    DEFAULT_R2V_PROMPT as DEFAULT_MINIMAX_H3_R2V_PROMPT,
     MAX_AUDIO_DURATION as MINIMAX_H3_S2V_MAX_AUDIO_DURATION,
+    MAX_DURATION as MINIMAX_H3_R2V_MAX_DURATION,
     SIZE_OPTIONS as MINIMAX_H3_S2V_SIZE_OPTIONS,
     get_audio_duration as get_minimax_h3_s2v_audio_duration,
 )
@@ -57,6 +59,7 @@ from minimax_h3_prompt import (
     parse_structured_response,
     serialize_structured_prompt,
     validate_ref2va_prompt,
+    validate_ref2va_reference_tokens,
     validate_structured_prompt,
 )
 from scripts.voice_profiles import (
@@ -454,6 +457,8 @@ MINIMAX_H3_T2V_I2V_SCENE_TYPE = "minimax-h3_t2v_i2v"
 MINIMAX_H3_I2V_SCENE_TYPE = "minimax-h3_i2v"
 MINIMAX_H3_S2V_SCENE_TYPE = "minimax-h3_s2v"
 MINIMAX_H3_S2V_PROMPT_FILENAME = "minimax_h3_s2v_prompt.json"
+MINIMAX_H3_R2V_SCENE_TYPE = "minimax-h3_r2v"
+MINIMAX_H3_R2V_PROMPT_FILENAME = "minimax_h3_r2v_prompt.json"
 
 
 def s2v_prompt_filename(scene_type: str) -> str:
@@ -462,6 +467,10 @@ def s2v_prompt_filename(scene_type: str) -> str:
 
 def s2v_prompt_default(scene_type: str) -> dict:
     return DEFAULT_MINIMAX_H3_S2V_PROMPT if str(scene_type or "").strip() == MINIMAX_H3_S2V_SCENE_TYPE else DEFAULT_WAN22_S2V_PROMPT
+
+
+def r2v_prompt_default(scene_type: str) -> dict:
+    return copy.deepcopy(DEFAULT_MINIMAX_H3_R2V_PROMPT)
 DEFAULT_DURATION_OPTIONS = [5, 10]
 WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
 MINIMAX_H3_DURATION_OPTIONS = [1, 5, 10, 15, 20, 25, 30]
@@ -549,6 +558,8 @@ def duration_options_for_scene_type(scene_type: str) -> list[int]:
         return list(MINIMAX_H3_DURATION_OPTIONS)
     if scene_type == MINIMAX_H3_I2V_SCENE_TYPE:
         return list(MINIMAX_H3_I2V_DURATION_OPTIONS)
+    if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+        return [1, 5, 10, 15]
     if scene_type == WAN22_T2V_SCENE_TYPE:
         return list(WAN22_T2V_DURATION_OPTIONS)
     if scene_type == WAN22_T2V_BATCH_SCENE_TYPE:
@@ -686,6 +697,7 @@ def agentic_create_initial_image_policy(scene_type: str) -> tuple[bool, bool | N
         WAN22_T2V_SCENE_TYPE,
         WAN22_T2V_BATCH_SCENE_TYPE,
         MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+        MINIMAX_H3_R2V_SCENE_TYPE,
     }:
         return False, False
     return False, True
@@ -699,6 +711,7 @@ def scene_type_supports_initial_image(scene_type: str) -> bool:
         "wan22_s2v",
         MINIMAX_H3_I2V_SCENE_TYPE,
         MINIMAX_H3_S2V_SCENE_TYPE,
+        MINIMAX_H3_R2V_SCENE_TYPE,
         "i2v",
         "image_pan",
         "image_zoom",
@@ -809,6 +822,7 @@ def create_scene_files(
     minimax_h3_t2v_prompt=None,
     minimax_h3_i2v_prompt=None,
     minimax_h3_s2v_prompt=None,
+    minimax_h3_r2v_prompt=None,
 ):
     scene_dir.mkdir(parents=True, exist_ok=True)
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
@@ -837,6 +851,11 @@ def create_scene_files(
             if scene_type == MINIMAX_H3_S2V_SCENE_TYPE and minimax_h3_s2v_prompt
             else DEFAULT_MINIMAX_H3_S2V_PROMPT
         ),
+        minimax_h3_r2v_prompt=(
+            minimax_h3_r2v_prompt
+            if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and minimax_h3_r2v_prompt
+            else DEFAULT_MINIMAX_H3_R2V_PROMPT
+        ),
     )
 
 
@@ -857,6 +876,7 @@ def sync_scene_prompt_files(
     minimax_h3_t2v_prompt: dict | None = None,
     minimax_h3_i2v_prompt: dict | None = None,
     minimax_h3_s2v_prompt: dict | None = None,
+    minimax_h3_r2v_prompt: dict | None = None,
 ):
     """Ensure prompt JSON files exist according to selected scene type.
 
@@ -891,6 +911,21 @@ def sync_scene_prompt_files(
             MINIMAX_H3_S2V_PROMPT_FILENAME,
             minimax_h3_s2v_prompt or DEFAULT_MINIMAX_H3_S2V_PROMPT,
         ),
+    )
+    r2v_path = scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME
+    r2v_payload = minimax_h3_r2v_prompt
+    if r2v_payload is None:
+        r2v_payload = load_json(r2v_path, DEFAULT_MINIMAX_H3_R2V_PROMPT) if r2v_path.exists() else DEFAULT_MINIMAX_H3_R2V_PROMPT
+    # Repair files created by the earlier R2V implementation, whose default
+    # six fields were empty. Do this only for an entirely empty payload so a
+    # user's partially edited prompt is never silently overwritten.
+    r2v_entry = r2v_payload.get("positive_prompt") if isinstance(r2v_payload, dict) else None
+    r2v_id_new = r2v_entry.get("id_new") if isinstance(r2v_entry, dict) else None
+    if isinstance(r2v_id_new, dict) and r2v_id_new and not any(str(value or "").strip() for value in r2v_id_new.values()):
+        r2v_payload = copy.deepcopy(DEFAULT_MINIMAX_H3_R2V_PROMPT)
+    write_prompt_json(
+        r2v_path,
+        prepare_prompt_payload_for_save(MINIMAX_H3_R2V_PROMPT_FILENAME, r2v_payload),
     )
 
 
@@ -1014,6 +1049,8 @@ def create_scene_in_project(
         )
     if scene_type == MINIMAX_H3_I2V_SCENE_TYPE and duration not in MINIMAX_H3_I2V_DURATION_OPTIONS:
         raise ValueError("Durasi untuk scene minimax-h3_i2v hanya boleh 1, 5, 10, atau 15 detik.")
+    if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and duration not in (1, 5, 10, 15):
+        raise ValueError("Durasi untuk scene minimax-h3_r2v hanya boleh 1, 5, 10, atau 15 detik.")
     if scene_type == WAN22_T2V_SCENE_TYPE and duration not in WAN22_T2V_DURATION_OPTIONS:
         raise ValueError("Durasi untuk scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
     if scene_type == WAN22_T2V_BATCH_SCENE_TYPE and duration not in (5, 10):
@@ -1049,6 +1086,7 @@ def create_scene_in_project(
         image_zoom_prompt=image_zoom_prompt,
         web_search_prompt=web_search_prompt,
         t2v_batch_extra_prompts=DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
+        minimax_h3_r2v_prompt=DEFAULT_MINIMAX_H3_R2V_PROMPT,
     )
     sync_project_size_to_scene_files(project_dir)
     return new_dir
@@ -1183,6 +1221,7 @@ def validate_scene_data(
     scene_dir: Path | None = None,
     minimax_h3_t2v_prompt: dict | None = None,
     minimax_h3_i2v_prompt: dict | None = None,
+    minimax_h3_r2v_prompt: dict | None = None,
 ):
     issues = []
     scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
@@ -1193,6 +1232,9 @@ def validate_scene_data(
     image_zoom_prompt = image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT
     minimax_h3_t2v_prompt = minimax_h3_t2v_prompt or DEFAULT_MINIMAX_H3_T2V_PROMPT
     minimax_h3_i2v_prompt = minimax_h3_i2v_prompt or DEFAULT_MINIMAX_H3_I2V_PROMPT
+    if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and minimax_h3_r2v_prompt is None and scene_dir:
+        minimax_h3_r2v_prompt = load_json(scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME, DEFAULT_MINIMAX_H3_R2V_PROMPT)
+    minimax_h3_r2v_prompt = minimax_h3_r2v_prompt or DEFAULT_MINIMAX_H3_R2V_PROMPT
     if not str(meta.get("scene_title", "")).strip():
         issues.append("Judul adegan wajib diisi.")
     if not str(meta.get("scene_description", "")).strip():
@@ -1236,6 +1278,31 @@ def validate_scene_data(
             issues.append("Prompt positif MiniMax H3 I2V wajib diisi.")
         if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
             issues.append("Adegan MiniMax H3 I2V membutuhkan minimal satu gambar lokal di folder scene.")
+    if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+        try:
+            duration_value = int(meta.get("duration_seconds", 0))
+        except Exception:
+            duration_value = 0
+        if duration_value not in (1, 5, 10, 15):
+            issues.append("Durasi scene minimax-h3_r2v hanya boleh 1, 5, 10, atau 15 detik.")
+        r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
+        r2v_id_new = r2v_entry.get("id_new") if isinstance(r2v_entry, dict) else None
+        if not isinstance(r2v_id_new, dict) or validate_ref2va_prompt(r2v_id_new):
+            issues.append("Prompt positif MiniMax H3 R2V harus memiliki enam section Ref2VA yang valid.")
+        references = minimax_h3_r2v_prompt.get("references", {})
+        references = references if isinstance(references, dict) else {}
+        images = [str(value).strip() for value in references.get("images", []) if str(value).strip()]
+        audios = [str(value).strip() for value in references.get("audios", []) if str(value).strip()]
+        video = str(references.get("video", "")).strip()
+        if len(images) > 3 or len(audios) > 3:
+            issues.append("Reference R2V melebihi batas: maksimal 3 image, 3 audio, dan 1 video.")
+        if not images and not audios and not video:
+            issues.append("Scene MiniMax H3 R2V membutuhkan minimal satu reference image, audio, atau video.")
+        if scene_dir:
+            selected_files = images + audios + ([video] if video else [])
+            missing = [name for name in selected_files if not (scene_dir / name).is_file()]
+            if missing:
+                issues.append("Reference R2V tidak ditemukan: " + ", ".join(missing[:3]))
     if scene_type == WAN22_T2V_BATCH_SCENE_TYPE:
         try:
             duration_value = int(meta.get("duration_seconds", 0))
@@ -1381,7 +1448,8 @@ class SceneTemplateDialog(QDialog):
         self.type_combo.addItems([
             "wan22_i2v",
             WAN22_T2V_SCENE_TYPE,
-            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+        MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+        MINIMAX_H3_R2V_SCENE_TYPE,
             MINIMAX_H3_S2V_SCENE_TYPE,
             WAN22_T2V_BATCH_SCENE_TYPE,
             "wan22_s2v",
@@ -2458,6 +2526,7 @@ class SceneEditorWindow(QMainWindow):
         self.wan_tab = None
         self.minimax_h3_t2v_tab = None
         self.minimax_h3_i2v_tab = None
+        self.minimax_h3_r2v_tab = None
         self.s2v_tab = None
         self.web_tab = None
         self.web_search_tab = None
@@ -2501,6 +2570,7 @@ class SceneEditorWindow(QMainWindow):
             MINIMAX_H3_T2V_I2V_SCENE_TYPE,
             MINIMAX_H3_I2V_SCENE_TYPE,
             MINIMAX_H3_S2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
             WAN22_T2V_BATCH_SCENE_TYPE,
             "wan22_s2v",
             "i2v",
@@ -2687,6 +2757,34 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_size_input = QComboBox()
         for label, width, height in MINIMAX_H3_S2V_SIZE_OPTIONS:
             self.s2v_size_input.addItem(label, (width, height))
+        self.minimax_h3_r2v_size_input = QComboBox()
+        for label, width, height in MINIMAX_H3_S2V_SIZE_OPTIONS:
+            self.minimax_h3_r2v_size_input.addItem(label, (width, height))
+        self.minimax_h3_r2v_positive_input = QTextEdit()
+        self.minimax_h3_r2v_generate_prompt_button = QToolButton()
+        self.minimax_h3_r2v_generate_prompt_button.setText("Buat Prompt")
+        self.minimax_h3_r2v_generate_prompt_button.clicked.connect(
+            lambda _checked=False: self.generate_r2v_prompt_from_ui()
+        )
+        self.minimax_h3_r2v_image_list = QListWidget()
+        self.minimax_h3_r2v_audio_list = QListWidget()
+        self.minimax_h3_r2v_video_list = QListWidget()
+        for widget in (
+            self.minimax_h3_r2v_image_list,
+            self.minimax_h3_r2v_audio_list,
+            self.minimax_h3_r2v_video_list,
+        ):
+            widget.setSelectionMode(QAbstractItemView.NoSelection)
+            widget.setMaximumHeight(120)
+        self.minimax_h3_r2v_image_list.itemChanged.connect(
+            lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_image_list, 3)
+        )
+        self.minimax_h3_r2v_audio_list.itemChanged.connect(
+            lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_audio_list, 3)
+        )
+        self.minimax_h3_r2v_video_list.itemChanged.connect(
+            lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_video_list, 1)
+        )
         self.s2v_cfg_input = QDoubleSpinBox()
         self.s2v_cfg_input.setRange(1.0, 6.0)
         self.s2v_cfg_input.setSingleStep(0.1)
@@ -2865,6 +2963,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_t2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_size_input.currentTextChanged,
             self.minimax_h3_i2v_size_input.currentTextChanged,
+            self.minimax_h3_r2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
@@ -2901,6 +3000,7 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_lora_name_input, self.minimax_h3_i2v_lora_strength_input,
             self.minimax_h3_t2v_positive_input, self.minimax_h3_i2v_positive_input,
             self.s2v_positive_input, self.s2v_negative_input,
+            self.minimax_h3_r2v_positive_input,
             *self.wan_prompt_inputs.values(),
             *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
             self.agentic_special_command_input,
@@ -3127,6 +3227,16 @@ class SceneEditorWindow(QMainWindow):
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
         tabs.addTab(self.minimax_h3_i2v_tab, "MINIMAX-H3_I2V")
 
+        self.minimax_h3_r2v_tab = QWidget()
+        r2v_layout = QFormLayout(self.minimax_h3_r2v_tab)
+        r2v_layout.addRow("Ukuran", self.minimax_h3_r2v_size_input)
+        r2v_layout.addRow("Gambar (maks. 3)", self.minimax_h3_r2v_image_list)
+        r2v_layout.addRow("Video (maks. 1)", self.minimax_h3_r2v_video_list)
+        r2v_layout.addRow("Audio (maks. 3)", self.minimax_h3_r2v_audio_list)
+        r2v_layout.addRow("Prompt Positif", self.minimax_h3_r2v_positive_input)
+        r2v_layout.addRow("", self.minimax_h3_r2v_generate_prompt_button)
+        tabs.addTab(self.minimax_h3_r2v_tab, "MINIMAX-H3_R2V")
+
         self.t2v_batch_extra_tab = QWidget()
         t2v_batch_extra_layout = QVBoxLayout(self.t2v_batch_extra_tab)
         for idx in range(3):
@@ -3235,6 +3345,7 @@ class SceneEditorWindow(QMainWindow):
         is_minimax_h3 = scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
         is_minimax_h3_i2v = scene_type == MINIMAX_H3_I2V_SCENE_TYPE
         is_minimax_h3_s2v = scene_type == MINIMAX_H3_S2V_SCENE_TYPE
+        is_minimax_h3_r2v = scene_type == MINIMAX_H3_R2V_SCENE_TYPE
         is_t2v_batch = scene_type == WAN22_T2V_BATCH_SCENE_TYPE
         is_s2v = scene_type in {"wan22_s2v", MINIMAX_H3_S2V_SCENE_TYPE}
         visible_map = {
@@ -3245,6 +3356,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_tab: scene_type in {"wan22", "wan22_i2v", WAN22_T2V_SCENE_TYPE},
             self.minimax_h3_t2v_tab: is_minimax_h3,
             self.minimax_h3_i2v_tab: is_minimax_h3 or is_minimax_h3_i2v,
+            self.minimax_h3_r2v_tab: is_minimax_h3_r2v,
             self.s2v_tab: is_s2v,
             self.web_tab: scene_type == "web_scroll",
             self.image_pan_tab: scene_type == "image_pan",
@@ -3255,6 +3367,7 @@ class SceneEditorWindow(QMainWindow):
                 "wan22_s2v",
                 MINIMAX_H3_T2V_I2V_SCENE_TYPE,
                 MINIMAX_H3_S2V_SCENE_TYPE,
+                MINIMAX_H3_R2V_SCENE_TYPE,
             } and not is_wan22_t2v and not is_t2v_batch,
             self.t2v_batch_extra_tab: is_t2v_batch,
             self.agentic_tab: scene_type != "web_scroll",
@@ -3275,6 +3388,10 @@ class SceneEditorWindow(QMainWindow):
                 self._move_tab_after(self.minimax_h3_t2v_tab, self.meta_tab)
                 self._move_tab_after(self.minimax_h3_i2v_tab, self.minimax_h3_t2v_tab)
                 self._move_tab_after(self.agentic_tab, self.minimax_h3_i2v_tab)
+                self._move_tab_after(self.assets_tab, self.agentic_tab)
+            elif is_minimax_h3_r2v:
+                self._move_tab_after(self.minimax_h3_r2v_tab, self.z_tab)
+                self._move_tab_after(self.agentic_tab, self.minimax_h3_r2v_tab)
                 self._move_tab_after(self.assets_tab, self.agentic_tab)
             elif is_minimax_h3_i2v:
                 self._move_tab_after(self.image_edit_tab, self.z_tab)
@@ -3303,6 +3420,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_tab,
             self.minimax_h3_t2v_tab,
             self.minimax_h3_i2v_tab,
+            self.minimax_h3_r2v_tab,
             self.t2v_batch_extra_tab,
             self.s2v_tab,
             self.web_tab,
@@ -4006,6 +4124,7 @@ class SceneEditorWindow(QMainWindow):
             self.wan_t2v_size_input,
             self.minimax_h3_t2v_size_input,
             self.minimax_h3_i2v_size_input,
+            self.minimax_h3_r2v_size_input,
             self.s2v_size_input,
             self.web_size_input,
             self.image_pan_size_input,
@@ -4042,6 +4161,7 @@ class SceneEditorWindow(QMainWindow):
             self._sync_project_size_to_scene_file(scene_dir, "wan22_i2v_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "minimax_h3_t2v_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "minimax_h3_i2v_prompt.json", width, height)
+            self._sync_project_size_to_scene_file(scene_dir, MINIMAX_H3_R2V_PROMPT_FILENAME, width, height)
             self._sync_project_size_to_scene_file(scene_dir, "wan22_s2v_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "web_scroll_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "image_pan_prompt.json", width, height)
@@ -4921,6 +5041,13 @@ class SceneEditorWindow(QMainWindow):
                 scene_dir / "minimax_h3_i2v_prompt.json",
                 DEFAULT_MINIMAX_H3_I2V_PROMPT,
             )
+            # Root scene list entries do not have a variation fallback scope.
+            # Older projects may not contain the new R2V file, so use the
+            # default payload without referencing an undefined fallback_dir.
+            minimax_h3_r2v_prompt = load_json(
+                scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME,
+                DEFAULT_MINIMAX_H3_R2V_PROMPT,
+            )
             scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
             s2v_prompt = load_json(scene_dir / s2v_prompt_filename(scene_type), s2v_prompt_default(scene_type))
             web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
@@ -5020,6 +5147,11 @@ class SceneEditorWindow(QMainWindow):
             minimax_h3_i2v_prompt = load_json(
                 scene_dir / "minimax_h3_i2v_prompt.json",
                 DEFAULT_MINIMAX_H3_I2V_PROMPT,
+            )
+            minimax_h3_r2v_prompt = load_json_with_fallback(
+                scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME,
+                (fallback_dir / MINIMAX_H3_R2V_PROMPT_FILENAME) if fallback_dir else None,
+                DEFAULT_MINIMAX_H3_R2V_PROMPT,
             )
             scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
             s2v_filename = s2v_prompt_filename(scene_type)
@@ -5204,6 +5336,23 @@ class SceneEditorWindow(QMainWindow):
                 )
             )
             self.s2v_negative_input.setPlainText(str(s2v_prompt.get("negative_prompt", DEFAULT_WAN22_S2V_PROMPT["negative_prompt"])))
+            r2v_width = int(minimax_h3_r2v_prompt.get("width", DEFAULT_MINIMAX_H3_R2V_PROMPT["width"]))
+            r2v_height = int(minimax_h3_r2v_prompt.get("height", DEFAULT_MINIMAX_H3_R2V_PROMPT["height"]))
+            r2v_index = self.minimax_h3_r2v_size_input.findData((r2v_width, r2v_height))
+            self.minimax_h3_r2v_size_input.setCurrentIndex(max(r2v_index, 0))
+            r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
+            r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
+            self.minimax_h3_r2v_positive_input.setPlainText(
+                json.dumps(r2v_id_new, ensure_ascii=False, indent=2) if isinstance(r2v_id_new, dict) else str(r2v_id_new)
+            )
+            references = minimax_h3_r2v_prompt.get("references", {})
+            if not isinstance(references, dict):
+                references = {}
+            self.refresh_r2v_reference_options({
+                "images": references.get("images", []),
+                "video": references.get("video", ""),
+                "audios": references.get("audios", []),
+            })
             self.web_url_input.setText(str(web_prompt.get("url", DEFAULT_WEB_SCROLL_PROMPT["url"])))
             try:
                 web_width = int(web_prompt.get("width", DEFAULT_WEB_SCROLL_PROMPT["width"]))
@@ -5349,7 +5498,7 @@ class SceneEditorWindow(QMainWindow):
         return t2v_prompt, i2v_prompt
 
     def _synchronize_minimax_h3_prompt_translation(self, prompt: dict, mode: str) -> dict:
-        """If UI id_new changed, translate it back to en before saving."""
+        """Validate MiniMax id_new before saving; translation happens at runtime."""
         result = copy.deepcopy(prompt or {})
         entry = result.get("positive_prompt")
         if not isinstance(entry, dict):
@@ -5358,15 +5507,10 @@ class SceneEditorWindow(QMainWindow):
         id_old = entry.get("id_old")
         if not isinstance(id_new, dict):
             raise ValueError("id_new MiniMax harus berupa object JSON.")
-        if id_old == id_new:
-            return result
-
-        self.append_log(
-            f"id_new {mode} berubah; menerjemahkan ulang field JSON ke en sebelum menyimpan..."
-        )
-        translator = get_prompt_translator(project_dir=self.project_dir())
-        entry["en"] = translator.translate_structured_prompt_to_english(id_new, mode=mode)
-        entry["id_old"] = copy.deepcopy(id_new)
+        probe = {"id_old": id_new, "id_new": id_new, "en": id_new}
+        errors = validate_structured_prompt(probe, expected_mode=mode)
+        if errors:
+            raise ValueError(f"Prompt MiniMax {mode} tidak valid: " + "; ".join(errors[:3]))
         entry["id_new"] = copy.deepcopy(id_new)
         result["positive_prompt"] = entry
         return result
@@ -5382,11 +5526,23 @@ class SceneEditorWindow(QMainWindow):
         errors = validate_ref2va_prompt(id_new)
         if errors:
             raise ValueError("Prompt MiniMax H3 S2V tidak valid: " + "; ".join(errors[:3]))
-        if entry.get("id_old") != id_new:
-            self.append_log("id_new Ref2VA berubah; menerjemahkan ulang tiap field ke en sebelum menyimpan...")
-            translator = get_prompt_translator(project_dir=self.project_dir())
-            entry["en"] = translator.translate_ref2va_prompt_to_english(id_new)
-            entry["id_old"] = copy.deepcopy(id_new)
+        # Translation is deferred to runtime; save only validates id_new.
+        entry["id_new"] = copy.deepcopy(id_new)
+        result["positive_prompt"] = entry
+        return result
+
+    def _synchronize_minimax_h3_r2v_prompt_translation(self, prompt: dict) -> dict:
+        result = copy.deepcopy(prompt or {})
+        entry = result.get("positive_prompt")
+        if not isinstance(entry, dict):
+            return result
+        id_new = entry.get("id_new")
+        if not isinstance(id_new, dict):
+            raise ValueError("id_new MiniMax H3 R2V harus berupa object JSON.")
+        errors = validate_ref2va_prompt(id_new)
+        if errors:
+            raise ValueError("Prompt MiniMax H3 R2V tidak valid: " + "; ".join(errors[:3]))
+        # Translation is deferred to runtime; save only validates id_new.
         entry["id_new"] = copy.deepcopy(id_new)
         result["positive_prompt"] = entry
         return result
@@ -5422,6 +5578,8 @@ class SceneEditorWindow(QMainWindow):
         )
         if prompt_kind == "minimax_h3_s2v":
             widget = self.s2v_positive_input
+        elif prompt_kind == "minimax_h3_r2v":
+            widget = self.minimax_h3_r2v_positive_input
         display_text = json.dumps(id_new, ensure_ascii=False, indent=2)
         widget.setPlainText(display_text)
         widget.document().setModified(True)
@@ -6034,6 +6192,7 @@ class SceneEditorWindow(QMainWindow):
         try:
             meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
             minimax_h3_t2v_prompt, minimax_h3_i2v_prompt = self.gather_minimax_h3_prompts()
+            r2v_prompt = self.gather_minimax_h3_r2v_prompt()
             issues = validate_scene_data(
                 meta,
                 z_prompt,
@@ -6136,8 +6295,89 @@ class SceneEditorWindow(QMainWindow):
             item.setData(Qt.UserRole, str(asset))
             self.asset_list.addItem(item)
         self.refresh_image_edit_source_options()
+        self.refresh_r2v_reference_options()
         if not assets:
             self.viewer_info_label.setText("Tidak ada file media di scene ini.")
+
+    def _r2v_selected_names(self, widget: QListWidget) -> list[str]:
+        selected = []
+        for index in range(widget.count()):
+            item = widget.item(index)
+            if item.checkState() == Qt.Checked:
+                selected.append(str(item.data(Qt.UserRole) or item.text()).strip())
+        return [name for name in selected if name]
+
+    def _limit_r2v_reference_selection(self, widget: QListWidget, maximum: int):
+        selected = [widget.item(index) for index in range(widget.count()) if widget.item(index).checkState() == Qt.Checked]
+        if len(selected) <= maximum:
+            return
+        widget.blockSignals(True)
+        for item in selected[maximum:]:
+            item.setCheckState(Qt.Unchecked)
+        widget.blockSignals(False)
+        self.refresh_scene_status()
+
+    def _set_r2v_reference_list(self, widget: QListWidget, names: list[str], selected: list[str], maximum: int):
+        selected_set = {str(value).strip() for value in selected if str(value).strip()}
+        widget.blockSignals(True)
+        widget.clear()
+        for name in names:
+            item = QListWidgetItem(name)
+            item.setData(Qt.UserRole, name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if name in selected_set else Qt.Unchecked)
+            widget.addItem(item)
+        widget.blockSignals(False)
+
+    def refresh_r2v_reference_options(self, preferred: dict | None = None):
+        scene_dir = self.active_scene_dir()
+        if not scene_dir or not scene_dir.exists():
+            return
+        assets = [path for path in scene_dir.iterdir() if path.is_file()]
+        image_names = sorted([p.name for p in assets if p.suffix.lower() in IMAGE_EXTS], key=str.lower)
+        video_names = sorted([p.name for p in assets if p.suffix.lower() in VIDEO_EXTS], key=str.lower)
+        audio_names = sorted([p.name for p in assets if p.suffix.lower() in AUDIO_EXTS], key=str.lower)
+        current = preferred if isinstance(preferred, dict) else {
+            "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list),
+            "video": self._r2v_selected_names(self.minimax_h3_r2v_video_list)[:1],
+            "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list),
+        }
+        self._set_r2v_reference_list(
+            self.minimax_h3_r2v_image_list, image_names, list(current.get("images", []))[:3], 3
+        )
+        self._set_r2v_reference_list(
+            self.minimax_h3_r2v_audio_list, audio_names, list(current.get("audios", []))[:3], 3
+        )
+        video_value = current.get("video", "")
+        video_selected = [video_value] if isinstance(video_value, str) and video_value else list(video_value or [])[:1]
+        self._set_r2v_reference_list(self.minimax_h3_r2v_video_list, video_names, video_selected, 1)
+
+    def gather_minimax_h3_r2v_prompt(self) -> dict:
+        size = self.minimax_h3_r2v_size_input.currentData() or (368, 640)
+        raw_text = self.minimax_h3_r2v_positive_input.toPlainText().strip()
+        try:
+            id_new = json.loads(raw_text) if raw_text else copy.deepcopy(DEFAULT_MINIMAX_H3_R2V_PROMPT["positive_prompt"]["id_new"])
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"JSON id_new MiniMax H3 R2V tidak valid: {exc.msg}.") from exc
+        if not isinstance(id_new, dict):
+            raise ValueError("id_new MiniMax H3 R2V harus berupa object.")
+        existing = load_json(self.current_scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME, DEFAULT_MINIMAX_H3_R2V_PROMPT)
+        existing_entry = existing.get("positive_prompt", {}) if isinstance(existing, dict) else {}
+        references = {
+            "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:3],
+            "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
+            "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
+        }
+        return {
+            "positive_prompt": {
+                "id_old": copy.deepcopy(existing_entry.get("id_old", id_new)) if isinstance(existing_entry, dict) else copy.deepcopy(id_new),
+                "id_new": id_new,
+                "en": copy.deepcopy(existing_entry.get("en", id_new)) if isinstance(existing_entry, dict) else copy.deepcopy(id_new),
+            },
+            "width": int(size[0]),
+            "height": int(size[1]),
+            "references": references,
+        }
 
     def save_current_scene(self, silent=False, reload_list=True):
         if not self.current_scene_dir:
@@ -6158,6 +6398,7 @@ class SceneEditorWindow(QMainWindow):
         try:
             meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
             minimax_h3_t2v_prompt, minimax_h3_i2v_prompt = self.gather_minimax_h3_prompts()
+            r2v_prompt = self.gather_minimax_h3_r2v_prompt()
             minimax_h3_t2v_prompt = self._synchronize_minimax_h3_prompt_translation(
                 minimax_h3_t2v_prompt, "T2VA"
             )
@@ -6166,6 +6407,8 @@ class SceneEditorWindow(QMainWindow):
             )
             if meta.get("scene_type") == MINIMAX_H3_S2V_SCENE_TYPE:
                 s2v_prompt = self._synchronize_minimax_h3_s2v_prompt_translation(s2v_prompt)
+            if meta.get("scene_type") == MINIMAX_H3_R2V_SCENE_TYPE:
+                r2v_prompt = self._synchronize_minimax_h3_r2v_prompt_translation(r2v_prompt)
         except ValueError as e:
             self.append_log(f"[gagal] Data scene tidak valid saat Save: {e}")
             self.statusBar().showMessage(f"Save Scene gagal: {e}", 8000)
@@ -6190,6 +6433,7 @@ class SceneEditorWindow(QMainWindow):
             self.current_scene_dir,
             minimax_h3_t2v_prompt,
             minimax_h3_i2v_prompt,
+            r2v_prompt,
         )
         if issues and not silent:
             reply = QMessageBox.question(
@@ -6223,6 +6467,7 @@ class SceneEditorWindow(QMainWindow):
             minimax_h3_t2v_prompt=minimax_h3_t2v_prompt,
             minimax_h3_i2v_prompt=minimax_h3_i2v_prompt,
             minimax_h3_s2v_prompt=(s2v_prompt if scene_type == MINIMAX_H3_S2V_SCENE_TYPE else None),
+            minimax_h3_r2v_prompt=(r2v_prompt if scene_type == MINIMAX_H3_R2V_SCENE_TYPE else None),
         )
         self._refresh_minimax_h3_json_prompt_widgets(
             minimax_h3_t2v_prompt,
@@ -6300,6 +6545,7 @@ class SceneEditorWindow(QMainWindow):
             image_zoom_prompt=image_zoom_prompt,
             web_search_prompt=web_search_prompt,
             t2v_batch_extra_prompts=DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
+            minimax_h3_r2v_prompt=DEFAULT_MINIMAX_H3_R2V_PROMPT,
         )
         for scene in scenes:
             shutil.rmtree(scene)
@@ -6523,7 +6769,7 @@ class SceneEditorWindow(QMainWindow):
         standalone_i2v = scene_type == MINIMAX_H3_I2V_SCENE_TYPE
         if stage == "r2v":
             template_path = "api_template/minimax_h3_r2v_api.json"
-            output_path = MINIMAX_H3_S2V_PROMPT_FILENAME
+            output_path = MINIMAX_H3_R2V_PROMPT_FILENAME if scene_type == MINIMAX_H3_R2V_SCENE_TYPE else MINIMAX_H3_S2V_PROMPT_FILENAME
             scene_skill_path = "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-S2V.md"
         elif stage == "t2v":
             template_path = "api_template/minimax_h3_t2v_api.json"
@@ -6561,11 +6807,31 @@ class SceneEditorWindow(QMainWindow):
                 f"--- END REFERENCE FILE: {relative_path} ---",
             ])
         if stage == "r2v":
+            if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+                active_images = self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:3]
+                active_audios = self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3]
+                active_video = bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list))
+                active_picture_tokens = ", ".join(f"<Picture {i + 1}>" for i, _ in enumerate(active_images)) or "none"
+                active_audio_tokens = ", ".join(f"<Audio {i + 1}>" for i, _ in enumerate(active_audios)) or "none"
+                active_video_token = "<Video 1>" if active_video else "none"
+                active_reference_rule = (
+                    "ACTIVE R2V MANIFEST OVERRIDE: only these reference tokens exist in this scene: "
+                    f"Picture={active_picture_tokens}; Video={active_video_token}; Audio={active_audio_tokens}. "
+                    "Ignore any Picture/Video/Audio tokens appearing in illustrative examples in the reference files. "
+                    "Do not invent, rename, or renumber reference tokens. Non-reference tokens such as <Subject N>, "
+                    "<Shot N>, <d>, </d>, and speaker IDs remain allowed."
+                )
+            else:
+                active_reference_rule = (
+                    "S2V ACTIVE MANIFEST: only <Picture 1> and <Audio 1> exist. "
+                    "Do not use any other Picture, Video, or Audio token."
+                )
             lines.extend([
                 "ACTIVE MODE OVERRIDE: Ref2VA / MiniMax H3 S2V.",
                 "Use exactly six sections in this order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music.",
-                "Use only <Picture 1> and <Audio 1>; do not introduce Picture 2, Picture 3, Video 1, Audio 2, or Audio 3.",
+                active_reference_rule,
                 "Return the prompt in English and preserve reference tokens exactly.",
+                "This manifest has priority over all examples in the loaded skill/reference documents.",
             ])
         elif stage == "t2v":
             lines.extend([
@@ -6675,6 +6941,29 @@ class SceneEditorWindow(QMainWindow):
                 "Audio duration is determined from the selected speech audio and must be at most 15 seconds.",
             ])
             lines.extend(self._minimax_h3_prompt_reference_lines("r2v", scene_type=scene_type))
+        elif prompt_kind == "minimax_h3_r2v":
+            size_data = self.minimax_h3_r2v_size_input.currentData() or (368, 640)
+            references = {
+                "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:3],
+                "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
+                "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
+            }
+            lines.extend([
+                "Target: MiniMax H3 R2V Ref2VA positive prompt",
+                "Active MiniMax H3 mode: Ref2VA",
+                "STRICT REFERENCE RULE: use only the active Picture, Video, and Audio tokens listed below; never invent, rename, or renumber them.",
+                f"Active image references: {', '.join(f'<Picture {i + 1}>' for i, _ in enumerate(references['images'])) or '(none)'}",
+                f"Active video reference: {'<Video 1>' if references['video'] else '(none)'}",
+                f"Active audio references: {', '.join(f'<Audio {i + 1}>' for i, _ in enumerate(references['audios'])) or '(none)'}",
+                "If a category is marked (none), do not mention that reference category.",
+                "Do not use any unavailable <Picture N>, <Video N>, or <Audio N> token.",
+                "Non-reference semantic tokens such as <Subject N>, <Shot N>, <d>, </d>, and speaker IDs remain allowed.",
+                "Keep every active reference token exactly unchanged across all six Ref2VA sections.",
+                "The prompt must contain the six Ref2VA sections in the required order.",
+                f"Scene duration: {self.duration_input.currentText().strip() or '10'} seconds (maximum 15).",
+                f"MiniMax H3 R2V size: {int(size_data[0])}x{int(size_data[1])}",
+            ])
+            lines.extend(self._minimax_h3_prompt_reference_lines("r2v", scene_type=scene_type))
         return "\n".join(lines)
 
     def _set_prompt_widget_text(
@@ -6720,6 +7009,8 @@ class SceneEditorWindow(QMainWindow):
                 self.s2v_negative_input.setPlainText(text)
         if prompt_kind == "minimax_h3_s2v" and prompt_key == "positive_prompt":
             self.s2v_positive_input.setPlainText(text)
+        if prompt_kind == "minimax_h3_r2v" and prompt_key == "positive_prompt":
+            self.minimax_h3_r2v_positive_input.setPlainText(text)
 
     def _prompt_file_and_key(self, prompt_kind: str, prompt_key: str | None = None):
         if prompt_kind == "z_image":
@@ -6744,6 +7035,8 @@ class SceneEditorWindow(QMainWindow):
             return self.current_scene_dir / "wan22_s2v_prompt.json", str(prompt_key or "").strip(), None
         if prompt_kind == "minimax_h3_s2v":
             return self.current_scene_dir / MINIMAX_H3_S2V_PROMPT_FILENAME, "positive_prompt", None
+        if prompt_kind == "minimax_h3_r2v":
+            return self.current_scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME, "positive_prompt", None
         raise ValueError(f"prompt_kind tidak dikenal: {prompt_kind}")
 
     def _prompt_group_index(self, prompt_kind: str, slot_index: int | None):
@@ -6790,6 +7083,7 @@ class SceneEditorWindow(QMainWindow):
             "minimax_h3_t2v": "MiniMax H3 T2VA",
             "minimax_h3_i2v": "MiniMax H3 I2VA",
             "minimax_h3_s2v": "MiniMax H3 Ref2VA",
+            "minimax_h3_r2v": "MiniMax H3 R2V Ref2VA",
             "wan_s2v": f"WAN22 S2V ({prompt_key or 'prompt'})",
         }.get(prompt_kind, prompt_kind)
 
@@ -6806,7 +7100,7 @@ class SceneEditorWindow(QMainWindow):
             )
         ).strip() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
         self.append_log(f"Provider prompt generation: {prompt_provider} ({prompt_model})")
-        if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v"}:
+        if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"}:
             self.append_log("LLM MiniMax dipanggil dalam dua tahap: generate `en`, lalu terjemahkan field menjadi `id_new`; `id_old` adalah salinan `id_new`.")
         else:
             self.append_log("LLM dipanggil sekali untuk mengembalikan `en` dan `id_new`; `id_old` akan disamakan dengan `id_new`.")
@@ -6866,14 +7160,21 @@ class SceneEditorWindow(QMainWindow):
         if not isinstance(result, dict):
             self.append_log("[gagal] Hasil LLM tidak valid.")
             return
-        if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v"}:
+        if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"}:
             structured = result.get("structured")
-            if prompt_kind == "minimax_h3_s2v":
+            if prompt_kind in {"minimax_h3_s2v", "minimax_h3_r2v"}:
                 entry = structured.get("positive_prompt") if isinstance(structured, dict) else None
                 if isinstance(entry, dict) and isinstance(entry.get("en"), dict):
                     entry["id_old"] = copy.deepcopy(entry.get("id_new", {}))
                     entry["id_new"] = copy.deepcopy(entry.get("id_new", {}))
                 errors = [] if isinstance(entry, dict) and not validate_ref2va_prompt(entry.get("en")) else validate_ref2va_prompt(entry.get("en") if isinstance(entry, dict) else None)
+                if not errors and prompt_kind == "minimax_h3_r2v":
+                    errors.extend(validate_ref2va_reference_tokens(
+                        entry.get("en"),
+                        image_count=len(self._r2v_selected_names(self.minimax_h3_r2v_image_list)),
+                        audio_count=len(self._r2v_selected_names(self.minimax_h3_r2v_audio_list)),
+                        has_video=bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list)),
+                    ))
             else:
                 expected_mode = "I2VA" if prompt_kind != "minimax_h3_t2v" else "T2VA"
                 entry, errors = parse_structured_response(structured, expected_mode=expected_mode)
@@ -7032,6 +7333,15 @@ class SceneEditorWindow(QMainWindow):
         prompt_text = self.s2v_positive_input.toPlainText().strip()
         prompt_kind = "minimax_h3_s2v" if self.scene_type_combo.currentText().strip() == MINIMAX_H3_S2V_SCENE_TYPE else "wan_s2v"
         self._start_prompt_generation(prompt_kind, None, prompt_text, prompt_key=key)
+
+    def generate_r2v_prompt_from_ui(self):
+        prompt_text = self.minimax_h3_r2v_positive_input.toPlainText().strip()
+        self._start_prompt_generation(
+            "minimax_h3_r2v",
+            None,
+            prompt_text,
+            prompt_key="positive_prompt",
+        )
 
     def tail_process_log(self, max_lines=12):
         text = self.log_output.toPlainText().strip()
@@ -7269,7 +7579,7 @@ class SceneEditorWindow(QMainWindow):
             )
         ).strip() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
         self.append_log(f"Provider prompt generation: {prompt_provider} ({prompt_model})")
-        if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone"}:
+        if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"}:
             self.append_log("LLM MiniMax dipanggil dalam dua tahap: generate `en`, lalu terjemahkan field menjadi `id_new`; `id_old` adalah salinan `id_new`.")
         else:
             self.append_log("LLM dipanggil sekali untuk mengembalikan `en` dan `id_new`; `id_old` akan disamakan dengan `id_new`.")

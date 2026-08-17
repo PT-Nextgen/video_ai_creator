@@ -26,6 +26,7 @@ MAIN_NODE = "136"
 PICTURE_1_NODE = "143"
 AUDIO_1_NODE = "153"
 MAX_AUDIO_DURATION = 15.0
+MAX_DURATION = 15
 
 SIZE_OPTIONS = [
     ("368x640", 368, 640),
@@ -62,6 +63,38 @@ DEFAULT_PROMPT = {
     },
     "width": 368,
     "height": 640,
+}
+
+DEFAULT_R2V_PROMPT = {
+    "positive_prompt": {
+        "id_old": {
+            "subject_definitions": "Adegan memiliki subjek utama yang menjadi fokus video.",
+            "summary": "Video menampilkan subjek utama dalam adegan sinematik yang koheren.",
+            "retention_analysis": "Identitas dan kesinambungan subjek utama dipertahankan sepanjang video.",
+            "detailed_description": "[Shot 1] Video dimulai dengan subjek utama dalam komposisi sinematik, lalu bergerak secara alami dengan pencahayaan yang konsisten.",
+            "overall_soundscape": "Suasana suara mengikuti lingkungan dan aksi yang terlihat dalam adegan.",
+            "non_diegetic_music": "N/A",
+        },
+        "id_new": {
+            "subject_definitions": "Adegan memiliki subjek utama yang menjadi fokus video.",
+            "summary": "Video menampilkan subjek utama dalam adegan sinematik yang koheren.",
+            "retention_analysis": "Identitas dan kesinambungan subjek utama dipertahankan sepanjang video.",
+            "detailed_description": "[Shot 1] Video dimulai dengan subjek utama dalam komposisi sinematik, lalu bergerak secara alami dengan pencahayaan yang konsisten.",
+            "overall_soundscape": "Suasana suara mengikuti lingkungan dan aksi yang terlihat dalam adegan.",
+            "non_diegetic_music": "N/A",
+        },
+        "en": {
+            "subject_definitions": "The scene contains a primary subject that remains the focus of the video.",
+            "summary": "The video presents the primary subject in a coherent cinematic scene.",
+            "retention_analysis": "The identity and continuity of the primary subject are preserved throughout the video.",
+            "detailed_description": "[Shot 1] The video begins with the primary subject in a cinematic composition, then develops naturally with consistent lighting.",
+            "overall_soundscape": "The soundscape follows the environment and visible actions in the scene.",
+            "non_diegetic_music": "N/A",
+        },
+    },
+    "width": 368,
+    "height": 640,
+    "references": {"images": [], "video": "", "audios": []},
 }
 
 
@@ -103,6 +136,13 @@ def remove_picture_2(workflow: dict) -> dict:
     """Remove Picture 2 node 144 and ``ref_image_1`` from node 136."""
     _remove_node(workflow, "144")
     _remove_input(workflow, MAIN_NODE, "ref_images.ref_image_1")
+    return workflow
+
+
+def remove_picture_1(workflow: dict) -> dict:
+    """Remove Picture 1 node 143 and ``ref_image_0`` from node 136."""
+    _remove_node(workflow, PICTURE_1_NODE)
+    _remove_input(workflow, MAIN_NODE, "ref_images.ref_image_0")
     return workflow
 
 
@@ -151,8 +191,11 @@ def remove_references(
     remove_audio_1_reference: bool = False,
     remove_audio_2_reference: bool = False,
     remove_audio_3_reference: bool = False,
+    remove_picture_1_reference: bool = False,
 ) -> dict:
     """Remove selected R2V assets from an existing in-memory workflow."""
+    if remove_picture_1_reference:
+        remove_picture_1(workflow)
     if remove_picture_2_reference:
         remove_picture_2(workflow)
     if remove_picture_3_reference:
@@ -241,6 +284,9 @@ def build_workflow(
     duration_override: int | float | None = None,
     image_name: str | None = None,
     audio_name: str | None = None,
+    image_names: list[str] | None = None,
+    audio_names: list[str] | None = None,
+    video_name: str | None = None,
     **remove_options,
 ) -> dict:
     """Return a configured R2V workflow in memory.
@@ -250,6 +296,7 @@ def build_workflow(
     keeping or deleting the wrong reference.
     """
     allowed = {
+        "remove_picture_1_reference",
         "remove_picture_2_reference",
         "remove_picture_3_reference",
         "remove_video_1_reference",
@@ -264,6 +311,16 @@ def build_workflow(
 
     workflow = copy.deepcopy(_load_template())
     _set_prompt(workflow, prompt)
+
+    # New R2V callers provide compact lists. The legacy image_name/audio_name
+    # arguments remain supported for the existing MiniMax H3 S2V scene.
+    if image_names is None:
+        image_names = [image_name] if image_name else []
+    if audio_names is None:
+        audio_names = [audio_name] if audio_name else []
+    image_names = [str(value).strip() for value in image_names[:3] if str(value or "").strip()]
+    audio_names = [str(value).strip() for value in audio_names[:3] if str(value or "").strip()]
+    video_name = str(video_name or "").strip()
 
     source = prompt if isinstance(prompt, Mapping) else {}
     if width is None:
@@ -287,8 +344,22 @@ def build_workflow(
         duration = source.get("duration_seconds", source.get("duration"))
     _set_duration(workflow, 5 if duration is None else duration)
 
-    _set_asset(workflow, PICTURE_1_NODE, "image", image_name)
-    _set_asset(workflow, AUDIO_1_NODE, "audio", audio_name)
+    picture_nodes = (PICTURE_1_NODE, "144", "151")
+    audio_nodes = (AUDIO_1_NODE, "154", "155")
+    for index, node_id in enumerate(picture_nodes):
+        if index < len(image_names):
+            _set_asset(workflow, node_id, "image", image_names[index])
+        else:
+            remove_references(workflow, **{f"remove_picture_{index + 1}_reference": True})
+    if video_name:
+        _set_asset(workflow, "152", "video", video_name)
+    else:
+        remove_video_1(workflow)
+    for index, node_id in enumerate(audio_nodes):
+        if index < len(audio_names):
+            _set_asset(workflow, node_id, "audio", audio_names[index])
+        else:
+            remove_references(workflow, **{f"remove_audio_{index + 1}_reference": True})
 
     return remove_references(workflow, **remove_options)
 
@@ -301,6 +372,9 @@ def build_minimax_h3_r2v_workflow(
     duration_override: int | float | None = None,
     image_name: str | None = None,
     audio_name: str | None = None,
+    image_names: list[str] | None = None,
+    audio_names: list[str] | None = None,
+    video_name: str | None = None,
     **remove_options,
 ) -> dict:
     """Named adapter entry point matching the other MiniMax H3 modules."""
@@ -312,6 +386,9 @@ def build_minimax_h3_r2v_workflow(
         duration_override=duration_override,
         image_name=image_name,
         audio_name=audio_name,
+        image_names=image_names,
+        audio_names=audio_names,
+        video_name=video_name,
         **remove_options,
     )
 

@@ -11,7 +11,12 @@ from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
 from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
 from prompt_localization import get_prompt_translator, prepare_prompt_payload_for_save
-from minimax_h3_prompt import REF2VA_SECTION_KEYS, validate_ref2va_prompt, validate_structured_prompt
+from minimax_h3_prompt import (
+    REF2VA_SECTION_KEYS,
+    validate_ref2va_prompt,
+    validate_ref2va_reference_tokens,
+    validate_structured_prompt,
+)
 
 LOCAL_PROMPT_PROVIDER = "llama.cpp"
 LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
@@ -339,11 +344,12 @@ def _normalize_schema_template(filename: str, data: dict | None) -> dict | None:
     return normalized
 
 
-MINIMAX_AGENTIC_SCENE_TYPES = {"minimax-h3_i2v", "minimax-h3_t2v_i2v", "minimax-h3_s2v"}
+MINIMAX_AGENTIC_SCENE_TYPES = {"minimax-h3_i2v", "minimax-h3_t2v_i2v", "minimax-h3_s2v", "minimax-h3_r2v"}
 MINIMAX_AGENTIC_PROMPT_FILES = {
     "minimax_h3_t2v_prompt.json",
     "minimax_h3_i2v_prompt.json",
     "minimax_h3_s2v_prompt.json",
+    "minimax_h3_r2v_prompt.json",
 }
 
 
@@ -604,7 +610,7 @@ def _apply_minimax_structured_schema(filename: str, file_schema: dict):
         en_parent = file_schema["properties"]["positive_prompt"]["properties"]
     except (KeyError, TypeError):
         return
-    if filename == "minimax_h3_s2v_prompt.json":
+    if filename in {"minimax_h3_s2v_prompt.json", "minimax_h3_r2v_prompt.json"}:
         properties = {key: {"type": "string"} for key in REF2VA_SECTION_KEYS}
         en_parent["en"] = {
             "type": "object",
@@ -711,6 +717,15 @@ SCENE_TYPE_FILES = {
             "MINIMAX-H3/references/ref-en.txt",
         ],
     ),
+    "minimax-h3_r2v": (
+        ["minimax_h3_r2v_prompt.json"],
+        [
+            "SCENE-GENERAL.md",
+            "SCENE-MINIMAX-H3-S2V.md",
+            "MINIMAX-H3/SKILL.md",
+            "MINIMAX-H3/references/ref-en.txt",
+        ],
+    ),
     "wan22_t2v_batch": (
         ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
         [
@@ -767,6 +782,7 @@ SCENE_TYPE_OUTPUTS = {
     "minimax-h3_t2v_i2v": ["minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"],
     "minimax-h3_i2v": ["z_image_prompt.json", "minimax_h3_i2v_prompt.json"],
     "minimax-h3_s2v": ["z_image_prompt.json", "minimax_h3_s2v_prompt.json"],
+    "minimax-h3_r2v": ["minimax_h3_r2v_prompt.json"],
     "wan22_t2v_batch": ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
     "wan22_s2v": ["wan22_s2v_prompt.json", "z_image_prompt.json"],
     "i2v": ["z_image_prompt.json"],
@@ -781,6 +797,7 @@ STRICT_NON_EMPTY_AGENTIC_PROMPT_FILES = {
     "minimax_h3_t2v_prompt.json",
     "minimax_h3_i2v_prompt.json",
     "minimax_h3_s2v_prompt.json",
+    "minimax_h3_r2v_prompt.json",
     "z_image_prompt.json",
     "z_image_extra_prompts.json",
     "wan22_t2v_batch_extra_prompts.json",
@@ -997,6 +1014,40 @@ def build_agentic_prompt(
             ],
             "CATATAN: scene ini memakai gambar terbaru di root scene sebagai Picture 1 untuk workflow MiniMax H3 I2VA; durasi hanya 1, 5, 10, atau 15 detik.",
         )
+    elif scene_type == "minimax-h3_r2v":
+        r2v_references = {}
+        try:
+            r2v_payload = _read_json_file(scene_dir / "minimax_h3_r2v_prompt.json")
+            r2v_references = r2v_payload.get("references", {}) if isinstance(r2v_payload, dict) else {}
+        except Exception:
+            r2v_references = {}
+        r2v_references = r2v_references if isinstance(r2v_references, dict) else {}
+        active_images = [str(value).strip() for value in r2v_references.get("images", []) if str(value).strip()][:3]
+        active_audios = [str(value).strip() for value in r2v_references.get("audios", []) if str(value).strip()][:3]
+        active_video = str(r2v_references.get("video", "") or "").strip()
+        append_md_group(
+            "3. Scene minimax-h3_r2v",
+            [
+                "SCENE-GENERAL.md",
+                "SCENE-MINIMAX-H3-S2V.md",
+                "MINIMAX-H3/SKILL.md",
+                "MINIMAX-H3/references/ref-en.txt",
+            ],
+            "CATATAN: scene R2V memakai kombinasi dinamis maksimal 3 Picture, 1 Video, dan 3 Audio. "
+            "Gunakan hanya token reference yang tercantum pada konfigurasi input, dengan penomoran tiap kategori berurutan. "
+            "Minimal satu reference wajib dipakai. Durasi scene hanya 1, 5, 10, atau 15 detik. "
+            "Jangan membuat atau mengubah image awal.",
+        )
+        lines.extend([
+            "ACTIVE R2V REFERENCE MANIFEST:",
+            f"Picture references: {', '.join(f'<Picture {i + 1}>' for i, _ in enumerate(active_images)) or 'none'}",
+            f"Video references: {'<Video 1>' if active_video else 'none'}",
+            f"Audio references: {', '.join(f'<Audio {i + 1}>' for i, _ in enumerate(active_audios)) or 'none'}",
+            "STRICT RULE: use only the active Picture, Video, and Audio tokens listed in this manifest.",
+            "Do not invent, rename, or renumber a Picture, Video, or Audio token. If a category is none, do not mention it.",
+            "Non-reference semantic tokens such as <Subject N>, <Shot N>, <d>, </d>, and speaker IDs are allowed.",
+            "Keep every active reference token exactly unchanged across all six Ref2VA sections.",
+        ])
     elif scene_type == "wan22_t2v_batch":
         append_md_group(
             "2. Scene wan22_t2v_batch",
@@ -1109,6 +1160,21 @@ def build_agentic_prompt(
         lines.append("(Belum ada variasi sebelumnya untuk scene ini)")
     lines.append("")
 
+    # Repeat the active manifest after all reference documents and previous
+    # variations so illustrative examples can never override the live scene
+    # configuration in the model's final instruction context.
+    if scene_type == "minimax-h3_r2v":
+        lines.extend([
+            "FINAL ACTIVE R2V MANIFEST — HIGHEST PRIORITY:",
+            f"Picture tokens allowed: {', '.join(f'<Picture {i + 1}>' for i, _ in enumerate(active_images)) or 'none'}",
+            f"Video tokens allowed: {'<Video 1>' if active_video else 'none'}",
+            f"Audio tokens allowed: {', '.join(f'<Audio {i + 1}>' for i, _ in enumerate(active_audios)) or 'none'}",
+            "Any <Picture N>, <Video N>, or <Audio N> not listed above is forbidden, even if it appears in a reference document or an older variation.",
+            "<Subject N>, <Shot N>, <d>, </d>, and speaker IDs are semantic tokens and remain allowed.",
+            "Apply this final manifest before producing the JSON response.",
+            "",
+        ])
+
     # ---- Part 8: Special Command ----
     special = agentic_config.get("special_command", "")
     lines.append("=" * 60)
@@ -1179,11 +1245,12 @@ def build_agentic_prompt(
                 "- `shots[].shot_id` WAJIB berupa string `Shot 1`, `Shot 2`, dan seterusnya; jangan memakai angka JSON\n"
                 "- Untuk I2VA, `reference` WAJIB persis: picture=`Picture 1`, source=`[Shot 1]`, time=0.0, instruction=`fully referenced`\n"
             )
-        elif scene_type == "minimax-h3_s2v":
+        elif scene_type in {"minimax-h3_s2v", "minimax-h3_r2v"}:
             lines.append(
-                "- Ref2VA S2V WAJIB berisi tepat enam string: subject_definitions, summary, retention_analysis, "
+                "- Ref2VA WAJIB berisi tepat enam string: subject_definitions, summary, retention_analysis, "
                 "detailed_description, overall_soundscape, dan non_diegetic_music\n"
-                "- Gunakan hanya referensi `<Picture 1>` dan `<Audio 1>` sesuai panduan S2V\n"
+                "- Gunakan hanya token reference yang tersedia pada konfigurasi scene; nomor tiap kategori harus berurutan mulai dari 1\n"
+                "- Batasi aturan ini hanya untuk token <Picture N>, <Video N>, dan <Audio N>; token semantik seperti <Subject N>, <Shot N>, <d>, </d>, dan speaker IDs tetap boleh digunakan\n"
             )
     else:
         lines.append(
@@ -1439,7 +1506,7 @@ def _validate_minimax_h3_i2v_prompt_format(
     errors: list[str],
 ):
     """Require the exact first-frame alignment and core I2VA sections."""
-    if filename == "minimax_h3_s2v_prompt.json":
+    if filename in {"minimax_h3_s2v_prompt.json", "minimax_h3_r2v_prompt.json"}:
         positive_prompt = value.get("positive_prompt") if isinstance(value, dict) else None
         en = positive_prompt.get("en") if isinstance(positive_prompt, dict) else None
         if isinstance(en, dict):
@@ -1515,10 +1582,20 @@ def _normalize_minimax_agentic_output(
     if not isinstance(en, dict):
         return None, [f"{filename}.positive_prompt.en harus berupa object JSON."]
 
-    if filename == "minimax_h3_s2v_prompt.json":
+    if filename in {"minimax_h3_s2v_prompt.json", "minimax_h3_r2v_prompt.json"}:
         format_errors = validate_ref2va_prompt(en)
         if format_errors:
             return None, [f"{filename}: {error}" for error in format_errors]
+        if filename == "minimax_h3_r2v_prompt.json":
+            references = input_payload.get("references", {}) if isinstance(input_payload, dict) else {}
+            token_errors = validate_ref2va_reference_tokens(
+                en,
+                image_count=len(references.get("images", [])) if isinstance(references, dict) else 0,
+                audio_count=len(references.get("audios", [])) if isinstance(references, dict) else 0,
+                has_video=bool(references.get("video")) if isinstance(references, dict) else False,
+            )
+            if token_errors:
+                return None, [f"{filename}: {error}" for error in token_errors]
         try:
             translator = get_prompt_translator(project_dir=Path(scene_dir).parent)
             id_new = translator.translate_ref2va_prompt_to_indonesian(en)
@@ -1667,7 +1744,7 @@ def validate_llm_variations(
             positive_prompt = output_payload.get("positive_prompt")
             en = positive_prompt.get("en") if isinstance(positive_prompt, dict) else None
             if isinstance(en, dict):
-                if filename == "minimax_h3_s2v_prompt.json":
+                if filename in {"minimax_h3_s2v_prompt.json", "minimax_h3_r2v_prompt.json"}:
                     errors.extend(f"{filename}: {error}" for error in validate_ref2va_prompt(en))
                 else:
                     mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"
