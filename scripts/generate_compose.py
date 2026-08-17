@@ -1200,6 +1200,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
         try:
             scene_meta_path = os.path.join(scene_dir, 'scene_meta.json')
             scene_type = ''
+            scene_meta = {}
             try:
                 if os.path.exists(scene_meta_path):
                     scene_meta = _load_scene_meta_runtime(scene_dir)
@@ -1216,10 +1217,31 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 'minimax-h3_i2v',
                 'minimax-h3_t2v_i2v',
             }
+            audio_composed = bool(scene_meta.get('audio_composed', False))
+
+            # WAN I2V/T2V and MiniMax H3 I2V/T2V-I2V already contain the
+            # complete scene mix produced during scene execution.  Export the
+            # existing video unchanged; calling compose_scene here would add
+            # the same voice and sound-effect files for a second time.
+            if audio_composed and scene_type in {
+                'wan22',
+                'wan22_i2v',
+                'wan22_t2v_i2v',
+                'wan22_t2v',
+                'minimax-h3_i2v',
+                'minimax-h3_t2v_i2v',
+            }:
+                export_scene_video_to_combined(scene_dir)
+                continue
             selected_video_files = None
             embedded_audio_source = None
             include_video_audio = is_s2v
             include_scene_speech = not is_s2v
+            if scene_type in {'minimax-h3_s2v', 'minimax-h3_r2v'}:
+                # A MiniMax scene represents one final generation. Older
+                # downloaded outputs in the root must not be concatenated.
+                latest_video = _get_latest_scene_video(scene_dir)
+                selected_video_files = [latest_video] if latest_video else []
             if is_minimax_h3_av:
                 latest_video = _get_latest_scene_video(scene_dir)
                 selected_video_files = [latest_video] if latest_video else []

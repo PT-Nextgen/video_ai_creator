@@ -69,8 +69,8 @@ Catatan format prompt:
 - runtime akan mencoba `v1/chat/completions` untuk text generation dan `v1/models` untuk daftar model
 - jika endpoint modern tidak tersedia, runtime akan fallback ke endpoint legacy yang kompatibel
 - tombol `Buat Prompt` tidak melakukan `Save Scene` terlebih dahulu; input dan konteks diambil langsung dari nilai yang sedang tampil di UI
-- khusus MiniMax H3, jika `id_new == id_old`, `Save` tidak menerjemahkan atau mengubah prompt
-- khusus MiniMax H3, jika JSON `id_new` diedit sehingga berbeda dari `id_old`, `Save` menerjemahkan field teks `id_new` satu per satu untuk membentuk ulang `en`, lalu menyalin `id_new` ke `id_old`
+- khusus MiniMax H3, `Save` hanya memvalidasi JSON `id_new` dan menyamakan `id_old` dengan `id_new`; `Save` tidak memanggil LLM untuk menerjemahkan prompt
+- saat scene MiniMax dijalankan, runtime menerjemahkan `id_new` ke `en` hanya jika `id_old != id_new` atau `en` kosong, lalu menyimpan hasil sinkronisasi tersebut
 - jika JSON MiniMax di UI tidak valid, Save menampilkan error dan tidak merusak file prompt
 - `lora_trigger_words` disimpan sebagai text biasa dan tidak diterjemahkan
 - `lora_trigger_words` hanya disisipkan ke awal prompt positif versi Inggris saat runtime, bukan ditulis permanen ke field prompt
@@ -324,6 +324,35 @@ Catatan trimming video:
 - `wan22_s2v` dipotong mengikuti durasi speech dengan tambahan maksimal empat frame
 - `minimax-h3_s2v` tidak dipotong otomatis setelah output ComfyUI diunduh
 - scene type lain tidak dipotong otomatis mengikuti speech
+
+## Audio Scene dan Final Compose
+
+Scene berikut menghasilkan video scene yang sudah memiliki audio setelah eksekusi scene selesai:
+
+- `wan22_i2v`
+- `wan22_t2v_i2v` (jalur WAN T2V/I2V)
+- `minimax-h3_i2v`
+- `minimax-h3_t2v_i2v`
+
+Mix audio scene mengikuti pola WAN:
+
+```text
+video ComfyUI
++ voice scene
++ sound effect dari sound_prompt
+= video scene ber-audio
+```
+
+Untuk `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`:
+
+- `remove_sound=true`: audio bawaan ComfyUI dihapus terlebih dahulu, kemudian voice dan sound effect di-mix
+- `remove_sound=false`: audio bawaan ComfyUI dipertahankan dan di-mix bersama voice serta sound effect
+
+Setelah mix berhasil, `scene_meta.json` diberi marker `audio_composed=true`. Saat `generate_compose.py` membuat final compose, video bertanda tersebut hanya diekspor dengan audio yang sudah ada; voice dan sound effect tidak ditambahkan lagi. Hal ini mencegah double mix.
+
+Untuk `minimax-h3_s2v` dan `minimax-h3_r2v`, final compose hanya memilih satu video terbaru di root scene. Video lama yang masih berada di root tidak ikut digabung.
+
+Pada Execute Agentic, folder variasi disalin sementara ke root scene dan diproses melalui jalur yang sama. Hasil mix audio dan marker `audio_composed` kemudian disalin kembali ke folder variasi.
 
 ## Server Config
 

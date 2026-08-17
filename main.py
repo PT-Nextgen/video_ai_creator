@@ -386,6 +386,36 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             preserve_comfy_audio=preserve_comfy_audio,
         ):
             return False
+        # The four audio/video scene types below are fully mixed here.  Keep a
+        # durable marker so the later project-level compose step can preserve
+        # this audio instead of mixing the same scene files a second time.
+        if compose_audio and scene_type in {
+            'wan22',
+            'wan22_i2v',
+            'wan22_t2v_i2v',
+            'wan22_t2v',
+            'minimax-h3_i2v',
+            'minimax-h3_t2v_i2v',
+        }:
+            try:
+                meta_path = os.path.join(scene_dir, 'scene_meta.json')
+                with open(meta_path, 'r', encoding='utf-8') as meta_file:
+                    current_meta = json.load(meta_file)
+                current_meta['audio_composed'] = True
+                current_meta['audio_composed_video'] = os.path.basename(video_path)
+                current_meta['audio_composed_components'] = [
+                    'comfyui_audio_if_preserved',
+                    'scene_voice',
+                    'scene_sound_effect',
+                ]
+                temp_meta_path = f'{meta_path}.__audio_composed_tmp__'
+                with open(temp_meta_path, 'w', encoding='utf-8') as meta_file:
+                    json.dump(current_meta, meta_file, ensure_ascii=False, indent=2)
+                    meta_file.write('\n')
+                os.replace(temp_meta_path, meta_path)
+            except Exception as e:
+                write_log(f"Failed to mark composed scene audio for {scene_dir}: {e}")
+                return False
         if not _apply_caption_if_enabled(video_path):
             return False
         if success_message:
@@ -830,8 +860,8 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             return _finalize_scene_success(
                 t2v_video_out_path,
                 is_s2v=False,
-                preserve_comfy_audio=True,
-                compose_audio=False,
+                preserve_comfy_audio=not bool(t2v_prompt.get("remove_sound", False)),
+                compose_audio=True,
                 success_message=(
                     f"Completed minimax-h3_t2v_i2v T2V-only processing for {scene_dir}"
                 ),
@@ -934,11 +964,21 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         except Exception as e:
             write_log(f"Failed to invalidate old MiniMax H3 T2V-I2V audio source for {scene_dir}: {e}")
             return False
+        final_remove_sound = bool(
+            t2v_prompt.get("remove_sound", False)
+            or i2v_prompt.get("remove_sound", False)
+        )
+        if final_remove_sound:
+            try:
+                _remove_video_audio(i2v_video_out_path)
+            except Exception as e:
+                write_log(f"Failed to remove MiniMax H3 T2V-I2V sound after concat for {scene_dir}: {e}")
+                return False
         return _finalize_scene_success(
             i2v_video_out_path,
             is_s2v=False,
-            preserve_comfy_audio=True,
-            compose_audio=False,
+            preserve_comfy_audio=not final_remove_sound,
+            compose_audio=True,
             success_message=f"Completed minimax-h3_t2v_i2v processing for {scene_dir}",
         )
 
@@ -1043,8 +1083,8 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         return _finalize_scene_success(
             video_out_path,
             is_s2v=False,
-            preserve_comfy_audio=True,
-            compose_audio=False,
+            preserve_comfy_audio=not bool(i2v_prompt.get("remove_sound", False)),
+            compose_audio=True,
             success_message=f"Completed minimax-h3_i2v processing for {scene_dir}",
         )
 
