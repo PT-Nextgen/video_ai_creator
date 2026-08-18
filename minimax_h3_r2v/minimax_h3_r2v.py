@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import random
 import subprocess
 from collections.abc import Mapping
 
@@ -251,6 +252,17 @@ def _set_asset(workflow: dict, node_id: str, input_name: str, value) -> bool:
     return True
 
 
+def _inject_random_noise_seed(workflow: dict):
+    seed = random.randint(10**15, 10**16 - 1)
+    for node in workflow.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if isinstance(inputs, dict) and "noise_seed" in inputs:
+            inputs["noise_seed"] = seed
+    return workflow
+
+
 def _apply_turbo_distillation(workflow: dict, enabled: bool) -> bool:
     """Insert the optional 4-step Ref2V distillation LoRA before the sampler."""
     if not enabled:
@@ -399,7 +411,7 @@ def build_workflow(
 
     workflow = remove_references(workflow, **remove_options)
     _apply_turbo_distillation(workflow, bool(turbo_enabled))
-    return workflow
+    return _inject_random_noise_seed(workflow)
 
 
 def build_minimax_h3_r2v_workflow(
