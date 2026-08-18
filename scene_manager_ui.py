@@ -2725,7 +2725,9 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_t2v_lora_strength_input = QLineEdit()
         self.minimax_h3_i2v_lora_strength_input = QLineEdit()
         self.minimax_h3_t2v_remove_sound_input = QCheckBox("Hapus Sound")
+        self.minimax_h3_t2v_turbo_input = QCheckBox("Turbo")
         self.minimax_h3_i2v_remove_sound_input = QCheckBox("Hapus Sound")
+        self.minimax_h3_i2v_turbo_input = QCheckBox("Turbo")
         self.minimax_h3_t2v_positive_input = QTextEdit()
         self.minimax_h3_i2v_positive_input = QTextEdit()
         self.minimax_h3_t2v_generate_prompt_button = QToolButton()
@@ -2750,6 +2752,12 @@ class SceneEditorWindow(QMainWindow):
         )
         self.s2v_positive_input = QTextEdit()
         self.s2v_negative_input = QTextEdit()
+        self.minimax_h3_s2v_turbo_input = QCheckBox("Turbo")
+        self.copy_minimax_h3_s2v_variations_button = QToolButton()
+        self.copy_minimax_h3_s2v_variations_button.setText("Edit Variasi")
+        self.copy_minimax_h3_s2v_variations_button.clicked.connect(
+            self.copy_minimax_h3_s2v_config_to_variations
+        )
         self.s2v_generate_positive_button = QToolButton()
         self.s2v_generate_positive_button.setText("Buat Prompt")
         self.s2v_generate_positive_button.clicked.connect(
@@ -2762,6 +2770,12 @@ class SceneEditorWindow(QMainWindow):
         for label, width, height in MINIMAX_H3_S2V_SIZE_OPTIONS:
             self.minimax_h3_r2v_size_input.addItem(label, (width, height))
         self.minimax_h3_r2v_positive_input = QTextEdit()
+        self.minimax_h3_r2v_turbo_input = QCheckBox("Turbo")
+        self.copy_minimax_h3_r2v_variations_button = QToolButton()
+        self.copy_minimax_h3_r2v_variations_button.setText("Edit Variasi")
+        self.copy_minimax_h3_r2v_variations_button.clicked.connect(
+            self.copy_minimax_h3_r2v_config_to_variations
+        )
         self.minimax_h3_r2v_generate_prompt_button = QToolButton()
         self.minimax_h3_r2v_generate_prompt_button.setText("Buat Prompt")
         self.minimax_h3_r2v_generate_prompt_button.clicked.connect(
@@ -2966,8 +2980,12 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_size_input.currentTextChanged,
             self.minimax_h3_r2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
+            self.minimax_h3_t2v_turbo_input.checkStateChanged,
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
+            self.minimax_h3_i2v_turbo_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
+            self.minimax_h3_s2v_turbo_input.checkStateChanged,
+            self.minimax_h3_r2v_turbo_input.checkStateChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.image_pan_size_input.currentTextChanged,
             self.image_pan_direction_input.currentIndexChanged,
@@ -3202,7 +3220,8 @@ class SceneEditorWindow(QMainWindow):
         minimax_t2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_input, 1, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 2, 1)
-        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 2, 2, 1, 2, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_turbo_input, 2, 2)
+        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 2, 3, Qt.AlignLeft)
         minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 3, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 3, 1, 1, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
@@ -3222,7 +3241,8 @@ class SceneEditorWindow(QMainWindow):
         minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 1, 3)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 2, 1)
-        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 2, 2, 1, 2, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_turbo_input, 2, 2)
+        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 2, 3, Qt.AlignLeft)
         minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 3, 0)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 3, 1, 1, 3)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
@@ -3231,6 +3251,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_tab = QWidget()
         r2v_layout = QFormLayout(self.minimax_h3_r2v_tab)
         r2v_layout.addRow("Ukuran", self.minimax_h3_r2v_size_input)
+        r2v_layout.addRow("Turbo", self.minimax_h3_r2v_turbo_input)
+        r2v_layout.addRow("", self.copy_minimax_h3_r2v_variations_button)
         r2v_layout.addRow("Gambar (maks. 3)", self.minimax_h3_r2v_image_list)
         r2v_layout.addRow("Video (maks. 1)", self.minimax_h3_r2v_video_list)
         r2v_layout.addRow("Audio (maks. 3)", self.minimax_h3_r2v_audio_list)
@@ -3253,6 +3275,8 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_tab = QWidget()
         s2v_layout = QFormLayout(self.s2v_tab)
         s2v_layout.addRow("Ukuran", self.s2v_size_input)
+        s2v_layout.addRow("Turbo", self.minimax_h3_s2v_turbo_input)
+        s2v_layout.addRow("", self.copy_minimax_h3_s2v_variations_button)
         self.s2v_cfg_label = QLabel("CFG")
         s2v_layout.addRow(self.s2v_cfg_label, self.s2v_cfg_input)
         s2v_layout.addRow("Prompt Positif", self.s2v_positive_input)
@@ -3496,6 +3520,8 @@ class SceneEditorWindow(QMainWindow):
             self.s2v_negative_label.setVisible(is_wan22_s2v)
         self.s2v_negative_input.setVisible(is_wan22_s2v)
         self.s2v_cfg_input.setVisible(is_wan22_s2v)
+        self.minimax_h3_s2v_turbo_input.setVisible(is_minimax_h3_s2v)
+        self.copy_minimax_h3_s2v_variations_button.setVisible(is_minimax_h3_s2v)
         if self.s2v_cfg_label is not None:
             self.s2v_cfg_label.setVisible(is_wan22_s2v)
         self.s2v_tab.setWindowTitle("MINIMAX-H3_S2V" if is_minimax_h3_s2v else "WAN22 S2V")
@@ -3777,6 +3803,8 @@ class SceneEditorWindow(QMainWindow):
             getattr(self, "copy_wan_i2v_variations_button", None),
             getattr(self, "copy_minimax_h3_t2v_variations_button", None),
             getattr(self, "copy_minimax_h3_i2v_variations_button", None),
+            getattr(self, "copy_minimax_h3_s2v_variations_button", None),
+            getattr(self, "copy_minimax_h3_r2v_variations_button", None),
         ):
             if button is not None:
                 button.setEnabled(enabled)
@@ -3921,7 +3949,7 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_t2v_prompt.json",
             source_data=minimax_t2v_prompt,
-            keys=["lora_name", "lora_strength", "remove_sound"],
+            keys=["lora_name", "lora_strength", "remove_sound", "turbo"],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
 
@@ -3933,8 +3961,32 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_i2v_prompt.json",
             source_data=minimax_i2v_prompt,
-            keys=["lora_name", "lora_strength", "remove_sound"],
+            keys=["lora_name", "lora_strength", "remove_sound", "turbo"],
             action_title="Edit Variasi MiniMax H3 I2V",
+        )
+
+    def copy_minimax_h3_s2v_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        _meta, _z_prompt, _wan_t2v_prompt, _wan_prompt, s2v_prompt, *_rest = self.gather_scene_data()
+        self._copy_selected_keys_to_variations(
+            filename=MINIMAX_H3_S2V_PROMPT_FILENAME,
+            source_data=s2v_prompt,
+            keys=["turbo"],
+            action_title="Edit Variasi MiniMax H3 S2V",
+        )
+
+    def copy_minimax_h3_r2v_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        r2v_prompt = self.gather_minimax_h3_r2v_prompt()
+        self._copy_selected_keys_to_variations(
+            filename=MINIMAX_H3_R2V_PROMPT_FILENAME,
+            source_data=r2v_prompt,
+            keys=["turbo"],
+            action_title="Edit Variasi MiniMax H3 R2V",
         )
 
     def copy_selected_variation_to_root(self):
@@ -5295,8 +5347,14 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_t2v_remove_sound_input.setChecked(
                 bool(minimax_h3_t2v_prompt.get("remove_sound", False))
             )
+            self.minimax_h3_t2v_turbo_input.setChecked(
+                bool(minimax_h3_t2v_prompt.get("turbo", False))
+            )
             self.minimax_h3_i2v_remove_sound_input.setChecked(
                 bool(minimax_h3_i2v_prompt.get("remove_sound", False))
+            )
+            self.minimax_h3_i2v_turbo_input.setChecked(
+                bool(minimax_h3_i2v_prompt.get("turbo", False))
             )
             minimax_t2v_entry = normalize_minimax_prompt_payload(minimax_h3_t2v_prompt, "T2VA").get(
                 "positive_prompt", ""
@@ -5324,6 +5382,7 @@ class SceneEditorWindow(QMainWindow):
                     break
             self.s2v_size_input.setCurrentIndex(max(index, 0))
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
+            self.minimax_h3_s2v_turbo_input.setChecked(bool(s2v_prompt.get("turbo", False)))
             self.s2v_positive_input.setPlainText(
                 json.dumps(
                     s2v_prompt.get("positive_prompt", {}).get("id_new", {})
@@ -5341,6 +5400,7 @@ class SceneEditorWindow(QMainWindow):
             r2v_height = int(minimax_h3_r2v_prompt.get("height", DEFAULT_MINIMAX_H3_R2V_PROMPT["height"]))
             r2v_index = self.minimax_h3_r2v_size_input.findData((r2v_width, r2v_height))
             self.minimax_h3_r2v_size_input.setCurrentIndex(max(r2v_index, 0))
+            self.minimax_h3_r2v_turbo_input.setChecked(bool(minimax_h3_r2v_prompt.get("turbo", False)))
             r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
             r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
             self.minimax_h3_r2v_positive_input.setPlainText(
@@ -5483,6 +5543,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_name": t2v_lora_name,
             "lora_strength": t2v_lora_strength,
             "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
+            "turbo": bool(self.minimax_h3_t2v_turbo_input.isChecked()),
         }
         i2v_prompt = {
             "width": int(i2v_size[0]),
@@ -5495,6 +5556,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_name": i2v_lora_name,
             "lora_strength": i2v_lora_strength,
             "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
+            "turbo": bool(self.minimax_h3_i2v_turbo_input.isChecked()),
         }
         return t2v_prompt, i2v_prompt
 
@@ -5693,6 +5755,7 @@ class SceneEditorWindow(QMainWindow):
             "height": int((self.s2v_size_input.currentData() or (480, 848))[1]),
             "cfg": float(self.s2v_cfg_input.value()),
             "json_api": "auto_by_speech_duration",
+            "turbo": bool(self.minimax_h3_s2v_turbo_input.isChecked()) if current_scene_type == MINIMAX_H3_S2V_SCENE_TYPE else False,
         }
         if current_scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
             raw_text = self.s2v_positive_input.toPlainText().strip()
@@ -5712,6 +5775,7 @@ class SceneEditorWindow(QMainWindow):
                 },
                 "width": s2v_prompt["width"],
                 "height": s2v_prompt["height"],
+                "turbo": bool(self.minimax_h3_s2v_turbo_input.isChecked()),
             }
         web_prompt = {
             "url": self.web_url_input.text().strip(),
@@ -6378,6 +6442,7 @@ class SceneEditorWindow(QMainWindow):
             "width": int(size[0]),
             "height": int(size[1]),
             "references": references,
+            "turbo": bool(self.minimax_h3_r2v_turbo_input.isChecked()),
         }
 
     def save_current_scene(self, silent=False, reload_list=True):

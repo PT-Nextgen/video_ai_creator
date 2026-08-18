@@ -1355,6 +1355,15 @@ Node workflow utama:
   - gambar awal: node `114`
   - LoRA: node `136`
 
+Kontrol Turbo per stage:
+
+- checkbox `Turbo` tersedia pada tab `MINIMAX-H3_T2V` dan `MINIMAX-H3_I2V`;
+- field konfigurasi masing-masing disimpan sebagai `turbo` pada file prompt stage dan default-nya `false`;
+- Turbo T2V menambahkan LoRA `MINIMAX-H3/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` dengan `strength_model=1`, di antara node `127` dan `135`, lalu mengubah node `124.steps` menjadi `8`;
+- Turbo I2V menambahkan LoRA yang sama dengan `strength_model=1`, di antara node `129` dan `136`, lalu mengubah node `126.steps` menjadi `8`;
+- pada `minimax-h3_t2v_i2v`, kedua checkbox tersebut independen dan masing-masing hanya memengaruhi stage-nya;
+- tombol `Edit Variasi` menyalin setting Turbo ke semua variasi stage terkait.
+
 Prompt MiniMax H3 mengikuti:
 
 - `api_production/AGENT-SKILLS/MINIMAX-H3/SKILL.md`
@@ -1376,6 +1385,8 @@ Scene type: `minimax-h3_i2v`
 - LoRA dibaca dari `lora_name`/`lora_strength` file I2V dan folder `MINIMAX-H3`
 - ukuran project diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`
 - tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
+- tab `MINIMAX-H3_I2V` memiliki checkbox `Turbo`; saat aktif, workflow menambahkan LoRA distilasi 8-step sebelum LoRA utama dan memakai `steps=8`;
+- tombol `Edit Variasi` menyalin setting Turbo ke semua variasi I2V.
 
 ## MiniMax H3 R2V Workflow
 
@@ -1387,6 +1398,20 @@ Template workflow:
 - resolusi dibaca dari node `115` (`ResolutionSelector`)
 - durasi dibaca dari node `132` (`PrimitiveFloat`)
 - output video disimpan melalui node `92`
+
+### Turbo Ref2V
+
+Scene `minimax-h3_s2v` dan `minimax-h3_r2v` memiliki checkbox `Turbo`. Nilainya disimpan sebagai field boolean `turbo` pada file prompt scene dan default-nya `false`. Saat aktif, workflow diedit secara in-memory sebelum dikirim ke ComfyUI:
+
+- node `127` (`UNETLoader`) tetap terhubung langsung ke `124.model` (`BasicScheduler`);
+- node `156` (`LoraLoaderModelOnly`) ditambahkan dengan LoRA `MINIMAX-H3/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`;
+- node `156.model` menerima `127:0`;
+- output `156:0` hanya terhubung ke `126.model` (`BasicGuider`);
+- `strength_model` Turbo adalah `1.0`;
+- `124.steps` berubah menjadi `4`;
+- template API asli tidak ditulis ulang.
+
+Saat Turbo tidak aktif, koneksi tetap `127:0` ke `124.model` dan `126.model`, dengan `steps` default `20`. Tombol `Edit Variasi` menyalin field `turbo` ke seluruh folder variasi.
 
 Workflow ini memakai mode full-reference `Ref2VA` dari skill `MINIMAX-H3`. Formatnya berbeda dari `T2VA`/`I2VA`: prompt harus mempunyai enam section berikut secara berurutan:
 
@@ -1505,6 +1530,9 @@ Durasi:
 - audio dengan durasi lebih dari `15` detik membuat scene tidak dapat dijalankan;
 - durasi audio dimasukkan langsung ke node `132` (`PrimitiveFloat`), yang menjadi sumber panjang frame node `131`;
 - output video MiniMax dipertahankan utuh setelah download dan tidak dipotong mengikuti durasi audio; frame padding hasil perhitungan node `131` tetap dipakai.
+- checkbox `Turbo` tersedia pada tab `MINIMAX-H3_S2V`;
+- saat aktif, workflow memakai Turbo Ref2V dengan `steps=4` dan strength `1.0`;
+- tombol `Edit Variasi` menyalin setting Turbo ke semua variasi S2V.
 
 Ukuran mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan scene MiniMax H3 lainnya. Prompt memakai mode `Ref2VA` dengan enam section skill MINIMAX: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`.
 
@@ -1521,6 +1549,7 @@ Kontrak file yang disimpan:
   },
   "lora_name": "MINIMAX-H3/example.safetensors",
   "lora_strength": 1.0,
+  "turbo": false,
   "width": 368,
   "height": 640
 }

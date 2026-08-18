@@ -793,6 +793,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 t2v_prompt,
                 scene_meta,
                 duration_override=t2v_duration,
+                turbo_enabled=bool(t2v_prompt.get('turbo', False)),
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 T2V workflow for {scene_dir}: {e}")
@@ -886,6 +887,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 scene_meta,
                 uploaded_name=uploaded_name,
                 duration_override=i2v_duration,
+                turbo_enabled=bool(i2v_prompt.get('turbo', False)),
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
@@ -1019,6 +1021,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 scene_meta,
                 uploaded_name=uploaded_name,
                 duration_override=scene_duration,
+                turbo_enabled=bool(i2v_prompt.get('turbo', False)),
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
@@ -1394,6 +1397,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 audio_names=uploaded_audios,
                 video_name=uploaded_video,
                 duration_override=duration,
+                turbo_enabled=bool(r2v_prompt.get('turbo', False)),
             )
             r2v_result = send_minimax_h3_s2v_workflow(
                 r2v_workflow,
@@ -1478,6 +1482,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 image_name=uploaded_image_name,
                 audio_name=uploaded_audio_name,
                 duration_override=audio_duration,
+                turbo_enabled=bool(s2v_prompt.get('turbo', False)),
                 remove_picture_2_reference=True,
                 remove_picture_3_reference=True,
                 remove_video_1_reference=True,

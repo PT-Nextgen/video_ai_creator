@@ -22,6 +22,8 @@ from minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_prompt
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
 TEMPLATE = "minimax_h3_r2v_api.json"
+TURBO_LORA_NAME = "MINIMAX-H3/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+TURBO_LORA_NODE_ID = "156"
 MAIN_NODE = "136"
 PICTURE_1_NODE = "143"
 AUDIO_1_NODE = "153"
@@ -63,6 +65,7 @@ DEFAULT_PROMPT = {
     },
     "width": 368,
     "height": 640,
+    "turbo": False,
 }
 
 DEFAULT_R2V_PROMPT = {
@@ -95,6 +98,7 @@ DEFAULT_R2V_PROMPT = {
     "width": 368,
     "height": 640,
     "references": {"images": [], "video": "", "audios": []},
+    "turbo": False,
 }
 
 
@@ -247,6 +251,37 @@ def _set_asset(workflow: dict, node_id: str, input_name: str, value) -> bool:
     return True
 
 
+def _apply_turbo_distillation(workflow: dict, enabled: bool) -> bool:
+    """Insert the optional 4-step Ref2V distillation LoRA before the sampler."""
+    if not enabled:
+        return False
+
+    diffusion_model = workflow.get("127")
+    if not isinstance(diffusion_model, dict):
+        return False
+
+    turbo_lora = {
+        "inputs": {
+            "lora_name": TURBO_LORA_NAME,
+            "strength_model": 1.0,
+            "model": ["127", 0],
+        },
+        "class_type": "LoraLoaderModelOnly",
+        "_meta": {"title": "Load Turbo LoRA"},
+    }
+    workflow[TURBO_LORA_NODE_ID] = turbo_lora
+
+    guider = workflow.get("126")
+    guider_inputs = guider.get("inputs") if isinstance(guider, dict) else None
+    if isinstance(guider_inputs, dict):
+        guider_inputs["model"] = [TURBO_LORA_NODE_ID, 0]
+    scheduler = workflow.get("124")
+    scheduler_inputs = scheduler.get("inputs") if isinstance(scheduler, dict) else None
+    if isinstance(scheduler_inputs, dict):
+        scheduler_inputs["steps"] = 4
+    return True
+
+
 def _prompt_text(prompt) -> str:
     if isinstance(prompt, str):
         return prompt
@@ -287,6 +322,7 @@ def build_workflow(
     image_names: list[str] | None = None,
     audio_names: list[str] | None = None,
     video_name: str | None = None,
+    turbo_enabled: bool = False,
     **remove_options,
 ) -> dict:
     """Return a configured R2V workflow in memory.
@@ -361,7 +397,9 @@ def build_workflow(
         else:
             remove_references(workflow, **{f"remove_audio_{index + 1}_reference": True})
 
-    return remove_references(workflow, **remove_options)
+    workflow = remove_references(workflow, **remove_options)
+    _apply_turbo_distillation(workflow, bool(turbo_enabled))
+    return workflow
 
 
 def build_minimax_h3_r2v_workflow(
@@ -375,6 +413,7 @@ def build_minimax_h3_r2v_workflow(
     image_names: list[str] | None = None,
     audio_names: list[str] | None = None,
     video_name: str | None = None,
+    turbo_enabled: bool = False,
     **remove_options,
 ) -> dict:
     """Named adapter entry point matching the other MiniMax H3 modules."""
@@ -389,6 +428,7 @@ def build_minimax_h3_r2v_workflow(
         image_names=image_names,
         audio_names=audio_names,
         video_name=video_name,
+        turbo_enabled=turbo_enabled,
         **remove_options,
     )
 

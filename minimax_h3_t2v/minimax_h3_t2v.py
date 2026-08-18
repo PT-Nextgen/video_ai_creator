@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
 TEMPLATE = "minimax_h3_t2v_api.json"
+TURBO_LORA_NAME = "MINIMAX-H3/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+TURBO_LORA_NODE_ID = "137"
 
 SIZE_OPTIONS = [
     ("368x640", 368, 640),
@@ -31,6 +33,7 @@ DEFAULT_PROMPT = {
     ),
     "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength": 0,
+    "turbo": False,
     "width": 368,
     "height": 640,
     "remove_sound": False,
@@ -66,6 +69,30 @@ def _set_lora_node(workflow: dict, lora_name: str, strength_value) -> bool:
         inputs["strength_model"] = float(strength_value)
     except (TypeError, ValueError):
         inputs["strength_model"] = 0.0
+    return True
+
+
+def _apply_turbo_distillation(workflow: dict, enabled: bool) -> bool:
+    """Insert the optional 8-step distillation LoRA before the regular T2V LoRA."""
+    if not enabled:
+        return False
+
+    base_lora = workflow.get("135")
+    if not isinstance(base_lora, dict) or not isinstance(base_lora.get("inputs"), dict):
+        return False
+
+    turbo_lora = copy.deepcopy(base_lora)
+    turbo_inputs = turbo_lora["inputs"]
+    turbo_inputs["lora_name"] = TURBO_LORA_NAME
+    turbo_inputs["strength_model"] = 1
+    turbo_inputs["model"] = ["127", 0]
+    turbo_lora.setdefault("_meta", {})["title"] = "Load Turbo LoRA"
+    workflow[TURBO_LORA_NODE_ID] = turbo_lora
+
+    base_lora["inputs"]["model"] = [TURBO_LORA_NODE_ID, 0]
+    scheduler = workflow.get("124")
+    if isinstance(scheduler, dict) and isinstance(scheduler.get("inputs"), dict):
+        scheduler["inputs"]["steps"] = 8
     return True
 
 
@@ -118,6 +145,7 @@ def build_workflow(
     t2v_prompt: dict,
     scene_meta: dict | None = None,
     duration_override: int | float | None = None,
+    turbo_enabled: bool = False,
 ) -> dict:
     prompt = t2v_prompt if isinstance(t2v_prompt, dict) else {}
     workflow = copy.deepcopy(_load_template())
@@ -155,6 +183,7 @@ def build_workflow(
         prompt.get("lora_name", DEFAULT_PROMPT["lora_name"]),
         prompt.get("lora_strength", DEFAULT_PROMPT["lora_strength"]),
     )
+    _apply_turbo_distillation(workflow, bool(turbo_enabled))
     return _inject_random_noise_seed(workflow)
 
 
@@ -162,8 +191,14 @@ def build_minimax_h3_t2v_workflow(
     t2v_prompt: dict,
     scene_meta: dict | None = None,
     duration_override: int | float | None = None,
+    turbo_enabled: bool = False,
 ) -> dict:
-    return build_workflow(t2v_prompt, scene_meta=scene_meta, duration_override=duration_override)
+    return build_workflow(
+        t2v_prompt,
+        scene_meta=scene_meta,
+        duration_override=duration_override,
+        turbo_enabled=turbo_enabled,
+    )
 
 
 def send_workflow(workflow, server, log_file=None, source_label="in-memory workflow"):
