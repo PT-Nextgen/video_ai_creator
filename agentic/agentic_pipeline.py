@@ -36,6 +36,7 @@ from agentic.agentic_llm import expected_output_files, generate_variations
 
 VARIATION_DIR_PATTERN = re.compile(r"^variasi_?\d+$", re.IGNORECASE)
 STATUS_DONE_FILENAME = "status.done"
+STATUS_FAILED_FILENAME = "status.failed"
 VARIATION_FAIL_FILENAME = "variasi_gagal.txt"
 DEFAULT_SCRIPT_TIMEOUT = 1800
 MINIMAX_H3_I2V_SCRIPT_TIMEOUT = 3900
@@ -183,6 +184,24 @@ def _record_variation_failure(project_dir: Path, scene_dir: Path, variation_dir:
         return False
 
 
+def _write_variation_failure_marker(variation_dir: Path, message: str) -> bool:
+    """Mark a diagnostic variation folder as failed without making it executable."""
+    variation_dir = Path(variation_dir)
+    try:
+        variation_dir.mkdir(parents=True, exist_ok=True)
+        (variation_dir / STATUS_FAILED_FILENAME).write_text(
+            f"{message}\n",
+            encoding="utf-8",
+        )
+        return True
+    except Exception as e:
+        write_log(
+            f"[agentic] Gagal menulis {STATUS_FAILED_FILENAME} di {variation_dir}: {e}",
+            level="error",
+        )
+        return False
+
+
 def _delete_media_files(
     scene_dir: Path,
     preserve_images: bool = False,
@@ -211,6 +230,8 @@ def _existing_variation_dirs(scene_dir: Path) -> list[Path]:
     dirs = []
     for item in scene_dir.iterdir():
         if item.is_dir() and VARIATION_DIR_PATTERN.match(item.name.strip()):
+            if (item / STATUS_FAILED_FILENAME).is_file():
+                continue
             dirs.append(item)
     return sorted(
         dirs,
@@ -224,6 +245,7 @@ def _pending_variation_dirs(scene_dir: Path) -> list[Path]:
         variation_dir
         for variation_dir in _existing_variation_dirs(scene_dir)
         if not (variation_dir / STATUS_DONE_FILENAME).is_file()
+        and not (variation_dir / STATUS_FAILED_FILENAME).is_file()
     ]
 
 
@@ -479,10 +501,13 @@ def generate_variation_configs_for_scene(
     generated_count = 0
     skipped_count = 0
     for offset in range(number_of_variations):
-        # Failed LLM requests do not reserve a variation number. Successful
-        # folders therefore remain contiguous and no empty gap is published.
+        # Reserve a diagnostic folder before the LLM call so the exact input
+        # prompt remains inspectable even when generation fails. A failed
+        # folder is marked with status.failed and is ignored by execution.
         variation_index = start_variation_index + generated_count
         variation_dir = scene_dir / _variation_dir_name(variation_index)
+        variation_dir.mkdir(parents=True, exist_ok=True)
+        (variation_dir / STATUS_FAILED_FILENAME).unlink(missing_ok=True)
         write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Generate JSON variasi")
         variations, input_prompt_text, output_prompt_text = generate_variations(
             scene_dir=scene_dir,
@@ -493,9 +518,16 @@ def generate_variation_configs_for_scene(
             model_name=model_name,
             current_variation_index=variation_index,
         )
+        if not _write_variation_prompt_logs(variation_dir, input_prompt_text, output_prompt_text):
+            _write_variation_failure_marker(variation_dir, "Gagal menyimpan log prompt Agentic.")
+            return False
         if not variations:
             skipped_count += 1
             write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal generate, skip", level="warning")
+            _write_variation_failure_marker(
+                variation_dir,
+                "LLM gagal membuat variasi prompt setelah 3 percobaan.",
+            )
             _record_variation_failure(
                 scene_dir.parent,
                 scene_dir,
@@ -504,14 +536,10 @@ def generate_variation_configs_for_scene(
             )
             continue
         if not _copy_scene_baseline_files(scene_dir, variation_dir):
-            if variation_dir.exists():
-                shutil.rmtree(variation_dir, ignore_errors=True)
-            return False
-        if not _write_variation_prompt_logs(variation_dir, input_prompt_text, output_prompt_text):
-            shutil.rmtree(variation_dir, ignore_errors=True)
+            _write_variation_failure_marker(variation_dir, "Gagal menyalin baseline scene ke folder variasi.")
             return False
         if not _write_variation_payloads(variation_dir, variations, allowed_output_files):
-            shutil.rmtree(variation_dir, ignore_errors=True)
+            _write_variation_failure_marker(variation_dir, "Gagal menyimpan payload JSON variasi.")
             return False
         generated_count += 1
 

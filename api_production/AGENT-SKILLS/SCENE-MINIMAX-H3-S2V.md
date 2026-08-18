@@ -12,10 +12,7 @@ Workflow yang digunakan adalah `api_template/minimax_h3_r2v_api.json` dengan ref
 
 ## Prompt
 
-Gunakan mode full-reference `Ref2VA` sesuai:
-
-- `MINIMAX-H3/SKILL.md`
-- `MINIMAX-H3/references/ref-en.txt`
+Gunakan mode full-reference `Ref2VA` sesuai aturan prompt R2V yang diberikan pada input Agentic.
 
 Prompt harus memiliki enam section dalam urutan berikut:
 

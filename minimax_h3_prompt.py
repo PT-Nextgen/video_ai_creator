@@ -13,6 +13,12 @@ I2VA_FIRST_FRAME_PREFIX = (
     "For the target video, at 0.00 seconds into the target video, "
     "<Picture 1> (from [Shot 1]) is fully referenced."
 )
+I2VA_FIRST_FRAME_DETAIL_INSTRUCTION = (
+    "The selected <Picture 1> reference image is the exact visual state at "
+    "0.00 seconds and must be preserved as the first frame. Begin the motion "
+    "from this image without changing the subject identity, composition, "
+    "clothing, important objects, or spatial layout."
+)
 REQUIRED_SHOT_KEYS = (
     "shot_id",
     "start",
@@ -137,7 +143,12 @@ def default_structured_prompt(mode: str) -> dict:
         "shot_id": "Shot 1",
         "start": 0.0,
         "end": 5.0,
-        "visual": "A clear cinematic scene with a primary subject and coherent composition.",
+        "visual": (
+            f"{I2VA_FIRST_FRAME_DETAIL_INSTRUCTION} "
+            "A clear cinematic scene with a primary subject and coherent composition."
+            if str(mode).upper() == "I2VA"
+            else "A clear cinematic scene with a primary subject and coherent composition."
+        ),
         "action": "The primary subject moves naturally within the scene.",
         "camera": "The camera uses a stable medium shot with smooth movement.",
         "dialogue": "No dialogue.",
@@ -275,10 +286,15 @@ def serialize_structured_prompt(value) -> str:
     for shot in value.get("shots", []) if isinstance(value.get("shots"), list) else []:
         if not isinstance(shot, dict):
             continue
+        visual = str(shot.get("visual", ""))
+        if mode == "I2VA" and shot.get("shot_id", "") == "Shot 1":
+            detail_marker = "The selected <Picture 1> reference image is the exact visual state"
+            if detail_marker.lower() not in visual.lower():
+                visual = f"{I2VA_FIRST_FRAME_DETAIL_INSTRUCTION} {visual}".strip()
         lines.append(
             f"[{shot.get('shot_id', 'Shot 1')}] "
             f"From {float(shot.get('start', 0)):.2f} to {float(shot.get('end', 0)):.2f} seconds, "
-            f"visual: {shot.get('visual', '')}; action: {shot.get('action', '')}; "
+            f"visual: {visual}; action: {shot.get('action', '')}; "
             f"camera: {shot.get('camera', '')}; dialogue: {shot.get('dialogue', '')}; "
             f"diegetic sound: {shot.get('diegetic_sound', '')}."
         )
@@ -349,7 +365,13 @@ def normalize_minimax_prompt_payload(data: dict, mode: str) -> dict:
                 synced_id["overall_soundscape"] = "N/A"
                 synced_id["non_diegetic_music"] = "N/A"
         synced_id = _recover_nested_legacy_prompt(synced_id)
-        normalized_entry["id_old"] = copy.deepcopy(synced_id)
+        # Preserve the previous id_old as the runtime comparison baseline.
+        # Replacing it with id_new here makes an edited prompt look already
+        # synchronized and prevents runtime translation from regenerating en.
+        previous_id_old = _recover_nested_legacy_prompt(normalized_entry.get("id_old"))
+        normalized_entry["id_old"] = copy.deepcopy(
+            previous_id_old if isinstance(previous_id_old, dict) else synced_id
+        )
         normalized_entry["id_new"] = copy.deepcopy(synced_id)
         normalized_entry["en"] = _recover_nested_legacy_prompt(normalized_entry["en"])
         result["positive_prompt"] = normalized_entry

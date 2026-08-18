@@ -1,6 +1,6 @@
 ---
 name: scene-minimax-h3-i2v
-description: Create standalone MiniMax H3 I2V scenes with an optional generated initial image, optional image editing, and a MiniMax H3 I2VA video stage. Use this scene guide together with the MINIMAX-H3 skill and base-en reference.
+description: Create standalone MiniMax H3 I2V scenes with an optional generated initial image, optional image editing, and a MiniMax H3 I2VA video stage.
 ---
 
 # Scene minimax-h3_i2v
@@ -11,13 +11,7 @@ Scene ini adalah workflow I2V mandiri dengan tiga kemungkinan tahap persiapan:
 2. `Image Edit` dapat mengedit gambar awal dan menyimpan hasilnya ke root folder scene.
 3. Workflow MiniMax H3 I2VA memakai gambar terbaru di root folder scene sebagai `Picture 1`.
 
-Wajib membaca referensi berikut untuk membuat scene dan prompt:
-
-- `SCENE-GENERAL.md`
-- `TEXT-TO-IMAGE.md`
-- `IMAGE-PROMPT.md`
-- `MINIMAX-H3/SKILL.md`
-- `MINIMAX-H3/references/base-en.txt`
+Gunakan aturan umum scene, aturan I2V MiniMax H3, dan aturan khusus prompt I2V yang diberikan pada input Agentic.
 
 ## File output
 
@@ -108,7 +102,7 @@ Pipeline Agentic kemudian memvalidasi `en`, menerjemahkan setiap field teks natu
 
 ## Prompt MiniMax H3 I2VA
 
-Tulis `minimax_h3_i2v_prompt.json.positive_prompt` mengikuti mode I2VA pada `MINIMAX-H3/SKILL.md` dan `references/base-en.txt`.
+Tulis `minimax_h3_i2v_prompt.json.positive_prompt` mengikuti aturan prompt I2VA.
 
 Field `en` wajib dimulai persis dengan:
 

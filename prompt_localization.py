@@ -3,6 +3,7 @@ import json
 import os
 import ast
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,12 +29,40 @@ from minimax_h3_prompt import (
 
 LOGGER = logging.getLogger(__name__)
 
+_MINIMAX_DIALOGUE_BLOCK_PATTERN = re.compile(r"<d>.*?</d>", re.IGNORECASE | re.DOTALL)
+
+
+def _protect_minimax_dialogue_blocks(text: str) -> tuple[str, dict[str, str]]:
+    """Protect complete MiniMax dialogue blocks during id_new -> en translation."""
+    replacements: dict[str, str] = {}
+
+    def replace(match):
+        placeholder = f"__MINIMAX_DIALOGUE_{len(replacements) + 1:03d}__"
+        replacements[placeholder] = match.group(0)
+        return placeholder
+
+    return _MINIMAX_DIALOGUE_BLOCK_PATTERN.sub(replace, str(text or "")), replacements
+
+
+def _restore_minimax_dialogue_blocks(text: str, replacements: dict[str, str]) -> str:
+    result = str(text or "")
+    missing = [placeholder for placeholder in replacements if placeholder not in result]
+    if missing:
+        raise ValueError(
+            "Translasi MiniMax mengubah atau menghilangkan dialog dalam <d>...</d>: "
+            + ", ".join(missing)
+        )
+    for placeholder, original in replacements.items():
+        result = result.replace(placeholder, original)
+    return result
+
 DEFAULT_TRANSLATE_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_PROMPT_GENERATION_MODEL = "gemini-3.1-flash-lite"
 LOCAL_PROMPT_PROVIDER = "llama.cpp"
 LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
+LOCAL_LLM_TIMEOUT_SECONDS = 20 * 60
 
 
 def format_llm_runtime_log(
@@ -277,27 +306,29 @@ class GeminiPromptTranslator:
             )
             raise
 
-    def translate_to_english(self, text: str) -> str:
+    def translate_to_english(self, text: str, context: str = "") -> str:
         text = _clean_text(text)
         if not text:
             return ""
-        if text in self._cache:
+        if not context and text in self._cache:
             return self._cache[text]
         instruction = (
             "Translate the following prompt to natural English for AI generation.\n"
             "Preserve intent, style, and detail.\n"
             "Return only the translated text without extra explanation."
         )
+        payload_text = _compose_prompt_request_text(text, context) if context else text
         translated = self._call_text_model(
             self.translate_model_name,
             instruction,
-            text,
+            payload_text,
             timeout=60,
             phase="translate_to_english",
         )
         if not translated:
             translated = text
-        self._cache[text] = translated
+        if not context:
+            self._cache[text] = translated
         return translated
 
     def generate_prompt_to_english(self, text: str, context: str = "") -> str:
@@ -377,7 +408,7 @@ class PromptTranslator:
         self,
         model_name: str,
         prompt_text: str,
-        timeout: int = 90,
+        timeout: int = LOCAL_LLM_TIMEOUT_SECONDS,
         phase: str = "generate_prompt_to_english",
     ) -> str:
         host = self.prompt_generation_host
@@ -478,23 +509,24 @@ class PromptTranslator:
         )
         raise RuntimeError(f"llama.cpp error: {' || '.join(errors[:3])}")
 
-    def translate_to_english(self, text: str) -> str:
+    def translate_to_english(self, text: str, context: str = "") -> str:
         text = _clean_text(text)
         if not text:
             return ""
         if self.prompt_generation_provider == "gemini":
-            result = self._gemini.translate_to_english(text)
+            result = self._gemini.translate_to_english(text, context=context)
             self.last_call_metrics = self._gemini.last_call_metrics
             return result
         instruction = (
             "Translate the following prompt to natural English for AI generation.\n"
             "Preserve intent, style, and detail.\n"
-            "Return only the translated text without extra explanation.\n\n"
+            "Return only the translated text without extra explanation.\n"
         )
+        payload_text = _compose_prompt_request_text(text, context) if context else text
         result = self._call_local_text_model(
             self.prompt_generation_model_name,
-            instruction + text,
-            timeout=90,
+            instruction + "\n" + payload_text,
+            timeout=LOCAL_LLM_TIMEOUT_SECONDS,
             phase="translate_to_english",
         )
         return result or text
@@ -524,7 +556,7 @@ class PromptTranslator:
             result = self._call_local_text_model(
                 self.prompt_generation_model_name,
                 request_text,
-                timeout=90,
+                timeout=LOCAL_LLM_TIMEOUT_SECONDS,
                 phase="translate_to_indonesian",
             )
             if result.strip().casefold() != text.strip().casefold():
@@ -556,7 +588,7 @@ class PromptTranslator:
         generated = self._call_local_text_model(
             self.prompt_generation_model_name,
             payload_text,
-            timeout=120,
+            timeout=LOCAL_LLM_TIMEOUT_SECONDS,
             phase="generate_prompt_to_english",
         )
         return generated or text
@@ -587,10 +619,24 @@ class PromptTranslator:
                 "Use at least two shots when the scene has multiple actions. Do not return a text prompt in en.\n"
             )
             if "Active MiniMax H3 mode: I2VA" in active_mode:
+                output_shape = (
+                    '{"en":{"mode":"I2VA","reference":{"picture":"Picture 1",'
+                    '"source":"[Shot 1]","time":0.0,"instruction":"fully referenced"},'
+                    '"shots":[{"shot_id":"Shot 1","start":0.0,"end":1.0,'
+                    '"visual":"...","action":"...","camera":"...",'
+                    '"dialogue":"...","diegetic_sound":"..."}],'
+                    '"overall_soundscape":"...","non_diegetic_music":"..."}}'
+                )
                 mode_instruction += (
                     "This is I2VA. en must additionally contain reference with picture Picture 1, source [Shot 1], time 0.0, and instruction fully referenced.\n"
                 )
             elif "Active MiniMax H3 mode: T2VA" in active_mode:
+                output_shape = (
+                    '{"en":{"mode":"T2VA","shots":[{"shot_id":"Shot 1",'
+                    '"start":0.0,"end":1.0,"visual":"...","action":"...",'
+                    '"camera":"...","dialogue":"...","diegetic_sound":"..."}],'
+                    '"overall_soundscape":"...","non_diegetic_music":"..."}}'
+                )
                 mode_instruction += "This is T2VA. Do not add an image-alignment instruction.\n"
             else:
                 raise ValueError("MiniMax H3 prompt context must declare the active T2VA or I2VA mode.")
@@ -598,7 +644,7 @@ class PromptTranslator:
                 "You are a senior AI video prompt engineer and bilingual writer.\n"
                 + mode_instruction
                 + "Return JSON only with exactly this shape: "
-                '{"en":{"mode":"T2VA","shots":[{"shot_id":"Shot 1","start":0.0,"end":1.0,"visual":"...","action":"...","camera":"...","dialogue":"...","diegetic_sound":"..."}],"overall_soundscape":"...","non_diegetic_music":"..."}}'
+                + output_shape
             )
         else:
             instruction = (
@@ -624,7 +670,7 @@ class PromptTranslator:
             response_text = self._call_local_text_model(
                 self.prompt_generation_model_name,
                 instruction + "\n\n" + payload_text,
-                timeout=120,
+                timeout=LOCAL_LLM_TIMEOUT_SECONDS,
                 phase="generate_prompt_multilang",
             )
         if "Active MiniMax H3 mode: Ref2VA" in str(context or ""):
@@ -645,6 +691,19 @@ class PromptTranslator:
             if not isinstance(raw_en, dict):
                 raise RuntimeError("Response MiniMax H3 fase en tidak valid: field en harus berupa object JSON.")
             expected_mode = "I2VA" if "Active MiniMax H3 mode: I2VA" in str(context or "") else "T2VA"
+            if expected_mode == "I2VA":
+                # The reference object is a structural control field, not
+                # creative text. Some LLM responses omit it despite the
+                # schema instruction, so restore the exact skill contract
+                # deterministically before validation and translation.
+                raw_en = copy.deepcopy(raw_en)
+                raw_en["mode"] = "I2VA"
+                raw_en["reference"] = {
+                    "picture": "Picture 1",
+                    "source": "[Shot 1]",
+                    "time": 0.0,
+                    "instruction": "fully referenced",
+                }
             en_probe = {"positive_prompt": {"id_old": raw_en, "id_new": raw_en, "en": raw_en}}
             _, errors = parse_structured_response(en_probe, expected_mode=expected_mode)
             if errors:
@@ -738,9 +797,18 @@ class PromptTranslator:
             if not text.strip() or text.strip().upper() == "N/A":
                 result[key] = text
                 continue
-            protected, replacements = protect_ref2va_tokens(text)
-            translated_text = self.translate_to_english(protected) or protected
-            result[key] = restore_ref2va_tokens(translated_text, replacements)
+            dialogue_protected, dialogue_replacements = _protect_minimax_dialogue_blocks(text)
+            protected, replacements = protect_ref2va_tokens(dialogue_protected)
+            translated_text = self.translate_to_english(
+                protected,
+                context=(
+                    "MiniMax H3 English field translation. Translate the surrounding prompt text only. "
+                    "Do not translate, rewrite, remove, or alter any __MINIMAX_DIALOGUE_NNN__ placeholder; "
+                    "each placeholder contains an original <d>...</d> dialogue block and must remain unchanged."
+                ),
+            ) or protected
+            translated_text = restore_ref2va_tokens(translated_text, replacements)
+            result[key] = _restore_minimax_dialogue_blocks(translated_text, dialogue_replacements)
         return result
 
     def translate_structured_prompt_to_indonesian(self, en: dict, mode: str = "T2VA") -> dict:
@@ -774,9 +842,13 @@ class PromptTranslator:
                 return node
             context = (
                 f"MiniMax H3 {mode} field translation. Translate this single field value into natural English. "
-                "Return only the translated text; do not add JSON, labels, or explanation."
+                "Return only the translated text; do not add JSON, labels, or explanation. "
+                "Do not translate, rewrite, remove, or alter any __MINIMAX_DIALOGUE_NNN__ placeholder; "
+                "each placeholder contains an original <d>...</d> dialogue block and must remain unchanged."
             )
-            return self.translate_to_english(node) or node
+            dialogue_protected, dialogue_replacements = _protect_minimax_dialogue_blocks(node)
+            translated = self.translate_to_english(dialogue_protected, context=context) or dialogue_protected
+            return _restore_minimax_dialogue_blocks(translated, dialogue_replacements)
 
         en = translate_node(id_new)
         probe = {"positive_prompt": {"id_old": en, "id_new": en, "en": en}}

@@ -1622,3 +1622,20 @@ Log runtime default:
 - `content_creation.log`
 
 
+## Catatan MiniMax H3 (alur prompt dan dialog)
+
+Dokumentasi ini menjadi ringkasan aturan terbaru untuk seluruh scene MiniMax H3.
+
+- File prompt scene yang didukung mencakup `minimax_h3_t2v_prompt.json`, `minimax_h3_i2v_prompt.json`, `minimax_h3_s2v_prompt.json`, dan `minimax_h3_r2v_prompt.json`.
+- Referensi ringkas yang dikirim ke LLM untuk tombol `Buat Prompt` dan Agentic disesuaikan dengan scene: `SCENE-GENERAL.md` serta dokumen scene dan prompt khususnya. Aturan dialog bersama berasal dari `MINIMAX-H3-DIALOG.md`.
+- S2V hanya boleh memakai reference aktif `<Picture 1>` dan `<Audio 1>`. R2V memakai manifest reference aktif secara dinamis, dengan batas maksimal 3 Picture, 3 Audio, dan 1 Video. Token reference yang tidak aktif tidak boleh dikembalikan oleh LLM.
+- Struktur JSON keluaran harus mengikuti schema file scene, tetapi bagian `OUTPUT YANG DIHASILKAN` pada input Agentic tetap berupa schema kosong agar LLM mengisi konfigurasi berdasarkan scene/variasi yang diberikan.
+- Validasi saat save berfokus pada JSON `id_new` yang valid. Translasi `id_new` ke `en` dilakukan saat scene dijalankan; bila validasi runtime atau translasi gagal, eksekusi scene dihentikan.
+
+### Aturan dialog MiniMax H3
+
+Gunakan speaker stabil seperti `(S1)` dan `(S2)`, lalu tulis dialog aktual dalam format:
+
+`<d>[Bahasa] Kalimat dialog.</d>`
+
+Pada translasi runtime MiniMax dari `id_new` ke `en`, seluruh blok `<d>...</d>` diproteksi dan tidak diterjemahkan. Teks di luar blok dialog tetap diterjemahkan. Dengan demikian dialog dapat dipertahankan persis dalam bahasa yang diminta, termasuk tanda baca dan isi kalimatnya. Aturan lengkapnya ada di `api_production/AGENT-SKILLS/MINIMAX-H3-DIALOG.md`.

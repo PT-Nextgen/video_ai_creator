@@ -54,6 +54,7 @@ from minimax_h3_r2v.minimax_h3_r2v import (
     get_audio_duration as get_minimax_h3_s2v_audio_duration,
 )
 from minimax_h3_prompt import (
+    I2VA_FIRST_FRAME_DETAIL_INSTRUCTION,
     REF2VA_SECTION_KEYS,
     normalize_minimax_prompt_payload,
     parse_structured_response,
@@ -6770,25 +6771,39 @@ class SceneEditorWindow(QMainWindow):
         if stage == "r2v":
             template_path = "api_template/minimax_h3_r2v_api.json"
             output_path = MINIMAX_H3_R2V_PROMPT_FILENAME if scene_type == MINIMAX_H3_R2V_SCENE_TYPE else MINIMAX_H3_S2V_PROMPT_FILENAME
-            scene_skill_path = "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-S2V.md"
+            if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+                reference_paths = [
+                    "api_production/AGENT-SKILLS/SCENE-GENERAL.md",
+                    "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-R2V.md",
+                    "api_production/AGENT-SKILLS/MINIMAX-H3-R2V-PROMPT.md",
+                ]
+            else:
+                reference_paths = [
+                    "api_production/AGENT-SKILLS/SCENE-GENERAL.md",
+                    "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-S2V.md",
+                    "api_production/AGENT-SKILLS/MINIMAX-H3-S2V-PROMPT.md",
+                    "api_production/AGENT-SKILLS/TEXT-TO-IMAGE.md",
+                    "api_production/AGENT-SKILLS/IMAGE-PROMPT.md",
+                ]
         elif stage == "t2v":
             template_path = "api_template/minimax_h3_t2v_api.json"
             output_path = "minimax_h3_t2v_prompt.json"
-            scene_skill_path = "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V-I2V.md"
+            reference_paths = [
+                "api_production/AGENT-SKILLS/SCENE-GENERAL.md",
+                "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V-I2V.md",
+                "api_production/AGENT-SKILLS/MINIMAX-H3-T2V-PROMPT.md",
+            ]
         else:
             template_path = "api_template/minimax_h3_i2v_api.json"
             output_path = "minimax_h3_i2v_prompt.json"
-            scene_skill_path = (
+            reference_paths = [
+                "api_production/AGENT-SKILLS/SCENE-GENERAL.md",
                 "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-I2V.md"
                 if standalone_i2v
-                else "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V-I2V.md"
-            )
-
-        reference_paths = [
-            scene_skill_path,
-            "api_production/AGENT-SKILLS/MINIMAX-H3/SKILL.md",
-            "api_production/AGENT-SKILLS/MINIMAX-H3/references/ref-en.txt" if stage == "r2v" else "api_production/AGENT-SKILLS/MINIMAX-H3/references/base-en.txt",
-        ]
+                else "api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V-I2V.md",
+                "api_production/AGENT-SKILLS/MINIMAX-H3-I2V-PROMPT.md",
+            ]
+        reference_paths.append("api_production/AGENT-SKILLS/MINIMAX-H3-DIALOG.md")
         lines = [
             f"Authoritative workflow template file: {template_path}",
             f"Authoritative prompt output file: {output_path}",
@@ -6827,8 +6842,9 @@ class SceneEditorWindow(QMainWindow):
                     "Do not use any other Picture, Video, or Audio token."
                 )
             lines.extend([
-                "ACTIVE MODE OVERRIDE: Ref2VA / MiniMax H3 S2V.",
+                f"ACTIVE MODE OVERRIDE: Ref2VA / {'MiniMax H3 R2V' if scene_type == MINIMAX_H3_R2V_SCENE_TYPE else 'MiniMax H3 S2V'}.",
                 "Use exactly six sections in this order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music.",
+                "Write detailed_description as one timeline string. If the user requests multiple shots, mark them explicitly as [Shot 1], [Shot 2], and so on, with timing, action, camera, and continuity. Do not add a JSON shots array to Ref2VA.",
                 active_reference_rule,
                 "Return the prompt in English and preserve reference tokens exactly.",
                 "This manifest has priority over all examples in the loaded skill/reference documents.",
@@ -6846,6 +6862,8 @@ class SceneEditorWindow(QMainWindow):
                 "ACTIVE STAGE OVERRIDE: I2VA.",
                 "Use the shared scene-building references above, but apply the Prompt I2VA rules for this request.",
                 "The English prompt must begin exactly with `For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.` followed by one blank line.",
+                f"The first shot visual must explicitly state: {I2VA_FIRST_FRAME_DETAIL_INSTRUCTION}",
+                "Describe the selected Picture 1 image first, then describe motion developing continuously from that exact initial state.",
             ])
         return lines
 
@@ -7174,6 +7192,13 @@ class SceneEditorWindow(QMainWindow):
                         image_count=len(self._r2v_selected_names(self.minimax_h3_r2v_image_list)),
                         audio_count=len(self._r2v_selected_names(self.minimax_h3_r2v_audio_list)),
                         has_video=bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list)),
+                    ))
+                if not errors and prompt_kind == "minimax_h3_s2v":
+                    errors.extend(validate_ref2va_reference_tokens(
+                        entry.get("en"),
+                        image_count=1,
+                        audio_count=1,
+                        has_video=False,
                     ))
             else:
                 expected_mode = "I2VA" if prompt_kind != "minimax_h3_t2v" else "T2VA"

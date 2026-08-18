@@ -1,13 +1,8 @@
 # Scene minimax-h3_t2v_i2v
 
-Dokumen ini adalah aturan scene untuk pipeline MiniMax H3 T2V lalu I2V. Untuk menulis isi prompt MiniMax H3, wajib membaca referensi berikut:
+Dokumen ini adalah aturan scene untuk pipeline MiniMax H3 T2V lalu I2V. Scene ini memakai mode base T2VA dan I2VA.
 
-- `MINIMAX-H3/SKILL.md`
-- `MINIMAX-H3/references/base-en.txt`
-
-Gunakan `MINIMAX-H3/references/ref-en.txt` hanya jika workflow full-reference diperlukan pada pengembangan scene lain. Scene ini memakai mode base T2VA dan I2VA.
-
-Tombol `Buat Prompt` pada tab T2V dan I2V memakai dokumen scene ini, `MINIMAX-H3/SKILL.md`, dan `MINIMAX-H3/references/base-en.txt` sebagai referensi pembuatan scene yang sama. Mode aktif tetap menentukan format akhir: aturan I2VA tidak boleh diterapkan ke T2VA, dan aturan T2VA tidak boleh menggantikan instruksi first-frame I2VA.
+Gunakan aturan T2VA hanya untuk prompt T2V dan aturan I2VA hanya untuk prompt I2V. Aturan I2VA tidak boleh diterapkan ke T2VA, dan aturan T2VA tidak boleh menggantikan instruksi first-frame I2VA.
 
 ## File output
 
@@ -91,7 +86,7 @@ Untuk durasi di atas 15 detik, frame terakhir hasil T2V menjadi `Picture 1` atau
 
 ## Prompt T2VA
 
-Tulis `minimax_h3_t2v_prompt.json.positive_prompt` mengikuti `MINIMAX-H3/SKILL.md` dan `references/base-en.txt` mode T2VA.
+Tulis `minimax_h3_t2v_prompt.json.positive_prompt` mengikuti aturan prompt T2VA.
 
 Prompt Inggris pada field `en` harus memiliki tiga bagian dalam urutan berikut:
 
@@ -115,7 +110,7 @@ Ketentuan:
 
 ## Prompt I2VA
 
-Tulis `minimax_h3_i2v_prompt.json.positive_prompt` mengikuti mode I2VA pada `references/base-en.txt`.
+Tulis `minimax_h3_i2v_prompt.json.positive_prompt` mengikuti aturan prompt I2VA.
 
 Field `en` wajib dimulai dengan instruksi persis berikut:
 
