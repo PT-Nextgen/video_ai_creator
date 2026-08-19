@@ -55,6 +55,7 @@ from minimax_h3_r2v.minimax_h3_r2v import (
 )
 from minimax_h3_prompt import (
     I2VA_FIRST_FRAME_DETAIL_INSTRUCTION,
+    enforce_i2va_first_shot_visual,
     REF2VA_SECTION_KEYS,
     normalize_minimax_prompt_payload,
     parse_structured_response,
@@ -6927,7 +6928,7 @@ class SceneEditorWindow(QMainWindow):
                 "ACTIVE STAGE OVERRIDE: I2VA.",
                 "Use the shared scene-building references above, but apply the Prompt I2VA rules for this request.",
                 "The English prompt must begin exactly with `For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.` followed by one blank line.",
-                f"The first shot visual must explicitly state: {I2VA_FIRST_FRAME_DETAIL_INSTRUCTION}",
+                "The first shot visual must use exactly `At 0.00 seconds, <Picture 1> is the first frame of the video`; the application will overwrite this field with the exact English and Indonesian sentences after generation.",
                 "Describe the selected Picture 1 image first, then describe motion developing continuously from that exact initial state.",
             ])
         return lines
@@ -7268,6 +7269,8 @@ class SceneEditorWindow(QMainWindow):
             else:
                 expected_mode = "I2VA" if prompt_kind != "minimax_h3_t2v" else "T2VA"
                 entry, errors = parse_structured_response(structured, expected_mode=expected_mode)
+                if not errors and expected_mode == "I2VA":
+                    entry = enforce_i2va_first_shot_visual(entry)
             if errors:
                 self.append_log("[gagal] Response nested MiniMax tidak valid: " + "; ".join(errors[:3]))
                 self.statusBar().showMessage("Format JSON MiniMax tidak sesuai.", 4000)

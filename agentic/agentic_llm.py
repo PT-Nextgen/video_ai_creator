@@ -13,6 +13,7 @@ from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
 from prompt_localization import get_prompt_translator, prepare_prompt_payload_for_save
 from minimax_h3_prompt import (
     REF2VA_SECTION_KEYS,
+    enforce_i2va_first_shot_visual,
     validate_ref2va_prompt,
     validate_ref2va_reference_tokens,
     validate_structured_prompt,
@@ -1283,7 +1284,7 @@ def build_agentic_prompt(
             lines.append(
                 "- `shots[].shot_id` WAJIB berupa string `Shot 1`, `Shot 2`, dan seterusnya; jangan memakai angka JSON\n"
                 "- Untuk I2VA, `reference` WAJIB persis: picture=`Picture 1`, source=`[Shot 1]`, time=0.0, instruction=`fully referenced`\n"
-                "- Untuk I2VA, `shots[0].visual` WAJIB menjelaskan bahwa <Picture 1> adalah kondisi visual persis pada 0.00 detik dan menjadi first frame; mulai gerakan dari gambar itu tanpa mengubah identitas subjek, komposisi, pakaian, objek penting, atau layout ruang\n"
+                "- Untuk I2VA, `shots[0].visual` pada Shot 1 wajib diawali tepat dengan `At 0.00 seconds, <Picture 1> is the first frame of the video`; aplikasi akan memaksa nilai final Inggris ini dan padanan Indonesianya `Pada 0,00 detik, <Picture 1> adalah frame pertama video`, lalu menyamakan `id_old` dengan `id_new`\n"
             )
         elif scene_type in {"minimax-h3_s2v", "minimax-h3_r2v"}:
             lines.append(
@@ -1686,6 +1687,8 @@ def _normalize_minimax_agentic_output(
         if required_key not in expanded_entry:
             expanded_entry[required_key] = copy.deepcopy(required_value)
     result["positive_prompt"] = expanded_entry
+    if filename == "minimax_h3_i2v_prompt.json":
+        result["positive_prompt"] = enforce_i2va_first_shot_visual(result["positive_prompt"])
     return result, []
 
 def _normalize_output_against_input(

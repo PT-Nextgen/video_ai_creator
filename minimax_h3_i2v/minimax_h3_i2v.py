@@ -3,7 +3,13 @@ import json
 import os
 import random
 
-from minimax_h3_prompt import default_structured_prompt, serialize_structured_prompt, structured_prompt_entry
+from minimax_h3_prompt import (
+    I2VA_FIRST_SHOT_VISUAL_EN,
+    I2VA_FIRST_SHOT_VISUAL_ID,
+    default_structured_prompt,
+    serialize_structured_prompt,
+    structured_prompt_entry,
+)
 
 from scripts import comfyui_api
 from logging_config import get_logger, write_log
@@ -35,11 +41,16 @@ SIZE_OPTIONS = [
     ("1280x720", 1280, 720),
 ]
 
+_DEFAULT_I2VA_ID_NEW = default_structured_prompt("I2VA")
+_DEFAULT_I2VA_ID_NEW["shots"][0]["visual"] = I2VA_FIRST_SHOT_VISUAL_ID
+_DEFAULT_I2VA_EN = default_structured_prompt("I2VA")
+_DEFAULT_I2VA_EN["shots"][0]["visual"] = I2VA_FIRST_SHOT_VISUAL_EN
+
 DEFAULT_PROMPT = {
     "positive_prompt": structured_prompt_entry(
         "I2VA",
-        id_new=default_structured_prompt("I2VA"),
-        en=default_structured_prompt("I2VA"),
+        id_new=_DEFAULT_I2VA_ID_NEW,
+        en=_DEFAULT_I2VA_EN,
     ),
     "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength": 0,

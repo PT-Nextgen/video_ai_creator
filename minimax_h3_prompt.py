@@ -19,6 +19,8 @@ I2VA_FIRST_FRAME_DETAIL_INSTRUCTION = (
     "from this image without changing the subject identity, composition, "
     "clothing, important objects, or spatial layout."
 )
+I2VA_FIRST_SHOT_VISUAL_EN = "At 0.00 seconds, <Picture 1> is the first frame of the video"
+I2VA_FIRST_SHOT_VISUAL_ID = "Pada 0,00 detik, <Picture 1> adalah frame pertama video"
 REQUIRED_SHOT_KEYS = (
     "shot_id",
     "start",
@@ -168,6 +170,32 @@ def structured_prompt_entry(mode: str, id_new=None, en: dict | None = None) -> d
         "id_new": copy.deepcopy(id_new),
         "en": en if isinstance(en, dict) else empty_structured_prompt(mode),
     }
+
+
+def enforce_i2va_first_shot_visual(entry: dict) -> dict:
+    """Force the exact bilingual first-frame visual wording for I2VA Shot 1."""
+    result = copy.deepcopy(entry or {})
+    if not isinstance(result, dict):
+        return result
+    id_new = result.get("id_new")
+    en = result.get("en")
+    if isinstance(id_new, dict):
+        shots = id_new.get("shots")
+        if isinstance(shots, list):
+            for shot in shots:
+                if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1":
+                    shot["visual"] = I2VA_FIRST_SHOT_VISUAL_ID
+                    break
+    if isinstance(en, dict):
+        shots = en.get("shots")
+        if isinstance(shots, list):
+            for shot in shots:
+                if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1":
+                    shot["visual"] = I2VA_FIRST_SHOT_VISUAL_EN
+                    break
+    if isinstance(id_new, dict):
+        result["id_old"] = copy.deepcopy(id_new)
+    return result
 
 
 def _recover_nested_legacy_prompt(value):
