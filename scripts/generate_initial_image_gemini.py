@@ -9,6 +9,7 @@ if PROJECT_ROOT not in os.sys.path:
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.workflow_builders import load_json
 from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
 
@@ -56,6 +57,7 @@ def process_scene(scene_dir: str, server: str):
 
 
 def main():
+    # Gemini projects do not participate in Llama/ComfyUI switching.
     parser = argparse.ArgumentParser(description="Generate initial Gemini images for scenes")
     parser.add_argument("--server", "-s", default="nextgenserver:8188", help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
@@ -69,6 +71,8 @@ def main():
         write_log(f"Project folder not found: {project_root}", level="error")
         print("Project folder not found; aborting")
         return 1
+    if project_uses_llama(project_root):
+        ensure_comfyui(reason="generate initial image Gemini")
 
     scenes = sorted([d for d in os.listdir(project_root) if d.startswith("scene_")], key=_scene_sort_key)
     if args.scene:

@@ -12,6 +12,7 @@ if PROJECT_ROOT not in os.sys.path:
 
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.server_config import get_server_address
 from scripts.project_settings import load_project_settings, save_project_settings
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
@@ -131,6 +132,7 @@ def process_cover(project_dir: str, server: str, timeout: int = 600, interval: f
 
 
 def main():
+    # Project-specific runtime management is performed by the parent workflow.
     parser = argparse.ArgumentParser(description="Generate project cover image from project_settings.json")
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
@@ -143,6 +145,8 @@ def main():
         write_log(f"Project folder not found: {project_dir}", level="error")
         print("Project folder not found; aborting")
         return 1
+    if project_uses_llama(project_dir):
+        ensure_comfyui(reason="generate cover image")
 
     ok = process_cover(project_dir, args.server)
     return 0 if ok else 1

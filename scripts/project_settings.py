@@ -20,8 +20,8 @@ DEFAULT_PROJECT_SETTINGS = {
         "height": 848,
     },
     "prompt_generation": {
-        "provider": "gemini",
-        "model": "gemini-3.1-flash-lite",
+        "provider": "llama.cpp",
+        "model": "qwen3.6-35b-a3b-uc-q4_k_m",
         "host": "nextgenserver",
         "port": 8080,
     },

@@ -8,9 +8,28 @@
     "model": "gemini-2.5-flash-lite"
   },
   "prompt_generation": {
-    "provider": "gemini",
-    "model": "gemini-3.5-flash",
+    "provider": "llama.cpp",
+    "model": "qwen3.6-35b-a3b-uc-q4_k_m",
     "host": "nextgenserver",
     "port": 8080
+  },
+  "runtime_controller": {
+    "url": "http://nextgenserver:9000",
+    "api_key_env": "VIDEO_RUNTIME_API_KEY",
+    "default_service": "llama",
+    "request_timeout_seconds": 30,
+    "switch_timeout_seconds": 300,
+    "health_timeout_seconds": 600,
+    "health_interval_seconds": 2,
+    "services": {
+      "llama": {
+        "health_url": "http://nextgenserver:8080/v1/models",
+        "health_path": "/v1/models"
+      },
+      "comfyui": {
+        "health_url": "http://nextgenserver:8188/system_stats",
+        "health_path": "/system_stats"
+      }
+    }
   }
 }

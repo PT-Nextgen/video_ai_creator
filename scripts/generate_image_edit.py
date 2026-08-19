@@ -15,6 +15,7 @@ from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image_edit
 from logging_config import setup_logging, write_log
 from prompt_localization import read_json_for_runtime
 from scripts import comfyui_api
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.server_config import get_server_address
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -161,6 +162,7 @@ def process_scene(
 
 
 def main():
+    # Project-specific runtime management is performed by the parent workflow.
     parser = argparse.ArgumentParser(description="Generate image edit for one scene")
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
@@ -180,6 +182,8 @@ def main():
         write_log(f"Folder scene tidak ditemukan: {scene_dir}", level="error")
         print("Scene folder not found")
         return 1
+    if project_uses_llama(scene_dir.parent):
+        ensure_comfyui(reason="image edit")
 
     try:
         source_image = str(args.source_image or "").strip()

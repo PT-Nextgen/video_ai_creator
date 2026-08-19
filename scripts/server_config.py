@@ -16,10 +16,29 @@ DEFAULT_SERVER_CONFIG = {
         "model": "gemini-2.5-flash-lite",
     },
     "prompt_generation": {
-        "provider": "gemini",
-        "model": "gemini-3.5-flash",
+        "provider": "llama.cpp",
+        "model": "qwen3.6-35b-a3b-uc-q4_k_m",
         "host": "nextgenserver",
         "port": 8080,
+    },
+    "runtime_controller": {
+        "url": "http://nextgenserver:9000",
+        "api_key_env": "VIDEO_RUNTIME_API_KEY",
+        "default_service": "llama",
+        "request_timeout_seconds": 30,
+        "switch_timeout_seconds": 300,
+        "health_timeout_seconds": 600,
+        "health_interval_seconds": 2,
+        "services": {
+            "llama": {
+                "health_url": "http://nextgenserver:8080/v1/models",
+                "health_path": "/v1/models"
+            },
+            "comfyui": {
+                "health_url": "http://nextgenserver:8188/system_stats",
+                "health_path": "/system_stats"
+            }
+        }
     },
 }
 
@@ -64,6 +83,28 @@ def _normalize_config(data: dict | None) -> dict:
         model_name = str(sub_config.get("model", DEFAULT_SERVER_CONFIG[key]["model"])).strip()
         sub_config["model"] = model_name or DEFAULT_SERVER_CONFIG[key]["model"]
         config[key] = sub_config
+    if isinstance(data, dict):
+        runtime = data.get("runtime_controller")
+        if isinstance(runtime, dict):
+            config["runtime_controller"].update(runtime)
+            if isinstance(runtime.get("services"), dict):
+                config["runtime_controller"]["services"].update(runtime["services"])
+                for service in ("llama", "comfyui"):
+                    if isinstance(runtime["services"].get(service), dict):
+                        config["runtime_controller"]["services"][service].update(runtime["services"][service])
+    runtime = config["runtime_controller"]
+    runtime["url"] = str(runtime.get("url", "")).strip().rstrip("/")
+    runtime["api_key_env"] = str(runtime.get("api_key_env", "VIDEO_RUNTIME_API_KEY")).strip() or "VIDEO_RUNTIME_API_KEY"
+    runtime["default_service"] = "llama" if str(runtime.get("default_service", "llama")).strip().lower() != "comfyui" else "comfyui"
+    for key, fallback in (("request_timeout_seconds", 30), ("switch_timeout_seconds", 300), ("health_timeout_seconds", 600), ("health_interval_seconds", 2)):
+        try:
+            runtime[key] = max(1, float(runtime.get(key, fallback)))
+        except (TypeError, ValueError):
+            runtime[key] = fallback
+    for service in ("llama", "comfyui"):
+        entry = runtime.setdefault("services", {}).setdefault(service, {})
+        entry["health_url"] = str(entry.get("health_url", DEFAULT_SERVER_CONFIG["runtime_controller"]["services"][service]["health_url"])).strip()
+        entry["health_path"] = str(entry.get("health_path", DEFAULT_SERVER_CONFIG["runtime_controller"]["services"][service]["health_path"])).strip() or DEFAULT_SERVER_CONFIG["runtime_controller"]["services"][service]["health_path"]
     return config
 
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 import requests
+from scripts.runtime_service_controller import ensure_llama
 
 from gemini.gemini_image import find_gemini_key
 from scripts.project_settings import load_project_settings
@@ -411,6 +412,7 @@ class PromptTranslator:
         timeout: int = LOCAL_LLM_TIMEOUT_SECONDS,
         phase: str = "generate_prompt_to_english",
     ) -> str:
+        ensure_llama(reason=f"prompt localization phase={phase}")
         host = self.prompt_generation_host
         port = self.prompt_generation_port
         base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"

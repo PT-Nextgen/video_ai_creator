@@ -129,6 +129,7 @@ music/
 
 # Misc tooling
 .pypirc
+switch-key.cfg
 .ruff_cache/
 .cursorignore
 .cursorindexingignore

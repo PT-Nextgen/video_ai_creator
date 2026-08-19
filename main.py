@@ -18,6 +18,7 @@ import imageio
 from PIL import Image
 
 from scripts import comfyui_api
+from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from z_image.z_image import (
@@ -1771,7 +1772,6 @@ def main():
         print(f"Gagal membaca project_settings.json: {e}")
         return 1
     project_generate_caption = bool(project_settings.get("caption", {}).get("generate_caption", True))
-
     scenes = sorted([d for d in os.listdir(project_dir) if d.startswith('scene_')], key=_scene_sort_key)
 
     # If user provided specific scenes, filter available scenes
@@ -1793,18 +1793,26 @@ def main():
         print('Loop count must be >= 1')
         return 1
 
-    for loop_idx in range(loop_count):
-        if loop_count > 1:
-            print(f"Starting loop {loop_idx+1}/{loop_count}")
-        for scene in scenes:
-            scene_dir = os.path.join(project_dir, scene)
-            print(f"Processing {scene_dir}")
-            ok = process_scene(scene_dir, args.server, project_generate_caption=project_generate_caption)
-            if not ok:
-                write_log(f"Stopping run due to failure processing {scene}")
-                print(f"Stopped due to failure in {scene}")
-                return 1
-    return 0
+    manage_runtime = project_uses_llama(project_dir)
+    runtime_controller = RuntimeServiceController.from_config() if manage_runtime else None
+    if runtime_controller is not None:
+        runtime_controller.ensure_comfyui(reason=f"main.py project={args.project}")
+    try:
+        for loop_idx in range(loop_count):
+            if loop_count > 1:
+                print(f"Starting loop {loop_idx+1}/{loop_count}")
+            for scene in scenes:
+                scene_dir = os.path.join(project_dir, scene)
+                print(f"Processing {scene_dir}")
+                ok = process_scene(scene_dir, args.server, project_generate_caption=project_generate_caption)
+                if not ok:
+                    write_log(f"Stopping run due to failure processing {scene}")
+                    print(f"Stopped due to failure in {scene}")
+                    return 1
+        return 0
+    finally:
+        if runtime_controller is not None and os.environ.get("VIDEO_AI_KEEP_COMFYUI", "0") != "1":
+            runtime_controller.ensure_llama(reason=f"main.py selesai project={args.project}")
 
 
 

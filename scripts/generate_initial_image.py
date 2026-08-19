@@ -9,6 +9,7 @@ if PROJECT_ROOT not in os.sys.path:
 
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
@@ -162,6 +163,8 @@ def main():
     args = parser.parse_args()
 
     setup_logging()
+    if project_uses_llama(os.path.join(PROJECT_ROOT, "api_production", str(args.project).strip())):
+        ensure_comfyui(reason="generate initial image")
 
     base = os.path.join(PROJECT_ROOT, "api_production", str(args.project).strip())
     if not os.path.exists(base):

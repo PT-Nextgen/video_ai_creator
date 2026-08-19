@@ -30,6 +30,7 @@ VENV_PYTHON = Path(ROOT) / ".venv" / "Scripts" / "python.exe"
 
 from logging_config import write_log
 from scripts.project_settings import load_project_settings
+from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
 from agentic.agentic_config import load_agentic_config
 from agentic.agentic_llm import expected_output_files, generate_variations
 
@@ -685,6 +686,8 @@ def _collect_all_scenes_meta(scene_dirs: list[Path]) -> list[dict]:
 
 
 def run_agentic_generate_for_project(project_dir: Path, target_scenes: list[str] | None = None) -> bool:
+    if project_uses_llama(project_dir):
+        RuntimeServiceController.from_config().ensure_llama(reason="agentic generate konfigurasi")
     project_dir = Path(project_dir)
     scene_dirs = _collect_scene_dirs(project_dir, target_scenes=target_scenes)
     all_scenes_meta = _collect_all_scenes_meta(scene_dirs)
@@ -709,6 +712,12 @@ def run_agentic_generate_for_project(project_dir: Path, target_scenes: list[str]
 
 
 def run_agentic_execute_for_project(project_dir: Path, server: str, target_scenes: list[str] | None = None) -> bool:
+    manage_runtime = project_uses_llama(project_dir)
+    controller = RuntimeServiceController.from_config() if manage_runtime else None
+    if controller is not None:
+        controller.ensure_comfyui(reason="agentic execute variasi")
+    previous_keep_comfyui = os.environ.get("VIDEO_AI_KEEP_COMFYUI")
+    os.environ["VIDEO_AI_KEEP_COMFYUI"] = "1"
     project_dir = Path(project_dir)
     scene_dirs = _collect_scene_dirs(project_dir, target_scenes=target_scenes)
     project_name = project_dir.name
@@ -720,13 +729,20 @@ def run_agentic_execute_for_project(project_dir: Path, server: str, target_scene
     write_log(f"[agentic] Server: {server}")
     write_log(f"{'=' * 60}\n")
 
-    for scene_dir in scene_dirs:
-        if not execute_variations_for_scene(scene_dir, project_name, server):
-            write_log(f"[agentic] Project {project_name}: Gagal execute di {scene_dir.name}", level="error")
-            return False
-
-    write_log(f"\n[agentic] Project {project_name}: Selesai execute variasi")
-    return True
+    try:
+        for scene_dir in scene_dirs:
+            if not execute_variations_for_scene(scene_dir, project_name, server):
+                write_log(f"[agentic] Project {project_name}: Gagal execute di {scene_dir.name}", level="error")
+                return False
+        write_log(f"\n[agentic] Project {project_name}: Selesai execute variasi")
+        return True
+    finally:
+        if previous_keep_comfyui is None:
+            os.environ.pop("VIDEO_AI_KEEP_COMFYUI", None)
+        else:
+            os.environ["VIDEO_AI_KEEP_COMFYUI"] = previous_keep_comfyui
+        if controller is not None:
+            controller.ensure_llama(reason="agentic execute selesai")
 
 
 def run_agentic_for_project(project_dir: Path, server: str, target_scenes: list[str] | None = None) -> bool:

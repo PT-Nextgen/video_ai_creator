@@ -80,6 +80,12 @@ from scripts.project_settings import (
     save_project_settings as save_project_settings_file,
 )
 from scripts import comfyui_api
+from scripts.runtime_service_controller import (
+    RuntimeServiceError,
+    RuntimeServiceController,
+    ensure_comfyui,
+    project_uses_llama,
+)
 from agentic.agentic_config import (
     DEFAULT_AGENERIC_CONFIG,
     IMAGE_EXTRA_MODES,
@@ -4257,6 +4263,14 @@ class SceneEditorWindow(QMainWindow):
     def open_project_settings_dialog(self):
         if not self.ensure_project_selected():
             return
+        if project_uses_llama(self.project_dir()):
+            try:
+                RuntimeServiceController.from_config().ensure_llama(
+                    reason=f"project config model refresh: {self.current_project_name}"
+                )
+            except RuntimeServiceError as exc:
+                self.append_log(f"[runtime] Gagal switch ke Llama untuk project config: {exc}", level="warning")
+                self.statusBar().showMessage("Llama tidak tersedia; model Llama tidak dapat diperbarui.", 5000)
         current_settings = copy.deepcopy(self.project_settings)
         dialog = ProjectSettingsDialog(
             current_settings,
@@ -4731,6 +4745,16 @@ class SceneEditorWindow(QMainWindow):
                 self,
                 "Gagal Memuat Daftar LoRa",
                 "Konfigurasi ComfyUI Server tidak valid, sehingga daftar LoRa tidak bisa dimuat saat UI dijalankan.",
+            )
+            return
+        try:
+            ensure_comfyui(reason="UI startup LoRA options")
+        except RuntimeServiceError as exc:
+            _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = []
+            QMessageBox.critical(
+                self,
+                "Gagal Menyalakan ComfyUI",
+                f"ComfyUI diperlukan untuk memuat daftar LoRA.\n\nError: {exc}",
             )
             return
         url = f"{normalized_server}/object_info"

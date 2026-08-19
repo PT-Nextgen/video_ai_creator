@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import requests
+from scripts.runtime_service_controller import ensure_llama
 
 from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
@@ -101,6 +102,7 @@ def call_llama_cpp_text(
     response_format: str | dict | None = None,
 ) -> str:
     """Call llama.cpp text API with OpenAI-compatible fallback endpoints."""
+    ensure_llama(reason="agentic LLM generation")
     host = str(host or "").strip() or "nextgenserver"
     base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
     server_base_url = f"{base_url.rstrip('/')}:{int(port)}"
