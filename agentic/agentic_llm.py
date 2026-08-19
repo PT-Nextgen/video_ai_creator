@@ -7,6 +7,7 @@ from pathlib import Path
 
 import requests
 from scripts.runtime_service_controller import ensure_llama
+from scripts.server_config import load_server_config
 
 from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
@@ -1969,7 +1970,8 @@ def generate_variations(
     """
     scene_dir = Path(scene_dir)
 
-    pg = project_settings.get("prompt_generation", {})
+    global_prompt_config = load_server_config().get("prompt_generation", {})
+    pg = global_prompt_config if isinstance(global_prompt_config, dict) else {}
     provider = str(pg.get("provider", "gemini")).strip().lower() or "gemini"
     if provider == LEGACY_LOCAL_PROMPT_PROVIDER:
         provider = LOCAL_PROMPT_PROVIDER

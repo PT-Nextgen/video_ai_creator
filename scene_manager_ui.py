@@ -79,12 +79,11 @@ from scripts.project_settings import (
     load_project_settings as load_project_settings_file,
     save_project_settings as save_project_settings_file,
 )
+from scripts.server_config import load_server_config
 from scripts import comfyui_api
 from scripts.runtime_service_controller import (
-    RuntimeServiceError,
     RuntimeServiceController,
     ensure_comfyui,
-    project_uses_llama,
 )
 from agentic.agentic_config import (
     DEFAULT_AGENERIC_CONFIG,
@@ -1515,7 +1514,22 @@ class UiLogHandler(logging.Handler):
             message = self.format(record)
         except Exception:
             message = record.getMessage()
-        self._emitter.message.emit(str(message))
+            self._emitter.message.emit(str(message))
+
+
+class RuntimeTaskWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, task):
+        super().__init__()
+        self.task = task
+
+    def run(self):
+        try:
+            self.finished.emit(self.task())
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class PromptGenerationWorker(QObject):
@@ -1884,10 +1898,16 @@ class ProjectSettingsDialog(QDialog):
         self.prompt_provider_input = QComboBox(self)
         self.prompt_provider_input.addItem("Gemini", "gemini")
         self.prompt_provider_input.addItem("llama.cpp", "llama.cpp")
-        self._gemini_prompt_models = [
-            "gemini-3.1-flash-lite",
-            "gemini-3.5-flash",
-        ]
+        global_config = load_server_config()
+        global_prompt_config = global_config.get("prompt_generation", {})
+        global_translate_config = global_config.get("translate", {})
+        llama_model = str(global_prompt_config.get("model", "")).strip() if isinstance(global_prompt_config, dict) else ""
+        gemini_model = str(global_translate_config.get("model", "")).strip() if isinstance(global_translate_config, dict) else ""
+        self._prompt_models_by_provider = {
+            "llama.cpp": [llama_model] if llama_model else [],
+            "gemini": [gemini_model] if gemini_model else [],
+        }
+        self._gemini_prompt_models = list(self._prompt_models_by_provider["gemini"])
         self._pending_prompt_model_value = ""
         self._is_loading_project_settings = False
         self._ollama_models_refresh_timer = QTimer(self)
@@ -1999,8 +2019,6 @@ class ProjectSettingsDialog(QDialog):
         self.video_size_input.currentIndexChanged.connect(self._sync_cover_size_with_project_size)
         self.prompt_provider_input.currentIndexChanged.connect(self._update_prompt_generation_fields)
         self.prompt_model_input.currentIndexChanged.connect(self._remember_prompt_model_selection)
-        self.prompt_ollama_host_input.textChanged.connect(self._schedule_ollama_model_refresh)
-        self.prompt_ollama_port_input.valueChanged.connect(self._schedule_ollama_model_refresh)
 
         self._load_data(settings_data)
         self._sync_cover_size_with_project_size()
@@ -2008,8 +2026,6 @@ class ProjectSettingsDialog(QDialog):
         self._update_cover_lora_enabled()
         self._update_cover_model_fields()
         self._update_prompt_generation_fields()
-        if _is_local_prompt_provider(self.prompt_provider_input.currentData() or "gemini"):
-            self._refresh_ollama_models()
         self._is_loading_project_settings = False
 
     def _set_model_combo_value(self, combo: QComboBox, value: str):
@@ -2039,19 +2055,16 @@ class ProjectSettingsDialog(QDialog):
         self.video_size_input.setCurrentIndex(max(index, 0))
 
         prompt_generation = data.get("prompt_generation", {})
+        prompt_generation = prompt_generation if isinstance(prompt_generation, dict) else {}
         self.prompt_ollama_host_input.setText(
             str(prompt_generation.get("host", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"])).strip()
         )
         self.prompt_ollama_port_input.setValue(
             int(prompt_generation.get("port", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["port"]))
         )
-        prompt_provider = str(
-            prompt_generation.get("provider", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"])
-        ).strip().lower() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["provider"]
+        prompt_provider = str(prompt_generation.get("provider", "gemini")).strip().lower() or "gemini"
         prompt_provider = _normalize_prompt_provider(prompt_provider)
-        self._pending_prompt_model_value = str(
-            prompt_generation.get("model", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"])
-        ).strip()
+        self._pending_prompt_model_value = str(prompt_generation.get("model", "")).strip()
         prompt_provider_index = self.prompt_provider_input.findData(prompt_provider)
         self.prompt_provider_input.setCurrentIndex(max(prompt_provider_index, 0))
 
@@ -2117,11 +2130,9 @@ class ProjectSettingsDialog(QDialog):
         label = self.form_layout.labelForField(self.prompt_ollama_server_widget) if hasattr(self, "form_layout") else None
         if label is not None:
             label.setVisible(is_ollama)
-        if is_ollama:
-            self._schedule_ollama_model_refresh()
-        else:
-            selected_value = self._pending_prompt_model_value or str(self.prompt_model_input.currentData() or "").strip()
-            self._set_prompt_model_choices(self._gemini_prompt_models, selected_value)
+        model_options = self._prompt_models_by_provider.get(provider, [])
+        selected_value = model_options[0] if model_options else ""
+        self._set_prompt_model_choices(model_options, selected_value)
 
     def _set_prompt_model_choices(self, model_names: list[str], selected_value: str = ""):
         selected_value = str(selected_value or "").strip()
@@ -2524,6 +2535,8 @@ class SceneEditorWindow(QMainWindow):
         self.project_settings = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
         self.process = None
         self.process_context = None
+        self.runtime_task_thread = None
+        self.runtime_task_worker = None
         self.multi_project_agentic_queue: list[str] = []
         self.multi_project_agentic_completed: list[str] = []
         self.loading_scene = False
@@ -2564,6 +2577,9 @@ class SceneEditorWindow(QMainWindow):
         self.audio_action_group_widget = None
         self.backup_action_group_widget = None
         self.compose_action_group_widget = None
+        self.runtime_action_group_widget = None
+        self.runtime_switch_buttons = []
+        self.runtime_status_button = None
 
         self.scene_title_input = QLineEdit()
         self.scene_description_input = QTextEdit()
@@ -3573,6 +3589,7 @@ class SceneEditorWindow(QMainWindow):
         self.audio_action_group_widget = self.build_audio_action_group()
         self.backup_action_group_widget = self.build_backup_action_group()
         self.compose_action_group_widget = self.build_compose_action_group()
+        self.runtime_action_group_widget = self.build_runtime_action_group()
         self.toolbar.addWidget(self.project_action_group_widget)
         self.toolbar.addWidget(self.scene_action_group_widget)
         self.toolbar.addWidget(self.edit_prompt_action_group_widget)
@@ -3581,6 +3598,7 @@ class SceneEditorWindow(QMainWindow):
         self.toolbar.addWidget(self.audio_action_group_widget)
         self.toolbar.addWidget(self.backup_action_group_widget)
         self.toolbar.addWidget(self.compose_action_group_widget)
+        self.toolbar.addWidget(self.runtime_action_group_widget)
         self._apply_scene_view_mode()
 
     def build_project_action_group(self):
@@ -4263,14 +4281,9 @@ class SceneEditorWindow(QMainWindow):
     def open_project_settings_dialog(self):
         if not self.ensure_project_selected():
             return
-        if project_uses_llama(self.project_dir()):
-            try:
-                RuntimeServiceController.from_config().ensure_llama(
-                    reason=f"project config model refresh: {self.current_project_name}"
-                )
-            except RuntimeServiceError as exc:
-                self.append_log(f"[runtime] Gagal switch ke Llama untuk project config: {exc}", level="warning")
-                self.statusBar().showMessage("Llama tidak tersedia; model Llama tidak dapat diperbarui.", 5000)
+        self._open_project_settings_dialog_now()
+
+    def _open_project_settings_dialog_now(self):
         current_settings = copy.deepcopy(self.project_settings)
         dialog = ProjectSettingsDialog(
             current_settings,
@@ -4708,6 +4721,133 @@ class SceneEditorWindow(QMainWindow):
         add_button("Gabungkan video dan audio untuk semua adegan.", QStyle.SP_DialogYesButton, self.compose_all_scenes)
         return frame
 
+    def build_runtime_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
+
+        llama_button = QToolButton(frame)
+        llama_button.setText("L")
+        llama_button.setToolTip("Hidupkan Llama dan matikan ComfyUI.")
+        llama_button.setStatusTip(llama_button.toolTip())
+        llama_button.clicked.connect(lambda: self.manual_runtime_switch("llama"))
+        layout.addWidget(llama_button)
+
+        comfyui_button = QToolButton(frame)
+        comfyui_button.setText("C")
+        comfyui_button.setToolTip("Hidupkan ComfyUI dan matikan Llama.")
+        comfyui_button.setStatusTip(comfyui_button.toolTip())
+        comfyui_button.clicked.connect(lambda: self.manual_runtime_switch("comfyui"))
+        layout.addWidget(comfyui_button)
+        self.runtime_switch_buttons = [llama_button, comfyui_button]
+
+        status_button = QToolButton(frame)
+        status_button.setText("V")
+        status_button.setFixedWidth(30)
+        status_button.setToolTip("Cek service Llama dan ComfyUI yang sedang hidup.")
+        status_button.setStatusTip(status_button.toolTip())
+        status_button.clicked.connect(self.check_runtime_status)
+        layout.addWidget(status_button)
+        self.runtime_status_button = status_button
+        self._apply_runtime_status_colors(None)
+        return frame
+
+    def manual_runtime_switch(self, target: str):
+        target = str(target or "").strip().lower()
+        if target not in {"llama", "comfyui"}:
+            return
+        if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
+            self.statusBar().showMessage("Operasi runtime lain masih berjalan.", 4000)
+            return
+        for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+            button.setEnabled(False)
+        self.statusBar().showMessage(f"Switch ke {target} sedang berjalan...", 3000)
+        started = self._start_runtime_task(
+            lambda: self._manual_runtime_switch_task(target),
+            lambda status: self._manual_runtime_switch_finished(target, status),
+            lambda error: self._manual_runtime_switch_failed(target, error),
+        )
+        if not started:
+            for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+                button.setEnabled(True)
+
+    @staticmethod
+    def _manual_runtime_switch_task(target: str):
+        controller = RuntimeServiceController.from_config()
+        if target == "llama":
+            controller.ensure_llama(reason="manual UI switch")
+        else:
+            controller.ensure_comfyui(reason="manual UI switch")
+        return controller.status()
+
+    def _manual_runtime_switch_finished(self, target: str, status: dict):
+        self._apply_runtime_status_colors(status)
+        for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+            button.setEnabled(True)
+        self.statusBar().showMessage(f"{target} aktif dan service lainnya mati.", 5000)
+
+    def _manual_runtime_switch_failed(self, target: str, error: str):
+        for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+            button.setEnabled(True)
+        self.append_log(f"[runtime] Manual switch ke {target} gagal: {error}")
+        self.statusBar().showMessage(f"Switch ke {target} gagal.", 5000)
+
+    def check_runtime_status(self):
+        if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
+            self.statusBar().showMessage("Operasi runtime lain masih berjalan.", 4000)
+            return
+        for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+            button.setEnabled(False)
+        self.statusBar().showMessage("Memeriksa status service...", 3000)
+        started = self._start_runtime_task(
+            lambda: RuntimeServiceController.from_config().status(),
+            self._runtime_status_checked,
+            self._runtime_status_check_failed,
+        )
+        if not started:
+            for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+                button.setEnabled(True)
+
+    def _runtime_status_checked(self, status: dict):
+        self._apply_runtime_status_colors(status)
+        for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+            button.setEnabled(True)
+        active = str(status.get("active", "none")) if isinstance(status, dict) else "none"
+        self.statusBar().showMessage(f"Runtime aktif: {active}", 4000)
+
+    def _runtime_status_check_failed(self, error: str):
+        self._apply_runtime_status_colors(None)
+        for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
+            button.setEnabled(True)
+        self.append_log(f"[runtime] Gagal cek status service: {error}")
+        self.statusBar().showMessage("Gagal memeriksa status service.", 5000)
+
+    def _apply_runtime_status_colors(self, status: dict | None):
+        services = status.get("services", {}) if isinstance(status, dict) else {}
+
+        def is_healthy(service: str) -> bool:
+            value = services.get(service, {}) if isinstance(services, dict) else {}
+            return isinstance(value, dict) and bool(value.get("health"))
+
+        llama_green = is_healthy("llama")
+        comfyui_green = is_healthy("comfyui")
+        if self.runtime_switch_buttons:
+            self.runtime_switch_buttons[0].setStyleSheet(
+                "QToolButton { background: #22c55e; color: white; font-weight: 700; }" if llama_green
+                else "QToolButton { background: #9ca3af; color: white; font-weight: 700; }"
+            )
+            self.runtime_switch_buttons[1].setStyleSheet(
+                "QToolButton { background: #22c55e; color: white; font-weight: 700; }" if comfyui_green
+                else "QToolButton { background: #9ca3af; color: white; font-weight: 700; }"
+            )
+        if self.runtime_status_button is not None:
+            self.runtime_status_button.setStyleSheet(
+                "QToolButton { background: #2563eb; color: white; font-weight: 700; }"
+            )
+
     def append_log(self, text: str):
         self.log_output.appendPlainText(text.rstrip())
 
@@ -4747,40 +4887,60 @@ class SceneEditorWindow(QMainWindow):
                 "Konfigurasi ComfyUI Server tidak valid, sehingga daftar LoRa tidak bisa dimuat saat UI dijalankan.",
             )
             return
-        try:
-            ensure_comfyui(reason="UI startup LoRA options")
-        except RuntimeServiceError as exc:
-            _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = []
-            QMessageBox.critical(
-                self,
-                "Gagal Menyalakan ComfyUI",
-                f"ComfyUI diperlukan untuk memuat daftar LoRA.\n\nError: {exc}",
-            )
-            return
-        url = f"{normalized_server}/object_info"
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            payload = response.json() if response.content else {}
-            options = _extract_lora_options_from_object_info(payload)
-        except Exception as e:
-            _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = []
-            QMessageBox.critical(
-                self,
-                "Gagal Memuat Daftar LoRa",
-                (
-                    "ComfyUI tidak menjawab saat UI dijalankan, sehingga daftar LoRa gagal dimuat.\n\n"
-                    f"Server: {server}\n"
-                    f"Error: {e}"
-                ),
-            )
-            return
-        _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = list(options)
+        self._start_runtime_task(
+            lambda: self._fetch_startup_lora_options(normalized_server),
+            lambda options: self._on_startup_lora_options_loaded(normalized_server, options),
+            lambda error: self._on_startup_lora_options_failed(normalized_server, error),
+        )
+
+    @staticmethod
+    def _fetch_startup_lora_options(normalized_server: str):
+        ensure_comfyui(reason="UI startup LoRA options", restore_on_exit=False)
+        response = requests.get(f"{normalized_server}/object_info", timeout=10)
+        response.raise_for_status()
+        payload = response.json() if response.content else {}
+        return _extract_lora_options_from_object_info(payload)
+
+    def _on_startup_lora_options_loaded(self, normalized_server: str, options):
+        _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = list(options or [])
+        self.append_log(f"[runtime] Daftar LoRA startup selesai: {len(options or [])} opsi")
         if self.current_scene_dir is not None:
             self._refresh_minimax_h3_lora_options(
                 self.minimax_h3_t2v_lora_name_input.currentText().strip(),
                 preserve_missing=True,
             )
+
+    def _on_startup_lora_options_failed(self, normalized_server: str, error: str):
+        _COMFYUI_LORA_OPTIONS_CACHE[normalized_server] = []
+        QMessageBox.critical(
+            self,
+            "Gagal Memuat Daftar LoRa",
+            f"Daftar LoRa gagal dimuat secara async.\n\nServer: {normalized_server}\nError: {error}",
+        )
+
+    def _start_runtime_task(self, task, on_finished, on_failed):
+        if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
+            self.append_log("[runtime] Operasi runtime async masih berjalan; permintaan baru diabaikan.")
+            return False
+        thread = QThread(self)
+        worker = RuntimeTaskWorker(task)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(on_finished)
+        worker.failed.connect(on_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._runtime_task_finished)
+        self.runtime_task_thread = thread
+        self.runtime_task_worker = worker
+        thread.start()
+        return True
+
+    def _runtime_task_finished(self):
+        self.runtime_task_thread = None
+        self.runtime_task_worker = None
 
     def release_media_locks(self):
         self.video_player.stop()

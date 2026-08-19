@@ -30,6 +30,7 @@ VENV_PYTHON = Path(ROOT) / ".venv" / "Scripts" / "python.exe"
 
 from logging_config import write_log
 from scripts.project_settings import load_project_settings
+from scripts.server_config import load_server_config
 from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
 from agentic.agentic_config import load_agentic_config
 from agentic.agentic_llm import expected_output_files, generate_variations
@@ -490,7 +491,13 @@ def generate_variation_configs_for_scene(
         write_log(f"[agentic] {project_name}: Gagal baca project_settings.json: {e}", level="error")
         return False
 
-    model_name = str(project_settings.get("prompt_generation", {}).get("model", "gemini-3.1-flash-lite")).strip()
+    project_prompt_config = project_settings.get("prompt_generation", {})
+    project_provider = str(project_prompt_config.get("provider", "gemini")).strip().lower() if isinstance(project_prompt_config, dict) else "gemini"
+    server_config = load_server_config()
+    if project_provider == "llama.cpp":
+        model_name = str(server_config.get("prompt_generation", {}).get("model", "")).strip()
+    else:
+        model_name = str(server_config.get("translate", {}).get("model", "")).strip()
     allowed_output_files = set(expected_output_files(scene_type, agentic_config))
     start_variation_index = _next_variation_index(scene_dir)
 

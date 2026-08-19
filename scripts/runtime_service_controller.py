@@ -8,13 +8,13 @@ from __future__ import annotations
 import json
 import os
 import time
-import atexit
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.server_config import load_server_config
+from logging_config import write_log
 
 
 KEY_FILE = Path(__file__).resolve().parent.parent / "switch-key.cfg"
@@ -40,7 +40,7 @@ def _load_api_key() -> str:
 
 
 def project_uses_llama(project_dir: str | Path) -> bool:
-    """Return whether a project opts into local Llama runtime management."""
+    """Return whether this project selects the local Llama provider."""
     try:
         from scripts.project_settings import load_project_settings
         provider = str(load_project_settings(Path(project_dir)).get("prompt_generation", {}).get("provider", "gemini")).strip().lower()
@@ -65,6 +65,7 @@ class RuntimeServiceController:
         api_key = _load_api_key() or os.environ.get(key_env, "").strip()
         if not api_key:
             raise RuntimeServiceError(f"API key belum diisi di {KEY_FILE.name}")
+        write_log(f"[runtime] API request {method.upper()} {path}")
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{base}/{path.lstrip('/')}",
@@ -79,8 +80,10 @@ class RuntimeServiceController:
         try:
             with urllib.request.urlopen(request, timeout=timeout or float(self.config.get("request_timeout_seconds", 30))) as response:
                 raw = response.read().decode("utf-8", errors="replace")
+                write_log(f"[runtime] API response {method.upper()} {path}: HTTP {response.status}")
                 return json.loads(raw) if raw else {}
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+            write_log(f"[runtime] API error {method.upper()} {path}: {exc}", level="warning")
             raise RuntimeServiceError(f"Runtime controller request {method} {path} gagal: {exc}") from exc
 
     def status(self) -> dict:
@@ -95,26 +98,35 @@ class RuntimeServiceController:
             request = urllib.request.Request(health_url, method="GET", headers={"Accept": "application/json"})
             with urllib.request.urlopen(request, timeout=float(self.config.get("request_timeout_seconds", 30))) as response:
                 if response.status < 200 or response.status >= 300:
+                    write_log(f"[runtime] Health {service}: HTTP {response.status}", level="debug")
                     return False
                 json.loads(response.read().decode("utf-8", errors="replace"))
+            write_log(f"[runtime] Health {service}: healthy")
             return True
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError):
+            write_log(f"[runtime] Health {service}: belum siap", level="debug")
             return False
 
     def wait_health(self, service: str, expected: bool) -> None:
         deadline = time.monotonic() + float(self.config.get("health_timeout_seconds", 600))
         interval = float(self.config.get("health_interval_seconds", 2))
+        write_log(f"[runtime] Menunggu health {service} expected={expected}, timeout={self.config.get('health_timeout_seconds', 600)} detik")
+        attempts = 0
         while time.monotonic() < deadline:
+            attempts += 1
             if self._health(service) is expected:
+                write_log(f"[runtime] Health {service} terverifikasi expected={expected} setelah {attempts} cek")
                 return
             time.sleep(interval)
         state = "hidup" if expected else "mati"
+        write_log(f"[runtime] Timeout menunggu {service} {state} setelah {attempts} cek", level="error")
         raise RuntimeServiceError(f"{service} tidak terverifikasi {state} setelah timeout")
 
     def switch(self, target: str, reason: str = "video_ai_creator") -> None:
         target = str(target).strip().lower()
         if target not in {"llama", "comfyui"}:
             raise RuntimeServiceError(f"Target service tidak valid: {target}")
+        write_log(f"[runtime] Switch mulai target={target}, reason={reason}")
         self._request("POST", "/v1/runtime/switch", {
             "target": target,
             "reason": reason,
@@ -123,14 +135,17 @@ class RuntimeServiceController:
         other = "comfyui" if target == "llama" else "llama"
         self.wait_health(other, False)
         self.wait_health(target, True)
+        write_log(f"[runtime] Switch selesai target={target}")
 
     def ensure(self, target: str, reason: str = "video_ai_creator") -> None:
         target = str(target).strip().lower()
+        write_log(f"[runtime] Ensure mulai target={target}, reason={reason}")
         if self._health(target):
             other = "comfyui" if target == "llama" else "llama"
             if not self._health(other):
                 return
         self.switch(target, reason=reason)
+        write_log(f"[runtime] Ensure selesai target={target}")
 
     def ensure_llama(self, reason: str = "prompt_generation") -> None:
         self.ensure("llama", reason)
@@ -143,10 +158,12 @@ def ensure_llama(reason: str = "prompt_generation") -> None:
     RuntimeServiceController.from_config().ensure_llama(reason)
 
 
-def ensure_comfyui(reason: str = "workflow_execution") -> None:
+def ensure_comfyui(reason: str = "workflow_execution", restore_on_exit: bool = True) -> None:
     controller = RuntimeServiceController.from_config()
     controller.ensure_comfyui(reason)
-    if os.environ.get("VIDEO_AI_KEEP_COMFYUI", "0") != "1":
+    if restore_on_exit and os.environ.get("VIDEO_AI_KEEP_COMFYUI", "0") != "1":
+        import atexit
+
         def restore():
             try:
                 controller.ensure_llama(reason=f"proses selesai: {reason}")

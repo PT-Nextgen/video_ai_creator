@@ -13,7 +13,6 @@ import requests
 from scripts.runtime_service_controller import ensure_llama
 
 from gemini.gemini_image import find_gemini_key
-from scripts.project_settings import load_project_settings
 from scripts.server_config import load_server_config
 from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
 from minimax_h3_prompt import (
@@ -380,9 +379,11 @@ class PromptTranslator:
         prompt_generation_model_name: str = DEFAULT_PROMPT_GENERATION_MODEL,
         prompt_generation_host: str = DEFAULT_LOCAL_PROMPT_HOST,
         prompt_generation_port: int = DEFAULT_LOCAL_PROMPT_PORT,
+        translate_provider: str = "gemini",
+        translate_model_name: str = DEFAULT_TRANSLATE_MODEL,
     ):
         self._gemini = GeminiPromptTranslator(
-            translate_model_name=prompt_generation_model_name,
+            translate_model_name=translate_model_name,
             prompt_generation_model_name=prompt_generation_model_name,
         )
         self.prompt_generation_provider = (
@@ -402,7 +403,12 @@ class PromptTranslator:
             self.prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
         if self.prompt_generation_port <= 0:
             self.prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
-        self.translate_model_name = self.prompt_generation_model_name
+        self.translate_provider = str(translate_provider or "gemini").strip().lower() or "gemini"
+        if self.translate_provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+            self.translate_provider = LOCAL_PROMPT_PROVIDER
+        if self.translate_provider not in {"gemini", LOCAL_PROMPT_PROVIDER}:
+            self.translate_provider = "gemini"
+        self.translate_model_name = str(translate_model_name or DEFAULT_TRANSLATE_MODEL).strip() or DEFAULT_TRANSLATE_MODEL
         self.last_call_metrics: dict | None = None
 
     def _call_local_text_model(
@@ -515,7 +521,7 @@ class PromptTranslator:
         text = _clean_text(text)
         if not text:
             return ""
-        if self.prompt_generation_provider == "gemini":
+        if self.translate_provider == "gemini":
             result = self._gemini.translate_to_english(text, context=context)
             self.last_call_metrics = self._gemini.last_call_metrics
             return result
@@ -526,7 +532,7 @@ class PromptTranslator:
         )
         payload_text = _compose_prompt_request_text(text, context) if context else text
         result = self._call_local_text_model(
-            self.prompt_generation_model_name,
+            self.translate_model_name,
             instruction + "\n" + payload_text,
             timeout=LOCAL_LLM_TIMEOUT_SECONDS,
             phase="translate_to_english",
@@ -537,7 +543,7 @@ class PromptTranslator:
         text = _clean_text(text)
         if not text:
             return ""
-        if self.prompt_generation_provider == "gemini":
+        if self.translate_provider == "gemini":
             result = self._gemini.translate_to_indonesian(text, context=context)
             self.last_call_metrics = self._gemini.last_call_metrics
             return result
@@ -556,7 +562,7 @@ class PromptTranslator:
                     "Translate it into Indonesian now; do not copy the source unchanged."
                 )
             result = self._call_local_text_model(
-                self.prompt_generation_model_name,
+                self.translate_model_name,
                 request_text,
                 timeout=LOCAL_LLM_TIMEOUT_SECONDS,
                 phase="translate_to_indonesian",
@@ -1115,66 +1121,55 @@ def _guess_project_dir_from_path(path: str | None) -> Path | None:
 
 def get_prompt_translator(provider: str | None = None, project_dir: str | Path | None = None):
     _ = provider
-    prompt_generation_provider = "gemini"
-    prompt_generation_model = DEFAULT_PROMPT_GENERATION_MODEL
-    prompt_generation_host = DEFAULT_LOCAL_PROMPT_HOST
-    prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
-
-    project_cfg = {}
+    config = load_server_config()
+    prompt_generation_config = config.get("prompt_generation") if isinstance(config, dict) else {}
+    prompt_generation_config = prompt_generation_config if isinstance(prompt_generation_config, dict) else {}
+    translate_config = config.get("translate") if isinstance(config, dict) else {}
+    translate_config = translate_config if isinstance(translate_config, dict) else {}
+    project_provider = str(prompt_generation_config.get("provider", "gemini")).strip().lower() or "gemini"
+    project_model = ""
+    project_host = ""
+    project_port = DEFAULT_LOCAL_PROMPT_PORT
     if project_dir:
         try:
-            project_cfg = load_project_settings(Path(project_dir))
+            from scripts.project_settings import load_project_settings
+            project_config = load_project_settings(Path(project_dir))
+            project_prompt = project_config.get("prompt_generation", {}) if isinstance(project_config, dict) else {}
+            if isinstance(project_prompt, dict):
+                project_provider = str(project_prompt.get("provider", "gemini")).strip().lower() or "gemini"
+                project_model = str(project_prompt.get("model", "")).strip()
+                project_host = str(project_prompt.get("host", "")).strip()
+                try:
+                    project_port = int(project_prompt.get("port", DEFAULT_LOCAL_PROMPT_PORT))
+                except (TypeError, ValueError):
+                    project_port = DEFAULT_LOCAL_PROMPT_PORT
         except Exception:
-            project_cfg = {}
-
-    if isinstance(project_cfg, dict) and project_cfg:
-        prompt_generation_config = (
-            project_cfg.get("prompt_generation")
-            if isinstance(project_cfg.get("prompt_generation"), dict)
-            else {}
-        )
-        if isinstance(prompt_generation_config, dict):
-            prompt_generation_provider = (
-                str(prompt_generation_config.get("provider", prompt_generation_provider)).strip().lower()
-                or prompt_generation_provider
-            )
-            prompt_generation_model = (
-                str(prompt_generation_config.get("model", prompt_generation_model)).strip()
-                or prompt_generation_model
-            )
-            prompt_generation_host = (
-                str(prompt_generation_config.get("host", prompt_generation_host)).strip()
-                or prompt_generation_host
-            )
-            try:
-                prompt_generation_port = int(prompt_generation_config.get("port", prompt_generation_port))
-            except (TypeError, ValueError):
-                prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
+            pass
+    if project_provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+        project_provider = LOCAL_PROMPT_PROVIDER
+    prompt_generation_provider = project_provider if project_provider in {"gemini", LOCAL_PROMPT_PROVIDER} else "gemini"
+    if prompt_generation_provider == LOCAL_PROMPT_PROVIDER:
+        prompt_generation_model = str(prompt_generation_config.get("model", DEFAULT_PROMPT_GENERATION_MODEL)).strip() or DEFAULT_PROMPT_GENERATION_MODEL
     else:
-        config = load_server_config()
-        prompt_generation_config = config.get("prompt_generation") if isinstance(config, dict) else {}
-        if isinstance(prompt_generation_config, dict):
-            prompt_generation_provider = (
-                str(prompt_generation_config.get("provider", prompt_generation_provider)).strip().lower()
-                or prompt_generation_provider
-            )
-            prompt_generation_model = (
-                str(prompt_generation_config.get("model", prompt_generation_model)).strip()
-                or prompt_generation_model
-            )
-            prompt_generation_host = (
-                str(prompt_generation_config.get("host", prompt_generation_host)).strip()
-                or prompt_generation_host
-            )
-            try:
-                prompt_generation_port = int(prompt_generation_config.get("port", prompt_generation_port))
-            except (TypeError, ValueError):
-                prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
+        prompt_generation_model = str(translate_config.get("model", DEFAULT_TRANSLATE_MODEL)).strip() or DEFAULT_TRANSLATE_MODEL
+    prompt_generation_host = str(prompt_generation_config.get("host", DEFAULT_LOCAL_PROMPT_HOST)).strip() or DEFAULT_LOCAL_PROMPT_HOST
+    try:
+        prompt_generation_port = int(prompt_generation_config.get("port", DEFAULT_LOCAL_PROMPT_PORT))
+    except (TypeError, ValueError):
+        prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
+    if project_model and prompt_generation_provider == LOCAL_PROMPT_PROVIDER:
+        project_model = prompt_generation_model
+    if project_host and prompt_generation_provider == LOCAL_PROMPT_PROVIDER:
+        prompt_generation_host = project_host
+    if project_port > 0 and prompt_generation_provider == LOCAL_PROMPT_PROVIDER:
+        prompt_generation_port = project_port
     return PromptTranslator(
         prompt_generation_provider=prompt_generation_provider,
         prompt_generation_model_name=prompt_generation_model,
         prompt_generation_host=prompt_generation_host,
         prompt_generation_port=prompt_generation_port,
+        translate_provider=prompt_generation_provider,
+        translate_model_name=prompt_generation_model,
     )
 
 
