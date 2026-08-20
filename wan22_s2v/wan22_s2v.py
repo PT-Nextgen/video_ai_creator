@@ -30,7 +30,7 @@ DEFAULT_PROMPT = {
     "negative_prompt": "",
     "width": 480,
     "height": 848,
-    "cfg": 2.0,
+    "cfg": 6.0,
     "json_api": "auto_by_speech_duration",
 }
 

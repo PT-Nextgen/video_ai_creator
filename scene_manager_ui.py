@@ -2922,7 +2922,7 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_cfg_input.setRange(1.0, 6.0)
         self.s2v_cfg_input.setSingleStep(0.1)
         self.s2v_cfg_input.setDecimals(1)
-        self.s2v_cfg_input.setValue(float(DEFAULT_WAN22_S2V_PROMPT.get("cfg", 2.0)))
+        self.s2v_cfg_input.setValue(float(DEFAULT_WAN22_S2V_PROMPT.get("cfg", 6.0)))
         self.web_url_input = QLineEdit()
         self.web_size_input = QComboBox()
         for label, width, height in Z_IMAGE_SIZES:
