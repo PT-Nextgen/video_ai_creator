@@ -17,6 +17,7 @@ from prompt_localization import read_json_for_runtime
 from scripts import comfyui_api
 from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.server_config import get_server_address
+from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
@@ -151,7 +152,7 @@ def process_scene(
         raise RuntimeError(f"ComfyUI tidak mengembalikan prompt_id: {json.dumps(result)}")
     write_log(f"Flux2 edit workflow terkirim, prompt_id={prompt_id}")
 
-    image_out = comfyui_api.wait_for_output(server, prompt_id, output_type="image", timeout=900, interval=2.0)
+    image_out = comfyui_api.wait_for_output(server, prompt_id, output_type="image", timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=SHORT_POLL_INTERVAL_SECONDS)
     if not image_out:
         raise RuntimeError(f"Output image tidak ditemukan (prompt_id={prompt_id})")
     output_path = _download_comfy_image(server, image_out, scene_dir)

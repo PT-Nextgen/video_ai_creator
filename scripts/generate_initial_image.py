@@ -12,6 +12,7 @@ from scripts import comfyui_api
 from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
+from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 from prompt_localization import (
@@ -31,11 +32,11 @@ def _scene_sort_key(name: str):
         return (10**9, str(name))
 
 
-def process_scene(scene_dir: str, server: str, timeout: int = 600, interval: float = 2.0):
+def process_scene(scene_dir: str, server: str, timeout: int = COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval: float = SHORT_POLL_INTERVAL_SECONDS):
     return process_scene_prompt(scene_dir, server, "z_image_prompt.json", 1, timeout=timeout, interval=interval)
 
 
-def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_index: int = 1, timeout: int = 600, interval: float = 2.0):
+def process_scene_prompt(scene_dir: str, server: str, prompt_file: str, prompt_index: int = 1, timeout: int = COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval: float = SHORT_POLL_INTERVAL_SECONDS):
     scene_dir = os.path.abspath(scene_dir)
     write_log(f"Processing scene {scene_dir}")
 

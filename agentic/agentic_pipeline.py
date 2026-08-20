@@ -40,28 +40,26 @@ VARIATION_DIR_PATTERN = re.compile(r"^variasi_?\d+$", re.IGNORECASE)
 STATUS_DONE_FILENAME = "status.done"
 STATUS_FAILED_FILENAME = "status.failed"
 VARIATION_FAIL_FILENAME = "variasi_gagal.txt"
-DEFAULT_SCRIPT_TIMEOUT = 1800
-MINIMAX_H3_I2V_SCRIPT_TIMEOUT = 3900
-MINIMAX_H3_T2V_I2V_SCRIPT_TIMEOUT = 7800
 
 
 def _run_script(
     script_path: Path,
     args: list[str],
     cwd: Path | None = None,
-    timeout: int = DEFAULT_SCRIPT_TIMEOUT,
+    timeout: int | None = None,
 ) -> bool:
     """Run a Python script as a subprocess. Returns True on success."""
     python_executable = VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)
     cmd = [str(python_executable), str(script_path)] + args
-    write_log(f"[agentic] Running (timeout={int(timeout)}s): {' '.join(cmd)}")
+    timeout_label = "call-managed" if timeout is None else f"{int(timeout)}s"
+    write_log(f"[agentic] Running (timeout={timeout_label}): {' '.join(cmd)}")
     try:
         result = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
-            timeout=int(timeout),
+            timeout=None if timeout is None else int(timeout),
         )
         if result.stdout:
             for line in result.stdout.strip().split("\n"):
@@ -395,13 +393,7 @@ def _process_scene_with_main(scene_dir: Path, project_name: str, server: str) ->
     args = ["--project", project_name, "--scene", scene_dir.name, "--server", server]
     scene_meta = _load_scene_meta(scene_dir) or {}
     scene_type = str(scene_meta.get("scene_type", "")).strip()
-    if scene_type == "minimax-h3_t2v_i2v":
-        timeout = MINIMAX_H3_T2V_I2V_SCRIPT_TIMEOUT
-    elif scene_type == "minimax-h3_i2v":
-        timeout = MINIMAX_H3_I2V_SCRIPT_TIMEOUT
-    else:
-        timeout = DEFAULT_SCRIPT_TIMEOUT
-    return _run_script(main_script, args, cwd=scene_dir, timeout=timeout)
+    return _run_script(main_script, args, cwd=scene_dir, timeout=None)
 
 
 def _load_scene_meta(scene_dir: Path) -> dict | None:

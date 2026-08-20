@@ -8,6 +8,7 @@ from pathlib import Path
 import requests
 from scripts.runtime_service_controller import ensure_llama
 from scripts.server_config import load_server_config
+from scripts.timeout_config import LLM_CALL_TIMEOUT_SECONDS
 
 from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
@@ -25,7 +26,7 @@ LOCAL_PROMPT_PROVIDER = "llama.cpp"
 LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
-LOCAL_LLM_TIMEOUT_SECONDS = 20 * 60
+LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +37,7 @@ def call_gemini_text(
     prompt: str,
     model_name: str = "gemini-3.1-flash-lite",
     api_key: str | None = None,
-    timeout: int = 120,
+    timeout: int = LLM_CALL_TIMEOUT_SECONDS,
     response_mime_type: str | None = None,
     response_json_schema: dict | None = None,
 ) -> str:

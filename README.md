@@ -834,12 +834,10 @@ Perilaku `status.done`:
 - `Generate Config Agentic` tetap bisa membuat variasi baru walaupun variasi lama sudah ada `status.done`
 - nomor variasi selalu lanjut dari indeks terbesar yang ada
 
-Timeout Agentic per variasi:
-- timeout dihitung ulang untuk setiap variasi dalam setiap scene, bukan dibagi ke seluruh project
-- `minimax-h3_t2v_i2v`: wrapper `main.py` maksimal `7800` detik (2 jam 10 menit), mencakup T2V, ekstraksi/upload frame terakhir, I2V, penggabungan, dan compose
-- `minimax-h3_i2v`: wrapper `main.py` maksimal `3900` detik (1 jam 5 menit)
-- scene type lain: wrapper script tetap maksimal `1800` detik
-- polling output setiap stage MiniMax di `main.py` maksimal `3600` detik
+Timeout Agentic:
+- setiap workflow yang dikirim ke ComfyUI memiliki timeout `7200` detik (2 jam), dihitung per workflow call
+- setiap call ke LLM memiliki timeout `600` detik (10 menit)
+- Agentic tidak memiliki timeout tambahan per scene; Agentic mengikuti timeout internal call ComfyUI dan LLM
 - jika proses gagal atau timeout, `status.done` tidak dibuat sehingga variasi tetap dapat dieksekusi ulang
 
 Catatan:
@@ -1638,9 +1636,10 @@ Semua mapping memakai `multiple=32`.
 
 Timeout runtime:
 
-- polling output satu stage MiniMax: maksimal `3600` detik
-- wrapper Agentic per variasi `minimax-h3_i2v`: `3900` detik
-- wrapper Agentic per variasi `minimax-h3_t2v_i2v`: `7800` detik karena dapat menjalankan dua stage
+- workflow ComfyUI per call: `7200` detik
+- call LLM: `600` detik
+- call Gemini TTS atau ElevenLabs TTS: `600` detik
+- tidak ada timeout tambahan per scene; jika satu scene mengirim beberapa workflow, setiap workflow memiliki timeout sendiri
 
 ## Logging
 

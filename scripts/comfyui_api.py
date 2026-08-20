@@ -1,4 +1,5 @@
 import requests
+from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS
 import os
 import json
 from datetime import datetime
@@ -120,7 +121,7 @@ def get_file_url(server: str, filename: str, subfolder: str = None, type_: str =
     return url
 
 
-def get_history_for_prompt(server: str, prompt_id: str, timeout: int = 500, interval: float = 10.0):
+def get_history_for_prompt(server: str, prompt_id: str, timeout: int = COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval: float = 10.0):
     """Poll the server's /history/{prompt_id} until the workflow produces outputs.
 
     This function repeatedly GETs the history URL every `interval` seconds until either
@@ -160,7 +161,7 @@ def get_history_for_prompt(server: str, prompt_id: str, timeout: int = 500, inte
     return last_json or {}
 
 
-def wait_for_output(server: str, prompt_id: str, output_type: str = 'image', timeout: int = 60, interval: float = 2.0):
+def wait_for_output(server: str, prompt_id: str, output_type: str = 'image', timeout: int = COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval: float = 2.0):
     """Poll history for a specific prompt_id until an output of type `output_type` appears.
     Returns the first matching output dict or None if timeout reached.
     """

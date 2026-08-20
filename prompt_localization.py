@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 import requests
+from scripts.timeout_config import LLM_CALL_TIMEOUT_SECONDS
 from scripts.runtime_service_controller import ensure_llama
 
 from gemini.gemini_image import find_gemini_key
@@ -62,7 +63,7 @@ LOCAL_PROMPT_PROVIDER = "llama.cpp"
 LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
-LOCAL_LLM_TIMEOUT_SECONDS = 20 * 60
+LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
 
 
 def format_llm_runtime_log(
@@ -186,7 +187,7 @@ class GeminiPromptTranslator:
         model_name: str,
         instruction: str,
         text: str,
-        timeout: int = 60,
+        timeout: int = LLM_CALL_TIMEOUT_SECONDS,
         phase: str = "call",
     ) -> str:
         if not self.api_key:
@@ -322,7 +323,7 @@ class GeminiPromptTranslator:
             self.translate_model_name,
             instruction,
             payload_text,
-            timeout=60,
+            timeout=LLM_CALL_TIMEOUT_SECONDS,
             phase="translate_to_english",
         )
         if not translated:
@@ -347,7 +348,7 @@ class GeminiPromptTranslator:
             self.prompt_generation_model_name,
             instruction,
             payload_text,
-            timeout=90,
+            timeout=LLM_CALL_TIMEOUT_SECONDS,
             phase="generate_prompt_to_english",
         )
         return generated or text
@@ -366,7 +367,7 @@ class GeminiPromptTranslator:
             self.translate_model_name,
             instruction,
             payload_text,
-            timeout=90,
+            timeout=LLM_CALL_TIMEOUT_SECONDS,
             phase="translate_to_indonesian",
         )
         return translated or text
@@ -670,7 +671,7 @@ class PromptTranslator:
                 self.prompt_generation_model_name,
                 instruction,
                 payload_text,
-                timeout=120,
+                timeout=LLM_CALL_TIMEOUT_SECONDS,
                 phase="generate_prompt_multilang",
             )
             self.last_call_metrics = self._gemini.last_call_metrics

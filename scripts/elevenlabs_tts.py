@@ -4,6 +4,7 @@ import time
 import types
 
 from scripts.voice_profiles import get_voice_character, resolve_scene_voice_key
+from scripts.timeout_config import TTS_CALL_TIMEOUT_SECONDS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ELEVENLABS_MODEL_ID_FIXED = "eleven_v3"
@@ -30,7 +31,7 @@ def find_elevenlabs_key():
     return None
 
 
-def synthesize(text, voice_id, api_key, timeout=120):
+def synthesize(text, voice_id, api_key, timeout=TTS_CALL_TIMEOUT_SECONDS):
     try:
         from elevenlabs.client import ElevenLabs
     except Exception as e:

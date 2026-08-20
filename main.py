@@ -20,6 +20,7 @@ from PIL import Image
 from scripts import comfyui_api
 from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
 from scripts.server_config import get_server_address
+from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, COMFYUI_POLL_INTERVAL_SECONDS
 from scripts.workflow_builders import load_json
 from z_image.z_image import (
     build_z_image_workflow,
@@ -92,10 +93,7 @@ from scripts.project_settings import load_project_settings
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
-POLL_INTERVAL = 10.0
-POLL_TIMEOUT = 600
-MINIMAX_H3_POLL_TIMEOUT = 3600
-WAN22_S2V_POLL_TIMEOUT = 2400
+POLL_INTERVAL = COMFYUI_POLL_INTERVAL_SECONDS
 I2V_FPS = 16
 WEB_SCROLL_FPS = 16
 DEFAULT_WEB_SCROLL_PROMPT = {
@@ -632,7 +630,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         write_log(f"Posted wan22_t2v workflow for {scene_dir}, prompt_id={prompt_id}")
         video_out = None
         if prompt_id:
-            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
         if not video_out:
             write_log(f"No T2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
             return False
@@ -703,7 +701,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         write_log(f"Posted wan22_i2v workflow for {scene_dir}, prompt_id={prompt_id}")
         video_out = None
         if prompt_id:
-            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
         if not video_out:
             write_log(f"No WAN22_I2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
             return False
@@ -817,7 +815,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 server,
                 prompt_id,
                 output_type='video',
-                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
                 interval=POLL_INTERVAL,
             )
         if not video_out:
@@ -912,7 +910,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 server,
                 prompt_id,
                 output_type='video',
-                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
                 interval=POLL_INTERVAL,
             )
         if not video_out:
@@ -1045,7 +1043,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 server,
                 prompt_id,
                 output_type='video',
-                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
                 interval=POLL_INTERVAL,
             )
         if not video_out:
@@ -1163,7 +1161,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
 
             video_out = None
             if prompt_id:
-                video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+                video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
             if not video_out:
                 write_log(f"No video found for batch video {idx + 1} in {scene_dir} (prompt_id={prompt_id}); stopping run")
                 return False
@@ -1239,7 +1237,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         write_log(f"Posted wan22 workflow for {scene_dir}, prompt_id={prompt_id}")
         video_out = None
         if prompt_id:
-            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=POLL_TIMEOUT, interval=POLL_INTERVAL)
+                video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
         if not video_out:
             write_log(f"No video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
             return False
@@ -1325,7 +1323,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 server,
                 prompt_id,
                 output_type='video',
-                timeout=WAN22_S2V_POLL_TIMEOUT,
+                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
                 interval=POLL_INTERVAL,
             )
         if not video_out:
@@ -1417,7 +1415,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 server,
                 prompt_id,
                 output_type='video',
-                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
                 interval=POLL_INTERVAL,
             )
         if not video_out:
@@ -1507,7 +1505,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 server,
                 prompt_id,
                 output_type='video',
-                timeout=MINIMAX_H3_POLL_TIMEOUT,
+                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
                 interval=POLL_INTERVAL,
             )
         if not video_out:

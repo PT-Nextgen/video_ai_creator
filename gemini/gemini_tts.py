@@ -7,6 +7,7 @@ import wave
 from typing import Optional
 
 import requests
+from scripts.timeout_config import TTS_CALL_TIMEOUT_SECONDS
 
 from gemini.gemini_image import find_gemini_key
 from scripts.voice_profiles import get_voice_character, resolve_scene_voice_key
@@ -119,7 +120,7 @@ def _write_wav_from_pcm(pcm_bytes: bytes, out_path: str, sample_rate: int = 2400
         wf.writeframes(pcm_bytes)
 
 
-def synthesize(text: str, voice_name: str, api_key: Optional[str] = None, language_code: str = GEMINI_TTS_LANGUAGE_CODE, timeout: int = 180) -> bytes:
+def synthesize(text: str, voice_name: str, api_key: Optional[str] = None, language_code: str = GEMINI_TTS_LANGUAGE_CODE, timeout: int = TTS_CALL_TIMEOUT_SECONDS) -> bytes:
     api_key = api_key or _api_key()
     if not api_key:
         raise RuntimeError("Gemini API key tidak ditemukan.")
@@ -157,7 +158,7 @@ def synthesize_with_fallbacks(
     voice_name: str,
     api_key: Optional[str] = None,
     language_code: str = GEMINI_TTS_LANGUAGE_CODE,
-    timeout: int = 180,
+    timeout: int = TTS_CALL_TIMEOUT_SECONDS,
     logger=None,
     write_log=None,
 ) -> bytes:

@@ -12,6 +12,7 @@ if ROOT not in sys.path:
 
 from logging_config import setup_logging, get_logger, write_log
 from scripts.server_config import get_server_address
+from scripts.timeout_config import TTS_CALL_TIMEOUT_SECONDS
 from scripts.workflow_builders import load_json
 from gemini.gemini_tts import (
     GEMINI_VOICE_NAME_BY_CHARACTER,
@@ -31,7 +32,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 POLL_INTERVAL = 3.0
-POLL_TIMEOUT = 600
+POLL_TIMEOUT = TTS_CALL_TIMEOUT_SECONDS
 
 
 def _estimate_ratio_boundaries(total_frames: int, text_lengths: list[int]) -> list[int]:
