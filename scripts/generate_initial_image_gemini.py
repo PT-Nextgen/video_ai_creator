@@ -11,7 +11,7 @@ from logging_config import setup_logging, write_log
 from scripts import comfyui_api
 from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.workflow_builders import load_json
-from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
+from prompt_localization import prepare_project_prompts_for_runtime, read_json_for_runtime, resolve_prompt_payload_for_runtime
 
 
 API_PRODUCTION = os.path.join(PROJECT_ROOT, "api_production")
@@ -71,13 +71,18 @@ def main():
         write_log(f"Project folder not found: {project_root}", level="error")
         print("Project folder not found; aborting")
         return 1
-    if project_uses_llama(project_root):
-        ensure_comfyui(reason="generate initial image Gemini")
-
     scenes = sorted([d for d in os.listdir(project_root) if d.startswith("scene_")], key=_scene_sort_key)
     if args.scene:
         requested = set(args.scene)
         scenes = [s for s in scenes if s in requested]
+    if project_uses_llama(project_root):
+        prepare_project_prompts_for_runtime(
+            project_root,
+            scene_dirs=[os.path.join(project_root, scene) for scene in scenes],
+            log_fn=write_log,
+        )
+        ensure_comfyui(reason="generate initial image Gemini")
+
     if not scenes:
         write_log("Tidak ada scene yang cocok untuk diproses.", level="error")
         print("No matching scenes found")

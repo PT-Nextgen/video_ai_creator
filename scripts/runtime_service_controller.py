@@ -158,15 +158,11 @@ def ensure_llama(reason: str = "prompt_generation") -> None:
     RuntimeServiceController.from_config().ensure_llama(reason)
 
 
-def ensure_comfyui(reason: str = "workflow_execution", restore_on_exit: bool = True) -> None:
-    controller = RuntimeServiceController.from_config()
-    controller.ensure_comfyui(reason)
-    if restore_on_exit and os.environ.get("VIDEO_AI_KEEP_COMFYUI", "0") != "1":
-        import atexit
+def ensure_comfyui(reason: str = "workflow_execution", restore_on_exit: bool = False) -> None:
+    """Ensure ComfyUI is active without scheduling an automatic switch-back.
 
-        def restore():
-            try:
-                controller.ensure_llama(reason=f"proses selesai: {reason}")
-            except Exception:
-                pass
-        atexit.register(restore)
+    ``restore_on_exit`` is retained for caller compatibility, but is ignored.
+    Runtime ownership must follow the next operation that actually requires a
+    service; process exit is not a reason to start Llama.
+    """
+    RuntimeServiceController.from_config().ensure_comfyui(reason)

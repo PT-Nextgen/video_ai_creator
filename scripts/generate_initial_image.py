@@ -18,6 +18,7 @@ from gemini.gemini_image import generate_scene_image, is_gemini_prompt
 from prompt_localization import (
     LORA_TRIGGER_WORDS_FIELD,
     prepend_lora_trigger_words,
+    prepare_project_prompts_for_runtime,
     read_json_for_runtime,
     resolve_prompt_payload_for_runtime,
 )
@@ -164,19 +165,29 @@ def main():
     args = parser.parse_args()
 
     setup_logging()
-    if project_uses_llama(os.path.join(PROJECT_ROOT, "api_production", str(args.project).strip())):
+    project_root = os.path.join(PROJECT_ROOT, "api_production", str(args.project).strip())
+    base = project_root
+    scenes = sorted([d for d in os.listdir(base) if d.startswith("scene_")], key=_scene_sort_key) if os.path.isdir(base) else []
+    if args.scene:
+        requested = set(args.scene)
+        scenes = [s for s in scenes if s in requested]
+    if project_uses_llama(project_root):
+        additional_filenames = []
+        if str(args.prompt_file or "").strip() and args.prompt_file != "z_image_prompt.json":
+            additional_filenames.append(str(args.prompt_file).strip())
+        prepare_project_prompts_for_runtime(
+            project_root,
+            scene_dirs=[os.path.join(project_root, scene) for scene in scenes],
+            additional_filenames=additional_filenames,
+            log_fn=write_log,
+        )
         ensure_comfyui(reason="generate initial image")
 
-    base = os.path.join(PROJECT_ROOT, "api_production", str(args.project).strip())
     if not os.path.exists(base):
         write_log(f"Project folder not found: {base}", level="error")
         print("Project folder not found; aborting")
         return 1
 
-    scenes = sorted([d for d in os.listdir(base) if d.startswith("scene_")], key=_scene_sort_key)
-    if args.scene:
-        requested = set(args.scene)
-        scenes = [s for s in scenes if s in requested]
     if not scenes:
         write_log("Tidak ada scene yang cocok untuk diproses.", level="error")
         print("No matching scenes found")

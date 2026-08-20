@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, QThread, QObject, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QAction, QDesktopServices, QDoubleValidator, QIcon, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -482,6 +482,10 @@ DEFAULT_DURATION_OPTIONS = [5, 10]
 WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
 MINIMAX_H3_DURATION_OPTIONS = [1, 5, 10, 15, 20, 25, 30]
 MINIMAX_H3_I2V_DURATION_OPTIONS = [1, 5, 10, 15]
+MINIMAX_H3_DURATION_MIN = 1.0
+MINIMAX_H3_DURATION_DECIMALS = 1
+MINIMAX_H3_FPS_OPTIONS = [16, 24]
+MINIMAX_H3_DEFAULT_FPS = 24
 PROMPT_APPEND_OPERATIONS = {
     "wan22_t2v_positive": {
         "title": "Append prompt positive wan22_t2v",
@@ -793,7 +797,7 @@ def list_output_files(directory: Path):
     return outputs
 
 
-def build_scene_templates(title: str, scene_type: str, duration: int):
+def build_scene_templates(title: str, scene_type: str, duration: int | float):
     meta = copy.deepcopy(DEFAULT_SCENE_META)
     meta["scene_title"] = title
     meta["scene_description"] = ""
@@ -1044,20 +1048,42 @@ def create_scene_in_project(
     scene_title: str = "",
     scene_description: str = "",
     voice_text: str = "",
-    duration: int = 10,
+    duration: int | float = 10,
 ) -> Path:
     if not project_dir.exists() or not project_dir.is_dir():
         raise FileNotFoundError(f"Project tidak ditemukan: {project_dir}")
     scene_type = str(scene_type or "").strip()
-    duration = int(duration)
-    if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE and duration not in MINIMAX_H3_DURATION_OPTIONS:
+    try:
+        raw_duration = float(duration)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Durasi harus berupa angka.") from exc
+    if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_R2V_SCENE_TYPE}:
+        if raw_duration != round(raw_duration, MINIMAX_H3_DURATION_DECIMALS):
+            raise ValueError("Durasi MiniMax maksimal memiliki 1 angka desimal.")
+        duration = round(raw_duration, MINIMAX_H3_DURATION_DECIMALS)
+    else:
+        duration = int(raw_duration)
+    if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE and not (
+        MINIMAX_H3_DURATION_MIN <= duration <= 30.0
+        and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
+    ):
         raise ValueError(
-            "Durasi untuk scene minimax-h3_t2v_i2v hanya boleh 1, 5, 10, 15, 20, 25, atau 30 detik."
+            "Durasi untuk scene minimax-h3_t2v_i2v harus antara 1.0 dan 30.0 detik dengan maksimal 1 angka desimal."
         )
-    if scene_type == MINIMAX_H3_I2V_SCENE_TYPE and duration not in MINIMAX_H3_I2V_DURATION_OPTIONS:
-        raise ValueError("Durasi untuk scene minimax-h3_i2v hanya boleh 1, 5, 10, atau 15 detik.")
-    if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and duration not in (1, 5, 10, 15):
-        raise ValueError("Durasi untuk scene minimax-h3_r2v hanya boleh 1, 5, 10, atau 15 detik.")
+    if scene_type == MINIMAX_H3_I2V_SCENE_TYPE and not (
+        MINIMAX_H3_DURATION_MIN <= duration <= 15.0
+        and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
+    ):
+        raise ValueError(
+            "Durasi untuk scene minimax-h3_i2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+        )
+    if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and not (
+        MINIMAX_H3_DURATION_MIN <= duration <= 15.0
+        and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
+    ):
+        raise ValueError(
+            "Durasi untuk scene minimax-h3_r2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+        )
     if scene_type == WAN22_T2V_SCENE_TYPE and duration not in WAN22_T2V_DURATION_OPTIONS:
         raise ValueError("Durasi untuk scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
     if scene_type == WAN22_T2V_BATCH_SCENE_TYPE and duration not in (5, 10):
@@ -1263,12 +1289,12 @@ def validate_scene_data(
             issues.append("Prompt positif WAN22 T2V wajib diisi.")
     if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE:
         try:
-            duration_value = int(meta.get("duration_seconds", 0))
+            duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
             duration_value = 0
-        if duration_value not in MINIMAX_H3_DURATION_OPTIONS:
+        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 30.0 and duration_value == round(duration_value, 1)):
             issues.append(
-                "Durasi scene minimax-h3_t2v_i2v hanya boleh 1, 5, 10, 15, 20, 25, atau 30 detik."
+                "Durasi scene minimax-h3_t2v_i2v harus antara 1.0 dan 30.0 detik dengan maksimal 1 angka desimal."
             )
         if not _prompt_text_for_validation(minimax_h3_t2v_prompt.get("positive_prompt")):
             issues.append("Prompt positif MiniMax H3 T2V wajib diisi.")
@@ -1276,22 +1302,26 @@ def validate_scene_data(
             issues.append("Prompt positif MiniMax H3 I2V wajib diisi untuk durasi di atas 15 detik.")
     if scene_type == MINIMAX_H3_I2V_SCENE_TYPE:
         try:
-            duration_value = int(meta.get("duration_seconds", 0))
+            duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
             duration_value = 0
-        if duration_value not in MINIMAX_H3_I2V_DURATION_OPTIONS:
-            issues.append("Durasi scene minimax-h3_i2v hanya boleh 1, 5, 10, atau 15 detik.")
+        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 15.0 and duration_value == round(duration_value, 1)):
+            issues.append(
+                "Durasi scene minimax-h3_i2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+            )
         if not _prompt_text_for_validation(minimax_h3_i2v_prompt.get("positive_prompt")):
             issues.append("Prompt positif MiniMax H3 I2V wajib diisi.")
         if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
             issues.append("Adegan MiniMax H3 I2V membutuhkan minimal satu gambar lokal di folder scene.")
     if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
         try:
-            duration_value = int(meta.get("duration_seconds", 0))
+            duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
             duration_value = 0
-        if duration_value not in (1, 5, 10, 15):
-            issues.append("Durasi scene minimax-h3_r2v hanya boleh 1, 5, 10, atau 15 detik.")
+        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 15.0 and duration_value == round(duration_value, 1)):
+            issues.append(
+                "Durasi scene minimax-h3_r2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+            )
         r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
         r2v_id_new = r2v_entry.get("id_new") if isinstance(r2v_entry, dict) else None
         if not isinstance(r2v_id_new, dict) or validate_ref2va_prompt(r2v_id_new):
@@ -1467,10 +1497,18 @@ class SceneTemplateDialog(QDialog):
         ])
         self.duration_combo = QComboBox()
         populate_duration_combo(self.duration_combo, self.type_combo.currentText(), selected_value=10)
+        self.duration_text_input = QLineEdit("10.0")
+        self.duration_text_input.setValidator(QDoubleValidator(1.0, 30.0, 1, self.duration_text_input))
+        self.duration_text_input.setPlaceholderText("contoh: 15.5")
+        self.duration_text_input.setFixedHeight(self.duration_input.sizeHint().height())
+        self.duration_editor_stack = QStackedWidget()
+        self.duration_editor_stack.addWidget(self.duration_combo)
+        self.duration_editor_stack.addWidget(self.duration_text_input)
+        self.duration_editor_stack.setFixedHeight(self.duration_input.sizeHint().height())
         form = QFormLayout(self)
         form.addRow("Judul Adegan", self.title_input)
         form.addRow("Tipe Adegan", self.type_combo)
-        form.addRow("Durasi (detik)", self.duration_combo)
+        form.addRow("Durasi (detik)", self.duration_editor_stack)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -1479,14 +1517,44 @@ class SceneTemplateDialog(QDialog):
         self.update_fields_for_scene_type(self.type_combo.currentText())
 
     def update_fields_for_scene_type(self, scene_type: str):
-        populate_duration_combo(self.duration_combo, scene_type)
-        self.duration_combo.setEnabled(scene_type not in {"wan22_s2v", MINIMAX_H3_S2V_SCENE_TYPE, "web_scroll"})
+        decimal_scene = scene_type in {
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
+        }
+        if decimal_scene:
+            maximum = 30.0 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE else 15.0
+            validator = self.duration_text_input.validator()
+            if isinstance(validator, QDoubleValidator):
+                validator.setBottom(1.0)
+                validator.setTop(maximum)
+            self.duration_editor_stack.setCurrentWidget(self.duration_text_input)
+            self.duration_text_input.setEnabled(True)
+        else:
+            populate_duration_combo(self.duration_combo, scene_type)
+            self.duration_editor_stack.setCurrentWidget(self.duration_combo)
+            self.duration_combo.setEnabled(scene_type not in {"wan22_s2v", MINIMAX_H3_S2V_SCENE_TYPE, "web_scroll"})
+            if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+                self.duration_combo.setEnabled(True)
+        self.duration_editor_stack.setEnabled(True)
 
     def get_data(self):
+        scene_type = self.type_combo.currentText()
+        if scene_type in {
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
+        }:
+            try:
+                duration = round(float(self.duration_text_input.text().strip() or "10.0"), 1)
+            except ValueError as exc:
+                raise ValueError("Durasi harus berupa angka dengan maksimal 1 angka desimal.") from exc
+        else:
+            duration = int(self.duration_combo.currentData() or 10)
         return {
             "scene_title": self.title_input.text().strip(),
-            "scene_type": self.type_combo.currentText(),
-            "duration_seconds": int(self.duration_combo.currentData() or 10),
+            "scene_type": scene_type,
+            "duration_seconds": duration,
         }
 
 
@@ -2587,6 +2655,14 @@ class SceneEditorWindow(QMainWindow):
         self.scene_description_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.duration_input = QComboBox()
         populate_duration_combo(self.duration_input, "wan22_i2v", selected_value=10)
+        self.duration_decimal_input = QLineEdit("10.0")
+        self.duration_decimal_input.setValidator(QDoubleValidator(MINIMAX_H3_DURATION_MIN, 30.0, MINIMAX_H3_DURATION_DECIMALS, self.duration_decimal_input))
+        self.duration_decimal_input.setPlaceholderText("contoh: 15.5")
+        self.duration_decimal_input.setFixedHeight(self.duration_input.sizeHint().height())
+        self.duration_input_stack = QStackedWidget()
+        self.duration_input_stack.addWidget(self.duration_input)
+        self.duration_input_stack.addWidget(self.duration_decimal_input)
+        self.duration_input_stack.setFixedHeight(self.duration_input.sizeHint().height())
         self.scene_type_combo = QComboBox()
         self.scene_type_combo.addItems([
             "wan22_i2v",
@@ -2741,16 +2817,35 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_size_input = QComboBox()
         for label, width, height in MINIMAX_H3_SIZE_OPTIONS:
             self.minimax_h3_i2v_size_input.addItem(label, (width, height))
+        self.minimax_h3_t2v_fps_input = QComboBox()
+        self.minimax_h3_i2v_fps_input = QComboBox()
+        self.minimax_h3_r2v_fps_input = QComboBox()
+        self.minimax_h3_s2v_fps_input = QComboBox()
+        self.minimax_h3_i2v_fps_label = QLabel("FPS")
+        self.minimax_h3_s2v_fps_label = QLabel("FPS")
+        for widget in (
+            self.minimax_h3_t2v_fps_input,
+            self.minimax_h3_i2v_fps_input,
+            self.minimax_h3_r2v_fps_input,
+            self.minimax_h3_s2v_fps_input,
+        ):
+            for fps in MINIMAX_H3_FPS_OPTIONS:
+                widget.addItem(str(fps), fps)
+            widget.setCurrentIndex(widget.findData(MINIMAX_H3_DEFAULT_FPS))
         self.minimax_h3_t2v_lora_name_input = QComboBox()
         self.minimax_h3_t2v_lora_name_input.setEditable(False)
+        self.minimax_h3_t2v_lora_name_2_input = QComboBox()
+        self.minimax_h3_t2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_i2v_lora_name_input = QComboBox()
         self.minimax_h3_i2v_lora_name_input.setEditable(False)
+        self.minimax_h3_i2v_lora_name_2_input = QComboBox()
+        self.minimax_h3_i2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_t2v_lora_strength_input = QLineEdit()
+        self.minimax_h3_t2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_i2v_lora_strength_input = QLineEdit()
+        self.minimax_h3_i2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_t2v_remove_sound_input = QCheckBox("Hapus Sound")
-        self.minimax_h3_t2v_turbo_input = QCheckBox("Turbo")
         self.minimax_h3_i2v_remove_sound_input = QCheckBox("Hapus Sound")
-        self.minimax_h3_i2v_turbo_input = QCheckBox("Turbo")
         self.minimax_h3_t2v_positive_input = QTextEdit()
         self.minimax_h3_i2v_positive_input = QTextEdit()
         self.minimax_h3_t2v_generate_prompt_button = QToolButton()
@@ -2775,12 +2870,12 @@ class SceneEditorWindow(QMainWindow):
         )
         self.s2v_positive_input = QTextEdit()
         self.s2v_negative_input = QTextEdit()
-        self.minimax_h3_s2v_turbo_input = QCheckBox("Turbo")
-        self.copy_minimax_h3_s2v_variations_button = QToolButton()
-        self.copy_minimax_h3_s2v_variations_button.setText("Edit Variasi")
-        self.copy_minimax_h3_s2v_variations_button.clicked.connect(
-            self.copy_minimax_h3_s2v_config_to_variations
-        )
+        self.minimax_h3_s2v_lora_name_input = QComboBox()
+        self.minimax_h3_s2v_lora_name_input.setEditable(False)
+        self.minimax_h3_s2v_lora_name_2_input = QComboBox()
+        self.minimax_h3_s2v_lora_name_2_input.setEditable(False)
+        self.minimax_h3_s2v_lora_strength_input = QLineEdit()
+        self.minimax_h3_s2v_lora_strength_2_input = QLineEdit()
         self.s2v_generate_positive_button = QToolButton()
         self.s2v_generate_positive_button.setText("Buat Prompt")
         self.s2v_generate_positive_button.clicked.connect(
@@ -2793,12 +2888,12 @@ class SceneEditorWindow(QMainWindow):
         for label, width, height in MINIMAX_H3_S2V_SIZE_OPTIONS:
             self.minimax_h3_r2v_size_input.addItem(label, (width, height))
         self.minimax_h3_r2v_positive_input = QTextEdit()
-        self.minimax_h3_r2v_turbo_input = QCheckBox("Turbo")
-        self.copy_minimax_h3_r2v_variations_button = QToolButton()
-        self.copy_minimax_h3_r2v_variations_button.setText("Edit Variasi")
-        self.copy_minimax_h3_r2v_variations_button.clicked.connect(
-            self.copy_minimax_h3_r2v_config_to_variations
-        )
+        self.minimax_h3_r2v_lora_name_input = QComboBox()
+        self.minimax_h3_r2v_lora_name_input.setEditable(False)
+        self.minimax_h3_r2v_lora_name_2_input = QComboBox()
+        self.minimax_h3_r2v_lora_name_2_input.setEditable(False)
+        self.minimax_h3_r2v_lora_strength_input = QLineEdit()
+        self.minimax_h3_r2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_r2v_generate_prompt_button = QToolButton()
         self.minimax_h3_r2v_generate_prompt_button.setText("Buat Prompt")
         self.minimax_h3_r2v_generate_prompt_button.clicked.connect(
@@ -2993,6 +3088,7 @@ class SceneEditorWindow(QMainWindow):
     def install_field_watchers(self):
         for signal in [
             self.scene_title_input.textChanged, self.duration_input.currentTextChanged,
+            self.duration_decimal_input.textChanged,
             self.scene_type_combo.currentTextChanged,
             self.scene_voice_character_input.currentTextChanged,
             self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
@@ -3000,15 +3096,15 @@ class SceneEditorWindow(QMainWindow):
             self.z_size_input.currentTextChanged, self.wan_size_input.currentTextChanged,
             self.wan_t2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_size_input.currentTextChanged,
+            self.minimax_h3_t2v_fps_input.currentIndexChanged,
             self.minimax_h3_i2v_size_input.currentTextChanged,
+            self.minimax_h3_i2v_fps_input.currentIndexChanged,
             self.minimax_h3_r2v_size_input.currentTextChanged,
+            self.minimax_h3_r2v_fps_input.currentIndexChanged,
+            self.minimax_h3_s2v_fps_input.currentIndexChanged,
             self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
-            self.minimax_h3_t2v_turbo_input.checkStateChanged,
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
-            self.minimax_h3_i2v_turbo_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
-            self.minimax_h3_s2v_turbo_input.checkStateChanged,
-            self.minimax_h3_r2v_turbo_input.checkStateChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.image_pan_size_input.currentTextChanged,
             self.image_pan_direction_input.currentIndexChanged,
@@ -3039,10 +3135,16 @@ class SceneEditorWindow(QMainWindow):
             self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input,
             self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input,
             self.minimax_h3_t2v_lora_name_input, self.minimax_h3_t2v_lora_strength_input,
+            self.minimax_h3_t2v_lora_name_2_input, self.minimax_h3_t2v_lora_strength_2_input,
             self.minimax_h3_i2v_lora_name_input, self.minimax_h3_i2v_lora_strength_input,
+            self.minimax_h3_i2v_lora_name_2_input, self.minimax_h3_i2v_lora_strength_2_input,
             self.minimax_h3_t2v_positive_input, self.minimax_h3_i2v_positive_input,
             self.s2v_positive_input, self.s2v_negative_input,
+            self.minimax_h3_s2v_lora_name_input, self.minimax_h3_s2v_lora_name_2_input,
+            self.minimax_h3_s2v_lora_strength_input, self.minimax_h3_s2v_lora_strength_2_input,
             self.minimax_h3_r2v_positive_input,
+            self.minimax_h3_r2v_lora_name_input, self.minimax_h3_r2v_lora_name_2_input,
+            self.minimax_h3_r2v_lora_strength_input, self.minimax_h3_r2v_lora_strength_2_input,
             *self.wan_prompt_inputs.values(),
             *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
             self.agentic_special_command_input,
@@ -3123,10 +3225,11 @@ class SceneEditorWindow(QMainWindow):
 
         self.meta_tab = QWidget()
         meta_layout = QFormLayout(self.meta_tab)
+        meta_layout.setVerticalSpacing(4)
         self.duration_label = QLabel("Durasi (detik)")
         meta_layout.addRow("Judul Adegan", self.scene_title_input)
         meta_layout.addRow("Deskripsi Adegan", self.scene_description_input)
-        meta_layout.addRow(self.duration_label, self.duration_input)
+        meta_layout.addRow(self.duration_label, self.duration_input_stack)
         for label, widget in [
             ("Tipe Adegan", self.scene_type_combo),
             ("Pilihan Suara Scene", self.scene_voice_character_input),
@@ -3238,16 +3341,21 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_t2v_lora_strength_input.setFixedWidth(84)
         minimax_t2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_size_input, 0, 1, 1, 3)
-        minimax_t2v_layout.addWidget(QLabel("Lora"), 1, 0)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_input, 1, 1)
-        minimax_t2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_input, 1, 3)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 2, 1)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_turbo_input, 2, 2)
-        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 2, 3, Qt.AlignLeft)
-        minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 3, 0)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 3, 1, 1, 3)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(QLabel("FPS"), 1, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_fps_input, 1, 1, 1, 3)
+        minimax_t2v_layout.addWidget(QLabel("Lora"), 2, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_input, 2, 1)
+        minimax_t2v_layout.addWidget(QLabel("Kekuatan"), 2, 2)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_input, 2, 3)
+        minimax_t2v_layout.addWidget(QLabel("Lora 2"), 3, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_2_input, 3, 1)
+        minimax_t2v_layout.addWidget(QLabel("Kekuatan 2"), 3, 2)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_2_input, 3, 3)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 4, 1)
+        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 4, 3, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 5, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 5, 1, 1, 3)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 6, 1, 1, 3, Qt.AlignLeft)
         tabs.addTab(self.minimax_h3_t2v_tab, "MINIMAX-H3_T2V")
 
         self.minimax_h3_i2v_tab = QWidget()
@@ -3259,23 +3367,31 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_lora_strength_input.setFixedWidth(84)
         minimax_i2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_size_input, 0, 1, 1, 3)
-        minimax_i2v_layout.addWidget(QLabel("Lora"), 1, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 1, 1)
-        minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 1, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 2, 1)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_turbo_input, 2, 2)
-        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 2, 3, Qt.AlignLeft)
-        minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 3, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 3, 1, 1, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 4, 1, 1, 3, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_fps_label, 1, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_fps_input, 1, 1, 1, 3)
+        minimax_i2v_layout.addWidget(QLabel("Lora"), 2, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 2, 1)
+        minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 2, 2)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 2, 3)
+        minimax_i2v_layout.addWidget(QLabel("Lora 2"), 3, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_2_input, 3, 1)
+        minimax_i2v_layout.addWidget(QLabel("Kekuatan 2"), 3, 2)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 3, 3)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 4, 1)
+        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 4, 2, 1, 2, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 5, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 5, 1, 1, 3)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 6, 1, 1, 3, Qt.AlignLeft)
         tabs.addTab(self.minimax_h3_i2v_tab, "MINIMAX-H3_I2V")
 
         self.minimax_h3_r2v_tab = QWidget()
         r2v_layout = QFormLayout(self.minimax_h3_r2v_tab)
         r2v_layout.addRow("Ukuran", self.minimax_h3_r2v_size_input)
-        r2v_layout.addRow("Turbo", self.minimax_h3_r2v_turbo_input)
-        r2v_layout.addRow("", self.copy_minimax_h3_r2v_variations_button)
+        r2v_layout.addRow("FPS", self.minimax_h3_r2v_fps_input)
+        r2v_layout.addRow("Lora", self.minimax_h3_r2v_lora_name_input)
+        r2v_layout.addRow("Kekuatan Lora", self.minimax_h3_r2v_lora_strength_input)
+        r2v_layout.addRow("Lora 2", self.minimax_h3_r2v_lora_name_2_input)
+        r2v_layout.addRow("Kekuatan Lora 2", self.minimax_h3_r2v_lora_strength_2_input)
         r2v_layout.addRow("Gambar (maks. 3)", self.minimax_h3_r2v_image_list)
         r2v_layout.addRow("Video (maks. 1)", self.minimax_h3_r2v_video_list)
         r2v_layout.addRow("Audio (maks. 3)", self.minimax_h3_r2v_audio_list)
@@ -3298,8 +3414,15 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_tab = QWidget()
         s2v_layout = QFormLayout(self.s2v_tab)
         s2v_layout.addRow("Ukuran", self.s2v_size_input)
-        s2v_layout.addRow("Turbo", self.minimax_h3_s2v_turbo_input)
-        s2v_layout.addRow("", self.copy_minimax_h3_s2v_variations_button)
+        s2v_layout.addRow(self.minimax_h3_s2v_fps_label, self.minimax_h3_s2v_fps_input)
+        self.minimax_h3_s2v_lora_label = QLabel("Lora")
+        self.minimax_h3_s2v_lora_strength_label = QLabel("Kekuatan Lora")
+        self.minimax_h3_s2v_lora_2_label = QLabel("Lora 2")
+        self.minimax_h3_s2v_lora_strength_2_label = QLabel("Kekuatan Lora 2")
+        s2v_layout.addRow(self.minimax_h3_s2v_lora_label, self.minimax_h3_s2v_lora_name_input)
+        s2v_layout.addRow(self.minimax_h3_s2v_lora_strength_label, self.minimax_h3_s2v_lora_strength_input)
+        s2v_layout.addRow(self.minimax_h3_s2v_lora_2_label, self.minimax_h3_s2v_lora_name_2_input)
+        s2v_layout.addRow(self.minimax_h3_s2v_lora_strength_2_label, self.minimax_h3_s2v_lora_strength_2_input)
         self.s2v_cfg_label = QLabel("CFG")
         s2v_layout.addRow(self.s2v_cfg_label, self.s2v_cfg_input)
         s2v_layout.addRow("Prompt Positif", self.s2v_positive_input)
@@ -3530,21 +3653,56 @@ class SceneEditorWindow(QMainWindow):
 
     def update_scene_type_specific_fields(self):
         scene_type = self.scene_type_combo.currentText().strip()
-        populate_duration_combo(self.duration_input, scene_type)
+        decimal_duration_scene = scene_type in {
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
+        }
+        if decimal_duration_scene:
+            maximum = 30.0 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE else 15.0
+            validator = self.duration_decimal_input.validator()
+            if isinstance(validator, QDoubleValidator):
+                validator.setBottom(MINIMAX_H3_DURATION_MIN)
+                validator.setTop(maximum)
+            self.duration_input_stack.setCurrentWidget(self.duration_decimal_input)
+        else:
+            populate_duration_combo(self.duration_input, scene_type)
+            self.duration_input_stack.setCurrentWidget(self.duration_input)
         hide_meta_duration = scene_type in {"wan22_s2v", MINIMAX_H3_S2V_SCENE_TYPE, "web_scroll"}
-        self.duration_input.setEnabled(not hide_meta_duration)
+        self.duration_input_stack.setEnabled(not hide_meta_duration)
         if self.duration_label is not None:
             self.duration_label.setEnabled(not hide_meta_duration)
             self.duration_label.setVisible(not hide_meta_duration)
-        self.duration_input.setVisible(not hide_meta_duration)
+        self.duration_input_stack.setVisible(not hide_meta_duration)
+        if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and not self.is_viewing_variation():
+            self.duration_input_stack.setEnabled(True)
+            self.duration_input.setEnabled(True)
+            self.duration_decimal_input.setEnabled(True)
+            if self.duration_label is not None:
+                self.duration_label.setEnabled(True)
+                self.duration_label.setVisible(True)
+        show_standalone_i2v_fps = scene_type == MINIMAX_H3_I2V_SCENE_TYPE
+        self.minimax_h3_i2v_fps_label.setVisible(show_standalone_i2v_fps)
+        self.minimax_h3_i2v_fps_input.setVisible(show_standalone_i2v_fps)
         is_wan22_s2v = scene_type == "wan22_s2v"
         is_minimax_h3_s2v = scene_type == MINIMAX_H3_S2V_SCENE_TYPE
+        self.minimax_h3_s2v_fps_label.setVisible(is_minimax_h3_s2v)
+        self.minimax_h3_s2v_fps_input.setVisible(is_minimax_h3_s2v)
         if self.s2v_negative_label is not None:
             self.s2v_negative_label.setVisible(is_wan22_s2v)
         self.s2v_negative_input.setVisible(is_wan22_s2v)
         self.s2v_cfg_input.setVisible(is_wan22_s2v)
-        self.minimax_h3_s2v_turbo_input.setVisible(is_minimax_h3_s2v)
-        self.copy_minimax_h3_s2v_variations_button.setVisible(is_minimax_h3_s2v)
+        for widget in (
+            self.minimax_h3_s2v_lora_label,
+            self.minimax_h3_s2v_lora_name_input,
+            self.minimax_h3_s2v_lora_strength_label,
+            self.minimax_h3_s2v_lora_strength_input,
+            self.minimax_h3_s2v_lora_2_label,
+            self.minimax_h3_s2v_lora_name_2_input,
+            self.minimax_h3_s2v_lora_strength_2_label,
+            self.minimax_h3_s2v_lora_strength_2_input,
+        ):
+            widget.setVisible(is_minimax_h3_s2v)
         if self.s2v_cfg_label is not None:
             self.s2v_cfg_label.setVisible(is_wan22_s2v)
         self.s2v_tab.setWindowTitle("MINIMAX-H3_S2V" if is_minimax_h3_s2v else "WAN22 S2V")
@@ -3974,7 +4132,7 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_t2v_prompt.json",
             source_data=minimax_t2v_prompt,
-            keys=["lora_name", "lora_strength", "remove_sound", "turbo"],
+            keys=["fps", "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
 
@@ -3986,32 +4144,8 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_i2v_prompt.json",
             source_data=minimax_i2v_prompt,
-            keys=["lora_name", "lora_strength", "remove_sound", "turbo"],
+            keys=["fps", "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
             action_title="Edit Variasi MiniMax H3 I2V",
-        )
-
-    def copy_minimax_h3_s2v_config_to_variations(self):
-        if not self.save_current_scene(silent=True, reload_list=False):
-            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
-            return
-        _meta, _z_prompt, _wan_t2v_prompt, _wan_prompt, s2v_prompt, *_rest = self.gather_scene_data()
-        self._copy_selected_keys_to_variations(
-            filename=MINIMAX_H3_S2V_PROMPT_FILENAME,
-            source_data=s2v_prompt,
-            keys=["turbo"],
-            action_title="Edit Variasi MiniMax H3 S2V",
-        )
-
-    def copy_minimax_h3_r2v_config_to_variations(self):
-        if not self.save_current_scene(silent=True, reload_list=False):
-            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
-            return
-        r2v_prompt = self.gather_minimax_h3_r2v_prompt()
-        self._copy_selected_keys_to_variations(
-            filename=MINIMAX_H3_R2V_PROMPT_FILENAME,
-            source_data=r2v_prompt,
-            keys=["turbo"],
-            action_title="Edit Variasi MiniMax H3 R2V",
         )
 
     def copy_selected_variation_to_root(self):
@@ -5110,7 +5244,13 @@ class SceneEditorWindow(QMainWindow):
         self,
         current_value: str = "",
         *,
+        current_value_2: str | None = None,
         i2v_current_value: str | None = None,
+        i2v_current_value_2: str | None = None,
+        s2v_current_value: str | None = None,
+        s2v_current_value_2: str | None = None,
+        r2v_current_value: str | None = None,
+        r2v_current_value_2: str | None = None,
         preserve_missing: bool = False,
     ):
         options = get_lora_options_by_prefix(
@@ -5125,6 +5265,17 @@ class SceneEditorWindow(QMainWindow):
             preserve_missing=preserve_missing,
         )
         populate_lora_combo(
+            self.minimax_h3_t2v_lora_name_2_input,
+            options,
+            current_value=(
+                self.minimax_h3_t2v_lora_name_2_input.currentText().strip()
+                if current_value_2 is None
+                else str(current_value_2 or "").strip()
+            ),
+            template_default=DEFAULT_MINIMAX_H3_T2V_PROMPT["lora_name_2"],
+            preserve_missing=preserve_missing,
+        )
+        populate_lora_combo(
             self.minimax_h3_i2v_lora_name_input,
             options,
             current_value=(
@@ -5135,6 +5286,30 @@ class SceneEditorWindow(QMainWindow):
             template_default=DEFAULT_MINIMAX_H3_I2V_PROMPT["lora_name"],
             preserve_missing=preserve_missing,
         )
+        populate_lora_combo(
+            self.minimax_h3_i2v_lora_name_2_input,
+            options,
+            current_value=(
+                self.minimax_h3_i2v_lora_name_2_input.currentText().strip()
+                if i2v_current_value_2 is None
+                else str(i2v_current_value_2 or "").strip()
+            ),
+            template_default=DEFAULT_MINIMAX_H3_I2V_PROMPT["lora_name_2"],
+            preserve_missing=preserve_missing,
+        )
+        for combo, value, default in (
+            (self.minimax_h3_s2v_lora_name_input, s2v_current_value, DEFAULT_MINIMAX_H3_S2V_PROMPT["lora_name"]),
+            (self.minimax_h3_s2v_lora_name_2_input, s2v_current_value_2, DEFAULT_MINIMAX_H3_S2V_PROMPT["lora_name_2"]),
+            (self.minimax_h3_r2v_lora_name_input, r2v_current_value, DEFAULT_MINIMAX_H3_R2V_PROMPT["lora_name"]),
+            (self.minimax_h3_r2v_lora_name_2_input, r2v_current_value_2, DEFAULT_MINIMAX_H3_R2V_PROMPT["lora_name_2"]),
+        ):
+            populate_lora_combo(
+                combo,
+                options,
+                current_value=combo.currentText().strip() if value is None else str(value or "").strip(),
+                template_default=default,
+                preserve_missing=preserve_missing,
+            )
         return selected
 
     def update_seed_fields_enabled(self):
@@ -5409,10 +5584,16 @@ class SceneEditorWindow(QMainWindow):
             self.update_scene_type_tabs()
             self.update_scene_type_specific_fields()
             duration_value = str(meta.get("duration_seconds", ""))
-            index = self.duration_input.findData(int(float(duration_value))) if duration_value else -1
-            if index < 0:
-                index = self.duration_input.findText(duration_value)
-            self.duration_input.setCurrentIndex(max(index, 0))
+            if self._uses_decimal_duration_input():
+                try:
+                    self.duration_decimal_input.setText(f"{float(duration_value or 10.0):.1f}")
+                except (TypeError, ValueError):
+                    self.duration_decimal_input.setText("10.0")
+            else:
+                index = self.duration_input.findData(int(float(duration_value))) if duration_value else -1
+                if index < 0:
+                    index = self.duration_input.findText(duration_value)
+                self.duration_input.setCurrentIndex(max(index, 0))
             voice_key = resolve_scene_voice_key(meta)
             index = self.scene_voice_character_input.findData(voice_key)
             self.scene_voice_character_input.setCurrentIndex(max(index, 0))
@@ -5498,10 +5679,20 @@ class SceneEditorWindow(QMainWindow):
             minimax_t2v_height = int(minimax_h3_t2v_prompt.get("height", DEFAULT_MINIMAX_H3_T2V_PROMPT["height"]))
             minimax_t2v_index = self.minimax_h3_t2v_size_input.findData((minimax_t2v_width, minimax_t2v_height))
             self.minimax_h3_t2v_size_input.setCurrentIndex(max(minimax_t2v_index, 0))
+            minimax_t2v_fps = int(minimax_h3_t2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
+            minimax_t2v_fps_index = self.minimax_h3_t2v_fps_input.findData(minimax_t2v_fps)
+            self.minimax_h3_t2v_fps_input.setCurrentIndex(
+                minimax_t2v_fps_index if minimax_t2v_fps_index >= 0 else self.minimax_h3_t2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
+            )
             minimax_i2v_width = int(minimax_h3_i2v_prompt.get("width", DEFAULT_MINIMAX_H3_I2V_PROMPT["width"]))
             minimax_i2v_height = int(minimax_h3_i2v_prompt.get("height", DEFAULT_MINIMAX_H3_I2V_PROMPT["height"]))
             minimax_i2v_index = self.minimax_h3_i2v_size_input.findData((minimax_i2v_width, minimax_i2v_height))
             self.minimax_h3_i2v_size_input.setCurrentIndex(max(minimax_i2v_index, 0))
+            minimax_i2v_fps = int(minimax_h3_i2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
+            minimax_i2v_fps_index = self.minimax_h3_i2v_fps_input.findData(minimax_i2v_fps)
+            self.minimax_h3_i2v_fps_input.setCurrentIndex(
+                minimax_i2v_fps_index if minimax_i2v_fps_index >= 0 else self.minimax_h3_i2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
+            )
             minimax_t2v_lora_name = str(
                 minimax_h3_t2v_prompt.get(
                     "lora_name",
@@ -5514,9 +5705,31 @@ class SceneEditorWindow(QMainWindow):
                     DEFAULT_MINIMAX_H3_I2V_PROMPT["lora_name"],
                 )
             ).strip()
+            minimax_t2v_lora_name_2 = str(
+                minimax_h3_t2v_prompt.get(
+                    "lora_name_2",
+                    DEFAULT_MINIMAX_H3_T2V_PROMPT["lora_name_2"],
+                )
+            ).strip()
+            minimax_i2v_lora_name_2 = str(
+                minimax_h3_i2v_prompt.get(
+                    "lora_name_2",
+                    DEFAULT_MINIMAX_H3_I2V_PROMPT["lora_name_2"],
+                )
+            ).strip()
+            s2v_lora_name = str(s2v_prompt.get("lora_name", DEFAULT_MINIMAX_H3_S2V_PROMPT["lora_name"])).strip()
+            s2v_lora_name_2 = str(s2v_prompt.get("lora_name_2", DEFAULT_MINIMAX_H3_S2V_PROMPT["lora_name_2"])).strip()
+            r2v_lora_name = str(minimax_h3_r2v_prompt.get("lora_name", DEFAULT_MINIMAX_H3_R2V_PROMPT["lora_name"])).strip()
+            r2v_lora_name_2 = str(minimax_h3_r2v_prompt.get("lora_name_2", DEFAULT_MINIMAX_H3_R2V_PROMPT["lora_name_2"])).strip()
             self._refresh_minimax_h3_lora_options(
                 minimax_t2v_lora_name,
+                current_value_2=minimax_t2v_lora_name_2,
                 i2v_current_value=minimax_i2v_lora_name,
+                i2v_current_value_2=minimax_i2v_lora_name_2,
+                s2v_current_value=s2v_lora_name,
+                s2v_current_value_2=s2v_lora_name_2,
+                r2v_current_value=r2v_lora_name,
+                r2v_current_value_2=r2v_lora_name_2,
                 preserve_missing=True,
             )
             minimax_t2v_lora_strength = minimax_h3_t2v_prompt.get(
@@ -5527,19 +5740,27 @@ class SceneEditorWindow(QMainWindow):
                 "lora_strength",
                 DEFAULT_MINIMAX_H3_I2V_PROMPT["lora_strength"],
             )
+            minimax_t2v_lora_strength_2 = minimax_h3_t2v_prompt.get(
+                "lora_strength_2",
+                DEFAULT_MINIMAX_H3_T2V_PROMPT["lora_strength_2"],
+            )
+            minimax_i2v_lora_strength_2 = minimax_h3_i2v_prompt.get(
+                "lora_strength_2",
+                DEFAULT_MINIMAX_H3_I2V_PROMPT["lora_strength_2"],
+            )
             self.minimax_h3_t2v_lora_strength_input.setText(str(minimax_t2v_lora_strength))
             self.minimax_h3_i2v_lora_strength_input.setText(str(minimax_i2v_lora_strength))
+            self.minimax_h3_t2v_lora_strength_2_input.setText(str(minimax_t2v_lora_strength_2))
+            self.minimax_h3_i2v_lora_strength_2_input.setText(str(minimax_i2v_lora_strength_2))
+            self.minimax_h3_s2v_lora_strength_input.setText(str(s2v_prompt.get("lora_strength", DEFAULT_MINIMAX_H3_S2V_PROMPT["lora_strength"])))
+            self.minimax_h3_s2v_lora_strength_2_input.setText(str(s2v_prompt.get("lora_strength_2", DEFAULT_MINIMAX_H3_S2V_PROMPT["lora_strength_2"])))
+            self.minimax_h3_r2v_lora_strength_input.setText(str(minimax_h3_r2v_prompt.get("lora_strength", DEFAULT_MINIMAX_H3_R2V_PROMPT["lora_strength"])))
+            self.minimax_h3_r2v_lora_strength_2_input.setText(str(minimax_h3_r2v_prompt.get("lora_strength_2", DEFAULT_MINIMAX_H3_R2V_PROMPT["lora_strength_2"])))
             self.minimax_h3_t2v_remove_sound_input.setChecked(
                 bool(minimax_h3_t2v_prompt.get("remove_sound", False))
             )
-            self.minimax_h3_t2v_turbo_input.setChecked(
-                bool(minimax_h3_t2v_prompt.get("turbo", False))
-            )
             self.minimax_h3_i2v_remove_sound_input.setChecked(
                 bool(minimax_h3_i2v_prompt.get("remove_sound", False))
-            )
-            self.minimax_h3_i2v_turbo_input.setChecked(
-                bool(minimax_h3_i2v_prompt.get("turbo", False))
             )
             minimax_t2v_entry = normalize_minimax_prompt_payload(minimax_h3_t2v_prompt, "T2VA").get(
                 "positive_prompt", ""
@@ -5566,8 +5787,14 @@ class SceneEditorWindow(QMainWindow):
                     index = i
                     break
             self.s2v_size_input.setCurrentIndex(max(index, 0))
+            s2v_fps = int(s2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
+            s2v_fps_index = self.minimax_h3_s2v_fps_input.findData(s2v_fps)
+            self.minimax_h3_s2v_fps_input.setCurrentIndex(
+                s2v_fps_index
+                if s2v_fps_index >= 0
+                else self.minimax_h3_s2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
+            )
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
-            self.minimax_h3_s2v_turbo_input.setChecked(bool(s2v_prompt.get("turbo", False)))
             self.s2v_positive_input.setPlainText(
                 json.dumps(
                     s2v_prompt.get("positive_prompt", {}).get("id_new", {})
@@ -5585,7 +5812,11 @@ class SceneEditorWindow(QMainWindow):
             r2v_height = int(minimax_h3_r2v_prompt.get("height", DEFAULT_MINIMAX_H3_R2V_PROMPT["height"]))
             r2v_index = self.minimax_h3_r2v_size_input.findData((r2v_width, r2v_height))
             self.minimax_h3_r2v_size_input.setCurrentIndex(max(r2v_index, 0))
-            self.minimax_h3_r2v_turbo_input.setChecked(bool(minimax_h3_r2v_prompt.get("turbo", False)))
+            r2v_fps = int(minimax_h3_r2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
+            r2v_fps_index = self.minimax_h3_r2v_fps_input.findData(r2v_fps)
+            self.minimax_h3_r2v_fps_input.setCurrentIndex(
+                r2v_fps_index if r2v_fps_index >= 0 else self.minimax_h3_r2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
+            )
             r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
             r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
             self.minimax_h3_r2v_positive_input.setPlainText(
@@ -5706,7 +5937,9 @@ class SceneEditorWindow(QMainWindow):
 
     def gather_minimax_h3_prompts(self):
         t2v_lora_name = self.minimax_h3_t2v_lora_name_input.currentText().strip()
+        t2v_lora_name_2 = self.minimax_h3_t2v_lora_name_2_input.currentText().strip()
         i2v_lora_name = self.minimax_h3_i2v_lora_name_input.currentText().strip()
+        i2v_lora_name_2 = self.minimax_h3_i2v_lora_name_2_input.currentText().strip()
         try:
             t2v_lora_strength = float(self.minimax_h3_t2v_lora_strength_input.text().strip() or 0)
         except ValueError:
@@ -5715,11 +5948,23 @@ class SceneEditorWindow(QMainWindow):
             i2v_lora_strength = float(self.minimax_h3_i2v_lora_strength_input.text().strip() or 0)
         except ValueError:
             raise ValueError("Kekuatan Lora MiniMax H3 I2V harus berupa angka.")
+        try:
+            t2v_lora_strength_2 = float(self.minimax_h3_t2v_lora_strength_2_input.text().strip() or 0)
+        except ValueError:
+            raise ValueError("Kekuatan Lora MiniMax H3 T2V kedua harus berupa angka.")
+        try:
+            i2v_lora_strength_2 = float(self.minimax_h3_i2v_lora_strength_2_input.text().strip() or 0)
+        except ValueError:
+            raise ValueError("Kekuatan Lora MiniMax H3 I2V kedua harus berupa angka.")
         t2v_size = self.minimax_h3_t2v_size_input.currentData() or (368, 640)
         i2v_size = self.minimax_h3_i2v_size_input.currentData() or t2v_size
+        shared_fps = int(self.minimax_h3_t2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS)
+        standalone_i2v_fps = int(self.minimax_h3_i2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS)
+        scene_type = self.scene_type_combo.currentText().strip()
         t2v_prompt = {
             "width": int(t2v_size[0]),
             "height": int(t2v_size[1]),
+            "fps": int(self.minimax_h3_t2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS),
             "positive_prompt": self._merge_minimax_h3_prompt_entry(
                 self.current_scene_dir / "minimax_h3_t2v_prompt.json",
                 "T2VA",
@@ -5727,12 +5972,14 @@ class SceneEditorWindow(QMainWindow):
             ),
             "lora_name": t2v_lora_name,
             "lora_strength": t2v_lora_strength,
+            "lora_name_2": t2v_lora_name_2,
+            "lora_strength_2": t2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
-            "turbo": bool(self.minimax_h3_t2v_turbo_input.isChecked()),
         }
         i2v_prompt = {
             "width": int(i2v_size[0]),
             "height": int(i2v_size[1]),
+            "fps": standalone_i2v_fps if scene_type == MINIMAX_H3_I2V_SCENE_TYPE else shared_fps,
             "positive_prompt": self._merge_minimax_h3_prompt_entry(
                 self.current_scene_dir / "minimax_h3_i2v_prompt.json",
                 "I2VA",
@@ -5740,8 +5987,9 @@ class SceneEditorWindow(QMainWindow):
             ),
             "lora_name": i2v_lora_name,
             "lora_strength": i2v_lora_strength,
+            "lora_name_2": i2v_lora_name_2,
+            "lora_strength_2": i2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
-            "turbo": bool(self.minimax_h3_i2v_turbo_input.isChecked()),
         }
         return t2v_prompt, i2v_prompt
 
@@ -5940,7 +6188,6 @@ class SceneEditorWindow(QMainWindow):
             "height": int((self.s2v_size_input.currentData() or (480, 848))[1]),
             "cfg": float(self.s2v_cfg_input.value()),
             "json_api": "auto_by_speech_duration",
-            "turbo": bool(self.minimax_h3_s2v_turbo_input.isChecked()) if current_scene_type == MINIMAX_H3_S2V_SCENE_TYPE else False,
         }
         if current_scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
             raw_text = self.s2v_positive_input.toPlainText().strip()
@@ -5950,6 +6197,11 @@ class SceneEditorWindow(QMainWindow):
                 raise ValueError(f"JSON id_new MiniMax H3 S2V tidak valid: {exc.msg}.") from exc
             if not isinstance(id_new_value, dict):
                 raise ValueError("JSON id_new MiniMax H3 S2V harus berupa object.")
+            try:
+                s2v_lora_strength = float(self.minimax_h3_s2v_lora_strength_input.text().strip() or 0)
+                s2v_lora_strength_2 = float(self.minimax_h3_s2v_lora_strength_2_input.text().strip() or 0)
+            except ValueError as exc:
+                raise ValueError("Kekuatan LoRA MiniMax H3 S2V harus berupa angka.") from exc
             existing_payload = load_json(self.current_scene_dir / MINIMAX_H3_S2V_PROMPT_FILENAME, s2v_default)
             existing_entry = existing_payload.get("positive_prompt", {}) if isinstance(existing_payload, dict) else {}
             s2v_prompt = {
@@ -5960,7 +6212,11 @@ class SceneEditorWindow(QMainWindow):
                 },
                 "width": s2v_prompt["width"],
                 "height": s2v_prompt["height"],
-                "turbo": bool(self.minimax_h3_s2v_turbo_input.isChecked()),
+                "fps": int(self.minimax_h3_s2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS),
+                "lora_name": self.minimax_h3_s2v_lora_name_input.currentText().strip(),
+                "lora_strength": s2v_lora_strength,
+                "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
+                "lora_strength_2": s2v_lora_strength_2,
             }
         web_prompt = {
             "url": self.web_url_input.text().strip(),
@@ -6225,7 +6481,33 @@ class SceneEditorWindow(QMainWindow):
         self.web_search_worker = None
         self.web_search_thread = None
 
+    def _uses_decimal_duration_input(self) -> bool:
+        return self.scene_type_combo.currentText().strip() in {
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
+        }
+
+    def _duration_text(self) -> str:
+        if self._uses_decimal_duration_input():
+            return self.duration_decimal_input.text().strip()
+        return self.duration_input.currentText().strip()
+
     def parse_duration_value(self):
+        scene_type = self.scene_type_combo.currentText().strip()
+        if self._uses_decimal_duration_input():
+            text = self.duration_decimal_input.text().strip()
+            if not text:
+                raise ValueError("Durasi wajib diisi.")
+            try:
+                value = round(float(text), MINIMAX_H3_DURATION_DECIMALS)
+            except ValueError as exc:
+                raise ValueError("Durasi harus berupa angka dengan maksimal 1 angka desimal.") from exc
+            maximum = 30.0 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE else 15.0
+            if value < MINIMAX_H3_DURATION_MIN or value > maximum:
+                raise ValueError(f"Durasi harus antara {MINIMAX_H3_DURATION_MIN:g} dan {maximum:g} detik.")
+            return value
+
         value = self.duration_input.currentText().strip()
         if not value:
             return 10
@@ -6618,6 +6900,11 @@ class SceneEditorWindow(QMainWindow):
             "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
             "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
         }
+        try:
+            r2v_lora_strength = float(self.minimax_h3_r2v_lora_strength_input.text().strip() or 0)
+            r2v_lora_strength_2 = float(self.minimax_h3_r2v_lora_strength_2_input.text().strip() or 0)
+        except ValueError as exc:
+            raise ValueError("Kekuatan LoRA MiniMax H3 R2V harus berupa angka.") from exc
         return {
             "positive_prompt": {
                 "id_old": copy.deepcopy(existing_entry.get("id_old", id_new)) if isinstance(existing_entry, dict) else copy.deepcopy(id_new),
@@ -6626,8 +6913,12 @@ class SceneEditorWindow(QMainWindow):
             },
             "width": int(size[0]),
             "height": int(size[1]),
+            "fps": int(self.minimax_h3_r2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS),
             "references": references,
-            "turbo": bool(self.minimax_h3_r2v_turbo_input.isChecked()),
+            "lora_name": self.minimax_h3_r2v_lora_name_input.currentText().strip(),
+            "lora_strength": r2v_lora_strength,
+            "lora_name_2": self.minimax_h3_r2v_lora_name_2_input.currentText().strip(),
+            "lora_strength_2": r2v_lora_strength_2,
         }
 
     def save_current_scene(self, silent=False, reload_list=True):
@@ -7161,7 +7452,7 @@ class SceneEditorWindow(QMainWindow):
             size_data = self.wan_t2v_size_input.currentData() or (368, 640)
             lines.extend([
                 f"Target: WAN22 T2V prompt field `{prompt_key or 'unknown'}`",
-                f"Scene duration: {self.duration_input.currentText().strip() or '10'}",
+                f"Scene duration: {self._duration_text() or '10'}",
                 f"WAN22 T2V size: {int(size_data[0])}x{int(size_data[1])}",
             ])
         elif prompt_kind == "wan_i2v":
@@ -7177,7 +7468,7 @@ class SceneEditorWindow(QMainWindow):
                 "Target: MiniMax H3 T2VA positive prompt",
                 "Active MiniMax H3 mode: T2VA",
                 "T2VA format: return integrated_multimodal_description, overall_soundscape, and non_diegetic_music in English.",
-                f"Scene duration: {self.duration_input.currentText().strip() or '10'}",
+                f"Scene duration: {self._duration_text() or '10'}",
                 f"MiniMax H3 T2V size: {int(size_data[0])}x{int(size_data[1])}",
             ])
             lines.extend(self._minimax_h3_prompt_reference_lines("t2v", scene_type=scene_type))
@@ -7187,7 +7478,7 @@ class SceneEditorWindow(QMainWindow):
                 "Target: MiniMax H3 I2VA positive prompt",
                 "Active MiniMax H3 mode: I2VA",
                 "I2VA format: begin with the exact first-frame alignment instruction, then return the fields required by the referenced skill.",
-                f"Scene duration: {self.duration_input.currentText().strip() or '10'}",
+                f"Scene duration: {self._duration_text() or '10'}",
                 f"MiniMax H3 I2V size: {int(size_data[0])}x{int(size_data[1])}",
             ])
             lines.extend(self._minimax_h3_prompt_reference_lines("i2v", scene_type=scene_type))
@@ -7228,7 +7519,7 @@ class SceneEditorWindow(QMainWindow):
                 "Non-reference semantic tokens such as <Subject N>, <Shot N>, <d>, </d>, and speaker IDs remain allowed.",
                 "Keep every active reference token exactly unchanged across all six Ref2VA sections.",
                 "The prompt must contain the six Ref2VA sections in the required order.",
-                f"Scene duration: {self.duration_input.currentText().strip() or '10'} seconds (maximum 15).",
+                f"Scene duration: {self._duration_text() or '10'} seconds (maximum 15).",
                 f"MiniMax H3 R2V size: {int(size_data[0])}x{int(size_data[1])}",
             ])
             lines.extend(self._minimax_h3_prompt_reference_lines("r2v", scene_type=scene_type))

@@ -18,7 +18,7 @@ from scripts.project_settings import load_project_settings, save_project_setting
 from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
 from z_image.z_image import build_z_image_workflow, get_model_display_name, send_workflow
 from gemini.gemini_image import generate_scene_image, is_gemini_prompt
-from prompt_localization import resolve_prompt_payload_for_runtime
+from prompt_localization import prepare_project_prompts_for_runtime, resolve_prompt_payload_for_runtime
 
 
 def _replace_or_copy(src: str, dst: str):
@@ -147,6 +147,12 @@ def main():
         print("Project folder not found; aborting")
         return 1
     if project_uses_llama(project_dir):
+        prepare_project_prompts_for_runtime(
+            project_dir,
+            scene_dirs=[],
+            include_project_settings=True,
+            log_fn=write_log,
+        )
         ensure_comfyui(reason="generate cover image")
 
     ok = process_cover(project_dir, args.server)

@@ -23,8 +23,6 @@ from minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_prompt
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
 TEMPLATE = "minimax_h3_r2v_api.json"
-TURBO_LORA_NAME = "MINIMAX-H3/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
-TURBO_LORA_NODE_ID = "156"
 MAIN_NODE = "136"
 PICTURE_1_NODE = "143"
 AUDIO_1_NODE = "153"
@@ -75,7 +73,11 @@ DEFAULT_PROMPT = {
     },
     "width": 368,
     "height": 640,
-    "turbo": False,
+    "fps": 24,
+    "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+    "lora_strength": 0,
+    "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+    "lora_strength_2": 0,
 }
 
 DEFAULT_R2V_PROMPT = {
@@ -107,8 +109,12 @@ DEFAULT_R2V_PROMPT = {
     },
     "width": 368,
     "height": 640,
+    "fps": 24,
     "references": {"images": [], "video": "", "audios": []},
-    "turbo": False,
+    "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+    "lora_strength": 0,
+    "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+    "lora_strength_2": 0,
 }
 
 
@@ -261,6 +267,15 @@ def _set_asset(workflow: dict, node_id: str, input_name: str, value) -> bool:
     return True
 
 
+def _set_input(workflow: dict, node_id: str, key: str, value) -> bool:
+    node = workflow.get(str(node_id))
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict) or key not in inputs:
+        return False
+    inputs[key] = value
+    return True
+
+
 def _inject_random_noise_seed(workflow: dict):
     seed = random.randint(10**15, 10**16 - 1)
     for node in workflow.values():
@@ -270,37 +285,6 @@ def _inject_random_noise_seed(workflow: dict):
         if isinstance(inputs, dict) and "noise_seed" in inputs:
             inputs["noise_seed"] = seed
     return workflow
-
-
-def _apply_turbo_distillation(workflow: dict, enabled: bool) -> bool:
-    """Insert the optional 4-step Ref2V distillation LoRA before the sampler."""
-    if not enabled:
-        return False
-
-    diffusion_model = workflow.get("127")
-    if not isinstance(diffusion_model, dict):
-        return False
-
-    turbo_lora = {
-        "inputs": {
-            "lora_name": TURBO_LORA_NAME,
-            "strength_model": 1.0,
-            "model": ["127", 0],
-        },
-        "class_type": "LoraLoaderModelOnly",
-        "_meta": {"title": "Load Turbo LoRA"},
-    }
-    workflow[TURBO_LORA_NODE_ID] = turbo_lora
-
-    guider = workflow.get("126")
-    guider_inputs = guider.get("inputs") if isinstance(guider, dict) else None
-    if isinstance(guider_inputs, dict):
-        guider_inputs["model"] = [TURBO_LORA_NODE_ID, 0]
-    scheduler = workflow.get("124")
-    scheduler_inputs = scheduler.get("inputs") if isinstance(scheduler, dict) else None
-    if isinstance(scheduler_inputs, dict):
-        scheduler_inputs["steps"] = 4
-    return True
 
 
 def _prompt_text(prompt) -> str:
@@ -332,18 +316,31 @@ def _set_prompt(workflow: dict, prompt) -> bool:
     return True
 
 
+def _set_lora_node(workflow: dict, node_id: str, lora_name: str, strength_value) -> bool:
+    node = workflow.get(str(node_id))
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        return False
+    inputs["lora_name"] = str(lora_name or "")
+    try:
+        inputs["strength_model"] = float(strength_value)
+    except (TypeError, ValueError):
+        inputs["strength_model"] = 0.0
+    return True
+
+
 def build_workflow(
     prompt=None,
     scene_meta: dict | None = None,
     width: int | None = None,
     height: int | None = None,
     duration_override: int | float | None = None,
+    fps_override: int | None = None,
     image_name: str | None = None,
     audio_name: str | None = None,
     image_names: list[str] | None = None,
     audio_names: list[str] | None = None,
     video_name: str | None = None,
-    turbo_enabled: bool = False,
     **remove_options,
 ) -> dict:
     """Return a configured R2V workflow in memory.
@@ -400,6 +397,17 @@ def build_workflow(
     if duration is None and isinstance(source, Mapping):
         duration = source.get("duration_seconds", source.get("duration"))
     _set_duration(workflow, 5 if duration is None else duration)
+    fps = fps_override if fps_override is not None else source.get("fps", 24)
+    try:
+        fps = int(fps)
+    except (TypeError, ValueError):
+        fps = 24
+    _set_input(workflow, "130", "fps", fps)
+    frame_expression = (
+        f"max(5, round(a * {fps})) + "
+        f"(5 - (max(5, round(a * {fps})) % 17)) % 17"
+    )
+    _set_input(workflow, "131", "expression", frame_expression)
 
     picture_nodes = (PICTURE_1_NODE, "144", "151")
     audio_nodes = (AUDIO_1_NODE, "154", "155")
@@ -419,7 +427,18 @@ def build_workflow(
             remove_references(workflow, **{f"remove_audio_{index + 1}_reference": True})
 
     workflow = remove_references(workflow, **remove_options)
-    _apply_turbo_distillation(workflow, bool(turbo_enabled))
+    _set_lora_node(
+        workflow,
+        "156",
+        source.get("lora_name", DEFAULT_PROMPT["lora_name"]),
+        source.get("lora_strength", DEFAULT_PROMPT["lora_strength"]),
+    )
+    _set_lora_node(
+        workflow,
+        "157",
+        source.get("lora_name_2", DEFAULT_PROMPT["lora_name_2"]),
+        source.get("lora_strength_2", DEFAULT_PROMPT["lora_strength_2"]),
+    )
     return _inject_random_noise_seed(workflow)
 
 
@@ -429,12 +448,12 @@ def build_minimax_h3_r2v_workflow(
     width: int | None = None,
     height: int | None = None,
     duration_override: int | float | None = None,
+    fps_override: int | None = None,
     image_name: str | None = None,
     audio_name: str | None = None,
     image_names: list[str] | None = None,
     audio_names: list[str] | None = None,
     video_name: str | None = None,
-    turbo_enabled: bool = False,
     **remove_options,
 ) -> dict:
     """Named adapter entry point matching the other MiniMax H3 modules."""
@@ -444,12 +463,12 @@ def build_minimax_h3_r2v_workflow(
         width=width,
         height=height,
         duration_override=duration_override,
+        fps_override=fps_override,
         image_name=image_name,
         audio_name=audio_name,
         image_names=image_names,
         audio_names=audio_names,
         video_name=video_name,
-        turbo_enabled=turbo_enabled,
         **remove_options,
     )
 

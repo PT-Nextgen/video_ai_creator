@@ -87,6 +87,7 @@ from prompt_localization import (
     prepend_lora_trigger_words,
     read_json_for_runtime,
     resolve_prompt_payload_for_runtime,
+    prepare_project_prompts_for_runtime,
 )
 from scripts.project_settings import load_project_settings
 
@@ -745,12 +746,12 @@ def process_scene(scene_dir, server, project_generate_caption=True):
 
     if scene_type == 'minimax-h3_t2v_i2v':
         try:
-            scene_duration = int(scene_meta.get('duration_seconds', 0))
+            scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if scene_duration not in {1, 5, 10, 15, 20, 25, 30}:
+        if not (1.0 <= scene_duration <= 30.0 and scene_duration == round(scene_duration, 1)):
             write_log(
-                "minimax-h3_t2v_i2v scene duration must be 1, 5, 10, 15, 20, 25, or 30 seconds: "
+                "minimax-h3_t2v_i2v scene duration must be between 1.0 and 30.0 seconds with at most 1 decimal: "
                 f"{scene_duration}"
             )
             return False
@@ -792,7 +793,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 t2v_prompt,
                 scene_meta,
                 duration_override=t2v_duration,
-                turbo_enabled=bool(t2v_prompt.get('turbo', False)),
+                fps_override=t2v_prompt.get("fps", 24),
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 T2V workflow for {scene_dir}: {e}")
@@ -886,7 +887,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 scene_meta,
                 uploaded_name=uploaded_name,
                 duration_override=i2v_duration,
-                turbo_enabled=bool(i2v_prompt.get('turbo', False)),
+                fps_override=t2v_prompt.get("fps", 24),
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
@@ -985,12 +986,12 @@ def process_scene(scene_dir, server, project_generate_caption=True):
 
     if scene_type == 'minimax-h3_i2v':
         try:
-            scene_duration = int(scene_meta.get('duration_seconds', 0))
+            scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if scene_duration not in {1, 5, 10, 15}:
+        if not (1.0 <= scene_duration <= 15.0 and scene_duration == round(scene_duration, 1)):
             write_log(
-                "minimax-h3_i2v scene duration must be 1, 5, 10, or 15 seconds: "
+                "minimax-h3_i2v scene duration must be between 1.0 and 15.0 seconds with at most 1 decimal: "
                 f"{scene_duration}"
             )
             return False
@@ -1020,7 +1021,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 scene_meta,
                 uploaded_name=uploaded_name,
                 duration_override=scene_duration,
-                turbo_enabled=bool(i2v_prompt.get('turbo', False)),
+                fps_override=i2v_prompt.get("fps", 24),
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
@@ -1375,9 +1376,9 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             video_name = str(references.get('video', '')).strip()
             if not image_names and not audio_names and not video_name:
                 raise ValueError('minimal satu reference image, audio, atau video wajib dipilih')
-            duration = int(scene_meta.get('duration_seconds', 0))
-            if duration not in (1, 5, 10, 15):
-                raise ValueError('durasi R2V harus 1, 5, 10, atau 15 detik')
+            duration = float(scene_meta.get('duration_seconds', 0))
+            if not (1.0 <= duration <= 15.0 and duration == round(duration, 1)):
+                raise ValueError('durasi R2V harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal')
             image_paths = [os.path.join(scene_dir, name) for name in image_names]
             audio_paths = [os.path.join(scene_dir, name) for name in audio_names]
             video_path = os.path.join(scene_dir, video_name) if video_name else None
@@ -1396,7 +1397,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 audio_names=uploaded_audios,
                 video_name=uploaded_video,
                 duration_override=duration,
-                turbo_enabled=bool(r2v_prompt.get('turbo', False)),
+                fps_override=r2v_prompt.get("fps", 24),
             )
             r2v_result = send_minimax_h3_s2v_workflow(
                 r2v_workflow,
@@ -1481,7 +1482,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 image_name=uploaded_image_name,
                 audio_name=uploaded_audio_name,
                 duration_override=audio_duration,
-                turbo_enabled=bool(s2v_prompt.get('turbo', False)),
+                fps_override=s2v_prompt.get("fps", 24),
                 remove_picture_2_reference=True,
                 remove_picture_3_reference=True,
                 remove_video_1_reference=True,
@@ -1794,23 +1795,27 @@ def main():
     manage_runtime = project_uses_llama(project_dir)
     runtime_controller = RuntimeServiceController.from_config() if manage_runtime else None
     if runtime_controller is not None:
+        write_log(f"[runtime] Pra-lokalisasi prompt project sebelum switch ComfyUI: {project_dir}")
+        prepare_project_prompts_for_runtime(
+            project_dir,
+            scene_dirs=[os.path.join(project_dir, scene) for scene in scenes],
+            log_fn=write_log,
+        )
         runtime_controller.ensure_comfyui(reason=f"main.py project={args.project}")
-    try:
-        for loop_idx in range(loop_count):
-            if loop_count > 1:
-                print(f"Starting loop {loop_idx+1}/{loop_count}")
-            for scene in scenes:
-                scene_dir = os.path.join(project_dir, scene)
-                print(f"Processing {scene_dir}")
-                ok = process_scene(scene_dir, args.server, project_generate_caption=project_generate_caption)
-                if not ok:
-                    write_log(f"Stopping run due to failure processing {scene}")
-                    print(f"Stopped due to failure in {scene}")
-                    return 1
-        return 0
-    finally:
-        if runtime_controller is not None and os.environ.get("VIDEO_AI_KEEP_COMFYUI", "0") != "1":
-            runtime_controller.ensure_llama(reason=f"main.py selesai project={args.project}")
+    for loop_idx in range(loop_count):
+        if loop_count > 1:
+            print(f"Starting loop {loop_idx+1}/{loop_count}")
+        for scene in scenes:
+            scene_dir = os.path.join(project_dir, scene)
+            print(f"Processing {scene_dir}")
+            ok = process_scene(scene_dir, args.server, project_generate_caption=project_generate_caption)
+            if not ok:
+                write_log(f"Stopping run due to failure processing {scene}")
+                print(f"Stopped due to failure in {scene}")
+                return 1
+    # Pertahankan service terakhir yang diperlukan. Jangan switch balik
+    # otomatis ke Llama setelah workflow selesai.
+    return 0
 
 
 

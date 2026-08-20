@@ -13,7 +13,7 @@ if PROJECT_ROOT not in os.sys.path:
 from flux2.flux2 import MODEL_FLUX2, build_flux2_edit_workflow
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image_edit
 from logging_config import setup_logging, write_log
-from prompt_localization import read_json_for_runtime
+from prompt_localization import prepare_project_prompts_for_runtime, read_json_for_runtime
 from scripts import comfyui_api
 from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
 from scripts.server_config import get_server_address
@@ -184,6 +184,12 @@ def main():
         print("Scene folder not found")
         return 1
     if project_uses_llama(scene_dir.parent):
+        prepare_project_prompts_for_runtime(
+            scene_dir.parent,
+            scene_dirs=[scene_dir],
+            additional_filenames=["image_edit_prompt.json"],
+            log_fn=write_log,
+        )
         ensure_comfyui(reason="image edit")
 
     try:

@@ -32,6 +32,7 @@ from logging_config import write_log
 from scripts.project_settings import load_project_settings
 from scripts.server_config import load_server_config
 from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
+from prompt_localization import prepare_project_prompts_for_runtime
 from agentic.agentic_config import load_agentic_config
 from agentic.agentic_llm import expected_output_files, generate_variations
 
@@ -711,14 +712,16 @@ def run_agentic_generate_for_project(project_dir: Path, target_scenes: list[str]
 
 
 def run_agentic_execute_for_project(project_dir: Path, server: str, target_scenes: list[str] | None = None) -> bool:
+    project_dir = Path(project_dir)
+    scene_dirs = _collect_scene_dirs(project_dir, target_scenes=target_scenes)
     manage_runtime = project_uses_llama(project_dir)
     controller = RuntimeServiceController.from_config() if manage_runtime else None
     if controller is not None:
+        write_log(f"[runtime] Pra-lokalisasi prompt Agentic sebelum switch ComfyUI: {project_dir}")
+        prepare_project_prompts_for_runtime(project_dir, scene_dirs=scene_dirs, log_fn=write_log)
         controller.ensure_comfyui(reason="agentic execute variasi")
     previous_keep_comfyui = os.environ.get("VIDEO_AI_KEEP_COMFYUI")
     os.environ["VIDEO_AI_KEEP_COMFYUI"] = "1"
-    project_dir = Path(project_dir)
-    scene_dirs = _collect_scene_dirs(project_dir, target_scenes=target_scenes)
     project_name = project_dir.name
 
     write_log(f"\n{'=' * 60}")
@@ -740,8 +743,10 @@ def run_agentic_execute_for_project(project_dir: Path, server: str, target_scene
             os.environ.pop("VIDEO_AI_KEEP_COMFYUI", None)
         else:
             os.environ["VIDEO_AI_KEEP_COMFYUI"] = previous_keep_comfyui
-        if controller is not None:
-            controller.ensure_llama(reason="agentic execute selesai")
+        # Jangan switch balik ke Llama setelah execute variasi selesai.
+        # ComfyUI masih menjadi service yang dibutuhkan untuk workflow/output
+        # berikutnya; switch ke Llama hanya dilakukan oleh operasi LLM yang
+        # memerlukannya.
 
 
 def run_agentic_for_project(project_dir: Path, server: str, target_scenes: list[str] | None = None) -> bool:

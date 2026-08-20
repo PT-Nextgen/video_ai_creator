@@ -25,9 +25,15 @@ def post_workflow_api(workflow_json: dict, server: str):
         # fallback to legacy prompt endpoint
         url_prompt = f"{server}/prompt"
         resp2 = requests.post(url_prompt, json={"prompt": workflow_json})
-        resp2.raise_for_status()
+        if resp2.status_code >= 400:
+            raise requests.HTTPError(
+                f"{resp2.status_code} Client Error for url: {url_prompt}; response={resp2.text[:4000]}"
+            )
         return resp2.json()
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise requests.HTTPError(
+            f"{resp.status_code} Client Error for url: {url_api}; response={resp.text[:4000]}"
+        )
     return resp.json()
 
 

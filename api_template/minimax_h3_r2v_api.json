@@ -90,7 +90,7 @@
       "steps": 20,
       "denoise": 1,
       "model": [
-        "127",
+        "157",
         0
       ]
     },
@@ -130,7 +130,7 @@
   "126": {
     "inputs": {
       "model": [
-        "127",
+        "157",
         0
       ],
       "conditioning": [
@@ -355,6 +355,34 @@
     "class_type": "LoadAudio",
     "_meta": {
       "title": "Audio 3"
+    }
+  },
+  "156": {
+    "inputs": {
+      "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+      "strength_model": 0,
+      "model": [
+        "127",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "157": {
+    "inputs": {
+      "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+      "strength_model": 0,
+      "model": [
+        "156",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
     }
   }
 }

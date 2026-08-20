@@ -21,6 +21,7 @@ if ROOT not in sys.path:
 
 from logging_config import setup_logging, get_logger
 from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
+from scripts.project_settings import load_project_settings
 
 setup_logging()
 logger = get_logger(__name__)
@@ -570,8 +571,12 @@ def ensure_video_fps_size_and_length(
     pad = max(0.0, target_duration - dur)
     pad_filter = f',tpad=stop_mode=clone:stop_duration={pad}' if pad > 0.001 else ''
     
+    fit_filter = (
+        f'scale={width}:{height}:force_original_aspect_ratio=decrease,'
+        f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2'
+    )
     cmd = (
-        f'ffmpeg -y -i "{src}" -vf "scale={width}:{height},fps={fps}{pad_filter}" '
+        f'ffmpeg -y -i "{src}" -vf "{fit_filter},fps={fps}{pad_filter}" '
         f'-c:v libx264 -b:v 2M -preset fast -pix_fmt yuv420p -an "{dst}"'
     )
     run(cmd)
@@ -656,6 +661,7 @@ def compose_scene(
     embedded_audio_source=None,
     compose_song=False,
     trim_s2v_extra_frames=False,
+    project_video_size=None,
 ):
     files = sorted(os.listdir(scene_dir))
     if video_files is None:
@@ -748,7 +754,13 @@ def compose_scene(
             trim_video_to_exact_duration(base_video, exact_path, target_dur, ffprobe_fps(base_video))
             base_video = exact_path
         target_fps = ffprobe_fps(base_video)
-        target_w, target_h = ffprobe_size(base_video)
+        if isinstance(project_video_size, (tuple, list)) and len(project_video_size) == 2:
+            try:
+                target_w, target_h = int(project_video_size[0]), int(project_video_size[1])
+            except (TypeError, ValueError):
+                target_w, target_h = ffprobe_size(base_video)
+        else:
+            target_w, target_h = ffprobe_size(base_video)
         if fps:
             target_fps = fps
         video_normalized = os.path.join(tmpdir, 'video_norm.mp4')
@@ -933,9 +945,13 @@ def export_scene_video_to_combined(scene_dir):
 def normalize_video(src, dst, fps, width, height):
     # Re-encode with fixed video settings and guaranteed stereo AAC audio.
     # If source has no audio stream, add silent audio so concat remains stable.
+    fit_filter = (
+        f'scale={width}:{height}:force_original_aspect_ratio=decrease,'
+        f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2'
+    )
     if ffprobe_has_audio(src):
         cmd = (
-            f'ffmpeg -y -i "{src}" -vf "scale={width}:{height},fps={fps}" '
+            f'ffmpeg -y -i "{src}" -vf "{fit_filter},fps={fps}" '
             f'-af "aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo" '
             f'-c:v libx264 -preset fast -pix_fmt yuv420p '
             f'-c:a aac -b:a 192k -ac 2 -ar 44100 "{dst}"'
@@ -945,7 +961,7 @@ def normalize_video(src, dst, fps, width, height):
         cmd = (
             f'ffmpeg -y -i "{src}" '
             f'-f lavfi -t {duration:.6f} -i anullsrc=channel_layout=stereo:sample_rate=44100 '
-            f'-vf "scale={width}:{height},fps={fps}" '
+            f'-vf "{fit_filter},fps={fps}" '
             f'-map 0:v:0 -map 1:a:0 '
             f'-c:v libx264 -preset fast -pix_fmt yuv420p '
             f'-c:a aac -b:a 192k -ac 2 -ar 44100 -shortest "{dst}"'
@@ -974,7 +990,7 @@ def image_to_clip(img_path, dst, fps, width, height, duration):
         os.replace(f'{dst}.tmp', dst)
 
 
-def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0, compose_song=False):
+def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0, compose_song=False, project_video_size=None):
     if not API_PRODUCTION:
         raise RuntimeError("Project root belum diset untuk merge.")
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
@@ -1033,7 +1049,13 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
     with tempfile.TemporaryDirectory(prefix='merge_') as td:
         # Master fps and size from first video
         master_fps = ffprobe_fps(videos[0])
-        master_w, master_h = ffprobe_size(videos[0])
+        if isinstance(project_video_size, (tuple, list)) and len(project_video_size) == 2:
+            try:
+                master_w, master_h = int(project_video_size[0]), int(project_video_size[1])
+            except (TypeError, ValueError):
+                master_w, master_h = ffprobe_size(videos[0])
+        else:
+            master_w, master_h = ffprobe_size(videos[0])
         cover_dir = os.path.join(API_PRODUCTION, 'cover')
         cover_src = _find_first_cover_image(cover_dir, td)
         cover_clip = None
@@ -1179,6 +1201,18 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
     if not os.path.exists(API_PRODUCTION):
         print('Project folder not found:', API_PRODUCTION)
         return 1
+    try:
+        project_settings = load_project_settings(Path(API_PRODUCTION))
+        video_size = project_settings.get('video_size', {})
+        project_video_size = (
+            int(video_size.get('width', 480)),
+            int(video_size.get('height', 848)),
+        )
+        if project_video_size[0] <= 0 or project_video_size[1] <= 0:
+            raise ValueError('Ukuran video project harus lebih besar dari nol.')
+    except Exception as e:
+        logger.warning('Gagal membaca ukuran video project; memakai ukuran default 480x848: %s', e)
+        project_video_size = (480, 848)
     
     # Clean combined folder before starting
     combined_dir = os.path.join(API_PRODUCTION, 'combined')
@@ -1274,6 +1308,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 embedded_audio_source=embedded_audio_source,
                 compose_song=compose_song,
                 trim_s2v_extra_frames=is_wan22_s2v,
+                project_video_size=project_video_size,
             )
         except Exception as e:
             logger.error('Failed to compose %s: %s', scene_dir, e)
@@ -1290,6 +1325,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 music_volume=music_volume,
                 upscale_factor=upscale_factor,
                 compose_song=compose_song,
+                project_video_size=project_video_size,
             )
         else:
             merge_combined_videos(
@@ -1297,6 +1333,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 music_volume=music_volume,
                 upscale_factor=upscale_factor,
                 compose_song=compose_song,
+                project_video_size=project_video_size,
             )
     except Exception as e:
         logger.error('Failed to merge combined videos: %s', e)

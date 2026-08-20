@@ -4,7 +4,6 @@
       "filename_prefix": "video/MiniMax_H3",
       "format": "auto",
       "codec": "auto",
-      "video-preview": "",
       "video": [
         "132",
         0
@@ -257,6 +256,20 @@
     }
   },
   "136": {
+    "inputs": {
+      "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
+      "strength_model": 0,
+      "model": [
+        "137",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "137": {
     "inputs": {
       "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
       "strength_model": 0,

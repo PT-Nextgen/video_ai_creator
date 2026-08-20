@@ -28,6 +28,45 @@ from minimax_h3_prompt import (
     restore_ref2va_tokens,
 )
 
+
+RUNTIME_PROMPT_FILENAMES = (
+    "scene_meta.json",
+    "z_image_prompt.json",
+    "image_edit_prompt.json",
+    "wan22_t2v_prompt.json",
+    "wan22_i2v_prompt.json",
+    "wan22_s2v_prompt.json",
+    "wan22_t2v_batch_extra_prompts.json",
+    "minimax_h3_t2v_prompt.json",
+    "minimax_h3_i2v_prompt.json",
+    "minimax_h3_s2v_prompt.json",
+    "minimax_h3_r2v_prompt.json",
+    "web_scroll_prompt.json",
+    "image_pan_prompt.json",
+    "image_zoom_prompt.json",
+)
+
+# Only these prompt files participate in each scene workflow. Keeping this
+# mapping explicit prevents an unused/stale prompt from blocking an unrelated
+# operation (for example, an incomplete MiniMax T2V prompt blocking Flux
+# initial-image generation in a MiniMax I2V scene).
+RUNTIME_PROMPTS_BY_SCENE_TYPE = {
+    "wan22_t2v_i2v": ("wan22_t2v_prompt.json", "wan22_i2v_prompt.json"),
+    "wan22_t2v": ("wan22_t2v_prompt.json",),
+    "wan22_i2v": ("z_image_prompt.json", "wan22_i2v_prompt.json"),
+    "wan22": ("z_image_prompt.json", "wan22_i2v_prompt.json"),
+    "wan22_t2v_batch": ("wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"),
+    "wan22_s2v": ("wan22_s2v_prompt.json", "z_image_prompt.json"),
+    "minimax-h3_t2v_i2v": ("minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"),
+    "minimax-h3_i2v": ("z_image_prompt.json", "minimax_h3_i2v_prompt.json"),
+    "minimax-h3_s2v": ("z_image_prompt.json", "minimax_h3_s2v_prompt.json"),
+    "minimax-h3_r2v": ("minimax_h3_r2v_prompt.json",),
+    "i2v": ("z_image_prompt.json",),
+    "image_pan": ("z_image_prompt.json", "image_pan_prompt.json"),
+    "image_zoom": ("z_image_prompt.json", "image_zoom_prompt.json"),
+    "web_scroll": ("web_scroll_prompt.json",),
+}
+
 LOGGER = logging.getLogger(__name__)
 
 _MINIMAX_DIALOGUE_BLOCK_PATTERN = re.compile(r"<d>.*?</d>", re.IGNORECASE | re.DOTALL)
@@ -746,15 +785,35 @@ class PromptTranslator:
         }
         fixed_keys = {"shot_id", "picture", "source", "instruction", "mode"}
 
-        def translate_node(node, key: str = ""):
+        def translate_node(node, key: str = "", path: str = ""):
             if isinstance(node, dict):
-                return {child_key: translate_node(child_value, child_key) for child_key, child_value in node.items()}
+                return {
+                    child_key: translate_node(
+                        child_value,
+                        child_key,
+                        f"{path}.{child_key}" if path else child_key,
+                    )
+                    for child_key, child_value in node.items()
+                }
             if isinstance(node, list):
-                return [translate_node(item, key) for item in node]
+                return [
+                    translate_node(item, key, f"{path}[{index}]")
+                    for index, item in enumerate(node)
+                ]
             if not isinstance(node, str) or key in fixed_keys or key not in translatable_keys:
                 return copy.deepcopy(node)
             if not node.strip() or node.strip().upper() == "N/A":
+                LOGGER.info(
+                    "[prompt translation] MiniMax H3 %s field=%s direction=en_to_id status=skipped",
+                    mode,
+                    path or key,
+                )
                 return node
+            LOGGER.info(
+                "[prompt translation] MiniMax H3 %s field=%s direction=en_to_id status=start",
+                mode,
+                path or key,
+            )
             context = (
                 f"MiniMax H3 {mode} field translation. Translate this single field value into natural Indonesian. "
                 "Return only the translated text; do not add JSON, labels, or explanation. "
@@ -766,7 +825,13 @@ class PromptTranslator:
                 "Also preserve shot identifiers such as [Shot N], [Shot 1], speaker identifiers such as "
                 "(S1), (S2), and (S1,S2), and mode identifiers T2VA, I2VA, FL2VA, L2VA, and Ref2VA exactly."
             )
-            return self.translate_to_indonesian(node, context=context) or node
+            translated = self.translate_to_indonesian(node, context=context) or node
+            LOGGER.info(
+                "[prompt translation] MiniMax H3 %s field=%s direction=en_to_id status=success",
+                mode,
+                path or key,
+            )
+            return translated
 
         translated = translate_node(value)
         if not isinstance(translated, dict):
@@ -781,8 +846,16 @@ class PromptTranslator:
         for key in REF2VA_SECTION_KEYS:
             text = value[key]
             if not text.strip() or text.strip().upper() == "N/A":
+                LOGGER.info(
+                    "[prompt translation] MiniMax H3 Ref2VA field=%s direction=en_to_id status=skipped",
+                    key,
+                )
                 translated[key] = text
                 continue
+            LOGGER.info(
+                "[prompt translation] MiniMax H3 Ref2VA field=%s direction=en_to_id status=start",
+                key,
+            )
             protected, replacements = protect_ref2va_tokens(text)
             translated_text = self.translate_to_indonesian(
                 protected,
@@ -791,6 +864,10 @@ class PromptTranslator:
                          "__REF2VA_TOKEN_001__. Return only the translated field text.")
             ) or protected
             translated[key] = restore_ref2va_tokens(translated_text, replacements)
+            LOGGER.info(
+                "[prompt translation] MiniMax H3 Ref2VA field=%s direction=en_to_id status=success",
+                key,
+            )
         return translated
 
     def translate_ref2va_prompt_to_indonesian(self, en: dict) -> dict:
@@ -1568,3 +1645,65 @@ def read_json_for_runtime(
         if log_fn:
             log_fn(f"Prompt localization diperbarui: {path}")
     return resolved
+
+
+def prepare_project_prompts_for_runtime(
+    project_dir: str | Path,
+    scene_dirs: list[str | Path] | None = None,
+    additional_filenames: list[str] | None = None,
+    include_project_settings: bool = False,
+    log_fn: Callable[[str], None] | None = None,
+) -> None:
+    """Resolve only workflow-relevant prompts before ComfyUI is activated.
+
+    Runtime workflow entrypoints use this as a barrier: any required Llama
+    calls happen first, so prompt loading cannot switch away from ComfyUI
+    after the workflow phase has started. Unused prompt files are deliberately
+    skipped so stale data from another scene type cannot block the workflow.
+    """
+    root = Path(project_dir)
+    if scene_dirs is None:
+        scene_paths = sorted(
+            (path for path in root.iterdir() if path.is_dir() and path.name.lower().startswith("scene_")),
+            key=lambda path: path.name.lower(),
+        ) if root.is_dir() else []
+    else:
+        scene_paths = [Path(path) for path in scene_dirs]
+
+    if include_project_settings:
+        path = root / "project_settings_cover.json"
+        if path.exists():
+            read_json_for_runtime(str(path), required=False, log_fn=log_fn)
+
+    for scene_dir in scene_paths:
+        if not scene_dir.is_dir():
+            continue
+        scene_type = "wan22_i2v"
+        meta_path = scene_dir / "scene_meta.json"
+        try:
+            if meta_path.exists():
+                scene_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if isinstance(scene_meta, dict):
+                    scene_type = str(scene_meta.get("scene_type") or scene_type).strip()
+        except Exception as exc:
+            if log_fn:
+                log_fn(f"[runtime] Gagal membaca scene_type dari {meta_path}: {exc}; memakai {scene_type}")
+
+        filenames = list(RUNTIME_PROMPTS_BY_SCENE_TYPE.get(scene_type, ()))
+        if not filenames:
+            # Preserve the previous safe behavior for a future/unknown scene
+            # type, while making the fallback visible in the log.
+            filenames = list(RUNTIME_PROMPT_FILENAMES)
+            if log_fn:
+                log_fn(
+                    f"[runtime] scene_type={scene_type!r} belum punya mapping prompt; "
+                    "pra-lokalisasi memakai daftar lengkap"
+                )
+        for filename in list(additional_filenames or []):
+            if filename and filename not in filenames:
+                filenames.append(filename)
+        for filename in filenames:
+            path = scene_dir / filename
+            if not path.exists():
+                continue
+            read_json_for_runtime(str(path), required=False, log_fn=log_fn)
