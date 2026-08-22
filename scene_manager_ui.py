@@ -484,7 +484,6 @@ MINIMAX_H3_DURATION_OPTIONS = [1, 5, 10, 15, 20, 25, 30]
 MINIMAX_H3_I2V_DURATION_OPTIONS = [1, 5, 10, 15]
 MINIMAX_H3_DURATION_MIN = 1.0
 MINIMAX_H3_DURATION_DECIMALS = 1
-MINIMAX_H3_FPS_OPTIONS = [16, 24]
 MINIMAX_H3_DEFAULT_FPS = 24
 PROMPT_APPEND_OPERATIONS = {
     "wan22_t2v_positive": {
@@ -1500,11 +1499,11 @@ class SceneTemplateDialog(QDialog):
         self.duration_text_input = QLineEdit("10.0")
         self.duration_text_input.setValidator(QDoubleValidator(1.0, 30.0, 1, self.duration_text_input))
         self.duration_text_input.setPlaceholderText("contoh: 15.5")
-        self.duration_text_input.setFixedHeight(self.duration_input.sizeHint().height())
+        self.duration_text_input.setFixedHeight(self.duration_combo.sizeHint().height())
         self.duration_editor_stack = QStackedWidget()
         self.duration_editor_stack.addWidget(self.duration_combo)
         self.duration_editor_stack.addWidget(self.duration_text_input)
-        self.duration_editor_stack.setFixedHeight(self.duration_input.sizeHint().height())
+        self.duration_editor_stack.setFixedHeight(self.duration_combo.sizeHint().height())
         form = QFormLayout(self)
         form.addRow("Judul Adegan", self.title_input)
         form.addRow("Tipe Adegan", self.type_combo)
@@ -2817,21 +2816,6 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_size_input = QComboBox()
         for label, width, height in MINIMAX_H3_SIZE_OPTIONS:
             self.minimax_h3_i2v_size_input.addItem(label, (width, height))
-        self.minimax_h3_t2v_fps_input = QComboBox()
-        self.minimax_h3_i2v_fps_input = QComboBox()
-        self.minimax_h3_r2v_fps_input = QComboBox()
-        self.minimax_h3_s2v_fps_input = QComboBox()
-        self.minimax_h3_i2v_fps_label = QLabel("FPS")
-        self.minimax_h3_s2v_fps_label = QLabel("FPS")
-        for widget in (
-            self.minimax_h3_t2v_fps_input,
-            self.minimax_h3_i2v_fps_input,
-            self.minimax_h3_r2v_fps_input,
-            self.minimax_h3_s2v_fps_input,
-        ):
-            for fps in MINIMAX_H3_FPS_OPTIONS:
-                widget.addItem(str(fps), fps)
-            widget.setCurrentIndex(widget.findData(MINIMAX_H3_DEFAULT_FPS))
         self.minimax_h3_t2v_lora_name_input = QComboBox()
         self.minimax_h3_t2v_lora_name_input.setEditable(False)
         self.minimax_h3_t2v_lora_name_2_input = QComboBox()
@@ -3096,12 +3080,8 @@ class SceneEditorWindow(QMainWindow):
             self.z_size_input.currentTextChanged, self.wan_size_input.currentTextChanged,
             self.wan_t2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_size_input.currentTextChanged,
-            self.minimax_h3_t2v_fps_input.currentIndexChanged,
             self.minimax_h3_i2v_size_input.currentTextChanged,
-            self.minimax_h3_i2v_fps_input.currentIndexChanged,
             self.minimax_h3_r2v_size_input.currentTextChanged,
-            self.minimax_h3_r2v_fps_input.currentIndexChanged,
-            self.minimax_h3_s2v_fps_input.currentIndexChanged,
             self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
@@ -3341,21 +3321,19 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_t2v_lora_strength_input.setFixedWidth(84)
         minimax_t2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_size_input, 0, 1, 1, 3)
-        minimax_t2v_layout.addWidget(QLabel("FPS"), 1, 0)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_fps_input, 1, 1, 1, 3)
-        minimax_t2v_layout.addWidget(QLabel("Lora"), 2, 0)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_input, 2, 1)
-        minimax_t2v_layout.addWidget(QLabel("Kekuatan"), 2, 2)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_input, 2, 3)
-        minimax_t2v_layout.addWidget(QLabel("Lora 2"), 3, 0)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_2_input, 3, 1)
-        minimax_t2v_layout.addWidget(QLabel("Kekuatan 2"), 3, 2)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_2_input, 3, 3)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 4, 1)
-        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 4, 3, Qt.AlignLeft)
-        minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 5, 0)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 5, 1, 1, 3)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 6, 1, 1, 3, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(QLabel("Lora"), 1, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_input, 1, 1)
+        minimax_t2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_input, 1, 3)
+        minimax_t2v_layout.addWidget(QLabel("Lora 2"), 2, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_name_2_input, 2, 1)
+        minimax_t2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_2_input, 2, 3)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 3, 1)
+        minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 3, 3, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 4, 1, 1, 3)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 5, 1, 1, 3, Qt.AlignLeft)
         tabs.addTab(self.minimax_h3_t2v_tab, "MINIMAX-H3_T2V")
 
         self.minimax_h3_i2v_tab = QWidget()
@@ -3367,27 +3345,24 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_lora_strength_input.setFixedWidth(84)
         minimax_i2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_size_input, 0, 1, 1, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_fps_label, 1, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_fps_input, 1, 1, 1, 3)
-        minimax_i2v_layout.addWidget(QLabel("Lora"), 2, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 2, 1)
-        minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 2, 2)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 2, 3)
-        minimax_i2v_layout.addWidget(QLabel("Lora 2"), 3, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_2_input, 3, 1)
-        minimax_i2v_layout.addWidget(QLabel("Kekuatan 2"), 3, 2)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 3, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 4, 1)
-        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 4, 2, 1, 2, Qt.AlignLeft)
-        minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 5, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 5, 1, 1, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 6, 1, 1, 3, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(QLabel("Lora"), 1, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 1, 1)
+        minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 1, 3)
+        minimax_i2v_layout.addWidget(QLabel("Lora 2"), 2, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_2_input, 2, 1)
+        minimax_i2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 2, 3)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 3, 1)
+        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 3, 2, 1, 2, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 4, 1, 1, 3)
+        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 5, 1, 1, 3, Qt.AlignLeft)
         tabs.addTab(self.minimax_h3_i2v_tab, "MINIMAX-H3_I2V")
 
         self.minimax_h3_r2v_tab = QWidget()
         r2v_layout = QFormLayout(self.minimax_h3_r2v_tab)
         r2v_layout.addRow("Ukuran", self.minimax_h3_r2v_size_input)
-        r2v_layout.addRow("FPS", self.minimax_h3_r2v_fps_input)
         r2v_layout.addRow("Lora", self.minimax_h3_r2v_lora_name_input)
         r2v_layout.addRow("Kekuatan Lora", self.minimax_h3_r2v_lora_strength_input)
         r2v_layout.addRow("Lora 2", self.minimax_h3_r2v_lora_name_2_input)
@@ -3414,7 +3389,6 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_tab = QWidget()
         s2v_layout = QFormLayout(self.s2v_tab)
         s2v_layout.addRow("Ukuran", self.s2v_size_input)
-        s2v_layout.addRow(self.minimax_h3_s2v_fps_label, self.minimax_h3_s2v_fps_input)
         self.minimax_h3_s2v_lora_label = QLabel("Lora")
         self.minimax_h3_s2v_lora_strength_label = QLabel("Kekuatan Lora")
         self.minimax_h3_s2v_lora_2_label = QLabel("Lora 2")
@@ -3681,13 +3655,8 @@ class SceneEditorWindow(QMainWindow):
             if self.duration_label is not None:
                 self.duration_label.setEnabled(True)
                 self.duration_label.setVisible(True)
-        show_standalone_i2v_fps = scene_type == MINIMAX_H3_I2V_SCENE_TYPE
-        self.minimax_h3_i2v_fps_label.setVisible(show_standalone_i2v_fps)
-        self.minimax_h3_i2v_fps_input.setVisible(show_standalone_i2v_fps)
         is_wan22_s2v = scene_type == "wan22_s2v"
         is_minimax_h3_s2v = scene_type == MINIMAX_H3_S2V_SCENE_TYPE
-        self.minimax_h3_s2v_fps_label.setVisible(is_minimax_h3_s2v)
-        self.minimax_h3_s2v_fps_input.setVisible(is_minimax_h3_s2v)
         if self.s2v_negative_label is not None:
             self.s2v_negative_label.setVisible(is_wan22_s2v)
         self.s2v_negative_input.setVisible(is_wan22_s2v)
@@ -4132,7 +4101,7 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_t2v_prompt.json",
             source_data=minimax_t2v_prompt,
-            keys=["fps", "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
+            keys=["lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
 
@@ -4144,7 +4113,7 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_i2v_prompt.json",
             source_data=minimax_i2v_prompt,
-            keys=["fps", "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
+            keys=["lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
             action_title="Edit Variasi MiniMax H3 I2V",
         )
 
@@ -4919,6 +4888,7 @@ class SceneEditorWindow(QMainWindow):
 
     def _manual_runtime_switch_finished(self, target: str, status: dict):
         self._apply_runtime_status_colors(status)
+        self.append_log(f"[runtime] Switch terverifikasi target={target}")
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
             button.setEnabled(True)
         self.statusBar().showMessage(f"{target} aktif dan service lainnya mati.", 5000)
@@ -4926,7 +4896,7 @@ class SceneEditorWindow(QMainWindow):
     def _manual_runtime_switch_failed(self, target: str, error: str):
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
             button.setEnabled(True)
-        self.append_log(f"[runtime] Manual switch ke {target} gagal: {error}")
+        self.append_log(f"[runtime] Switch gagal target={target}: {error}")
         self.statusBar().showMessage(f"Switch ke {target} gagal.", 5000)
 
     def check_runtime_status(self):
@@ -4947,16 +4917,24 @@ class SceneEditorWindow(QMainWindow):
 
     def _runtime_status_checked(self, status: dict):
         self._apply_runtime_status_colors(status)
+        services = status.get("services", {}) if isinstance(status, dict) else {}
+        llama_health = bool(services.get("llama", {}).get("health")) if isinstance(services, dict) and isinstance(services.get("llama"), dict) else False
+        comfyui_health = bool(services.get("comfyui", {}).get("health")) if isinstance(services, dict) and isinstance(services.get("comfyui"), dict) else False
+        active = str(status.get("active", "none")) if isinstance(status, dict) else "none"
+        self.append_log(
+            f"[runtime] Status terverifikasi active={active}, "
+            f"llama={'healthy' if llama_health else 'mati'}, "
+            f"comfyui={'healthy' if comfyui_health else 'mati'}"
+        )
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
             button.setEnabled(True)
-        active = str(status.get("active", "none")) if isinstance(status, dict) else "none"
         self.statusBar().showMessage(f"Runtime aktif: {active}", 4000)
 
     def _runtime_status_check_failed(self, error: str):
         self._apply_runtime_status_colors(None)
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
             button.setEnabled(True)
-        self.append_log(f"[runtime] Gagal cek status service: {error}")
+        self.append_log(f"[runtime] Status gagal: {error}")
         self.statusBar().showMessage("Gagal memeriksa status service.", 5000)
 
     def _apply_runtime_status_colors(self, status: dict | None):
@@ -5679,20 +5657,10 @@ class SceneEditorWindow(QMainWindow):
             minimax_t2v_height = int(minimax_h3_t2v_prompt.get("height", DEFAULT_MINIMAX_H3_T2V_PROMPT["height"]))
             minimax_t2v_index = self.minimax_h3_t2v_size_input.findData((minimax_t2v_width, minimax_t2v_height))
             self.minimax_h3_t2v_size_input.setCurrentIndex(max(minimax_t2v_index, 0))
-            minimax_t2v_fps = int(minimax_h3_t2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
-            minimax_t2v_fps_index = self.minimax_h3_t2v_fps_input.findData(minimax_t2v_fps)
-            self.minimax_h3_t2v_fps_input.setCurrentIndex(
-                minimax_t2v_fps_index if minimax_t2v_fps_index >= 0 else self.minimax_h3_t2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
-            )
             minimax_i2v_width = int(minimax_h3_i2v_prompt.get("width", DEFAULT_MINIMAX_H3_I2V_PROMPT["width"]))
             minimax_i2v_height = int(minimax_h3_i2v_prompt.get("height", DEFAULT_MINIMAX_H3_I2V_PROMPT["height"]))
             minimax_i2v_index = self.minimax_h3_i2v_size_input.findData((minimax_i2v_width, minimax_i2v_height))
             self.minimax_h3_i2v_size_input.setCurrentIndex(max(minimax_i2v_index, 0))
-            minimax_i2v_fps = int(minimax_h3_i2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
-            minimax_i2v_fps_index = self.minimax_h3_i2v_fps_input.findData(minimax_i2v_fps)
-            self.minimax_h3_i2v_fps_input.setCurrentIndex(
-                minimax_i2v_fps_index if minimax_i2v_fps_index >= 0 else self.minimax_h3_i2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
-            )
             minimax_t2v_lora_name = str(
                 minimax_h3_t2v_prompt.get(
                     "lora_name",
@@ -5787,13 +5755,6 @@ class SceneEditorWindow(QMainWindow):
                     index = i
                     break
             self.s2v_size_input.setCurrentIndex(max(index, 0))
-            s2v_fps = int(s2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
-            s2v_fps_index = self.minimax_h3_s2v_fps_input.findData(s2v_fps)
-            self.minimax_h3_s2v_fps_input.setCurrentIndex(
-                s2v_fps_index
-                if s2v_fps_index >= 0
-                else self.minimax_h3_s2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
-            )
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
             self.s2v_positive_input.setPlainText(
                 json.dumps(
@@ -5812,11 +5773,6 @@ class SceneEditorWindow(QMainWindow):
             r2v_height = int(minimax_h3_r2v_prompt.get("height", DEFAULT_MINIMAX_H3_R2V_PROMPT["height"]))
             r2v_index = self.minimax_h3_r2v_size_input.findData((r2v_width, r2v_height))
             self.minimax_h3_r2v_size_input.setCurrentIndex(max(r2v_index, 0))
-            r2v_fps = int(minimax_h3_r2v_prompt.get("fps", MINIMAX_H3_DEFAULT_FPS))
-            r2v_fps_index = self.minimax_h3_r2v_fps_input.findData(r2v_fps)
-            self.minimax_h3_r2v_fps_input.setCurrentIndex(
-                r2v_fps_index if r2v_fps_index >= 0 else self.minimax_h3_r2v_fps_input.findData(MINIMAX_H3_DEFAULT_FPS)
-            )
             r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
             r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
             self.minimax_h3_r2v_positive_input.setPlainText(
@@ -5958,13 +5914,10 @@ class SceneEditorWindow(QMainWindow):
             raise ValueError("Kekuatan Lora MiniMax H3 I2V kedua harus berupa angka.")
         t2v_size = self.minimax_h3_t2v_size_input.currentData() or (368, 640)
         i2v_size = self.minimax_h3_i2v_size_input.currentData() or t2v_size
-        shared_fps = int(self.minimax_h3_t2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS)
-        standalone_i2v_fps = int(self.minimax_h3_i2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS)
         scene_type = self.scene_type_combo.currentText().strip()
         t2v_prompt = {
             "width": int(t2v_size[0]),
             "height": int(t2v_size[1]),
-            "fps": int(self.minimax_h3_t2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS),
             "positive_prompt": self._merge_minimax_h3_prompt_entry(
                 self.current_scene_dir / "minimax_h3_t2v_prompt.json",
                 "T2VA",
@@ -5979,7 +5932,6 @@ class SceneEditorWindow(QMainWindow):
         i2v_prompt = {
             "width": int(i2v_size[0]),
             "height": int(i2v_size[1]),
-            "fps": standalone_i2v_fps if scene_type == MINIMAX_H3_I2V_SCENE_TYPE else shared_fps,
             "positive_prompt": self._merge_minimax_h3_prompt_entry(
                 self.current_scene_dir / "minimax_h3_i2v_prompt.json",
                 "I2VA",
@@ -6212,7 +6164,6 @@ class SceneEditorWindow(QMainWindow):
                 },
                 "width": s2v_prompt["width"],
                 "height": s2v_prompt["height"],
-                "fps": int(self.minimax_h3_s2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS),
                 "lora_name": self.minimax_h3_s2v_lora_name_input.currentText().strip(),
                 "lora_strength": s2v_lora_strength,
                 "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
@@ -6913,7 +6864,6 @@ class SceneEditorWindow(QMainWindow):
             },
             "width": int(size[0]),
             "height": int(size[1]),
-            "fps": int(self.minimax_h3_r2v_fps_input.currentData() or MINIMAX_H3_DEFAULT_FPS),
             "references": references,
             "lora_name": self.minimax_h3_r2v_lora_name_input.currentText().strip(),
             "lora_strength": r2v_lora_strength,
@@ -7033,19 +6983,27 @@ class SceneEditorWindow(QMainWindow):
     def add_scene(self):
         if not self.ensure_project_selected():
             return
-        data = self.open_scene_dialog("Tambah Adegan")
+        try:
+            data = self.open_scene_dialog("Tambah Adegan")
+        except Exception as exc:
+            QMessageBox.critical(self, "Gagal Membuka Dialog", f"Dialog Tambah Adegan gagal dibuka.\n\n{exc}")
+            return
         if data is None:
             return
         project_dir = self.project_dir()
         if project_dir is None:
             QMessageBox.information(self, "Belum Ada Project", "Buka atau buat project terlebih dahulu.")
             return
-        new_dir = create_scene_in_project(
-            project_dir,
-            scene_type=data["scene_type"],
-            scene_title=data["scene_title"],
-            duration=data["duration_seconds"],
-        )
+        try:
+            new_dir = create_scene_in_project(
+                project_dir,
+                scene_type=data["scene_type"],
+                scene_title=data["scene_title"],
+                duration=data["duration_seconds"],
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Gagal Menambah Adegan", f"Adegan baru tidak dapat dibuat.\n\n{exc}")
+            return
         self.reload_scene_list()
         self.select_scene_by_name(new_dir.name)
 
@@ -7660,7 +7618,10 @@ class SceneEditorWindow(QMainWindow):
         ).strip() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
         self.append_log(f"Provider prompt generation: {prompt_provider} ({prompt_model})")
         if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"}:
-            self.append_log("LLM MiniMax dipanggil dalam dua tahap: generate `en`, lalu terjemahkan field menjadi `id_new`; `id_old` adalah salinan `id_new`.")
+            self.append_log(
+                "[MiniMax][UI] Tahap 1/2 generate `en`; tahap 2/2 translate per-field "
+                "`en` -> `id_new`; lalu sinkronkan `id_old` dari `id_new`."
+            )
         else:
             self.append_log("LLM dipanggil sekali untuk mengembalikan `en` dan `id_new`; `id_old` akan disamakan dengan `id_new`.")
 
@@ -7734,7 +7695,7 @@ class SceneEditorWindow(QMainWindow):
                         audio_count=len(self._r2v_selected_names(self.minimax_h3_r2v_audio_list)),
                         has_video=bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list)),
                     ))
-                if not errors and prompt_kind == "minimax_h3_s2v":
+            if not errors and prompt_kind == "minimax_h3_s2v":
                     errors.extend(validate_ref2va_reference_tokens(
                         entry.get("en"),
                         image_count=1,
@@ -7750,6 +7711,10 @@ class SceneEditorWindow(QMainWindow):
                 self.append_log("[gagal] Response nested MiniMax tidak valid: " + "; ".join(errors[:3]))
                 self.statusBar().showMessage("Format JSON MiniMax tidak sesuai.", 4000)
                 return
+            self.append_log(
+                f"[MiniMax][UI] Generate `en` dan translate per-field selesai: {prompt_kind}."
+            )
+            self.append_log("[MiniMax][UI] `id_old` disinkronkan sebagai salinan `id_new`.")
             try:
                 prompt_path, field_key, _ = self._prompt_file_and_key(prompt_kind, prompt_key=prompt_key)
                 payload = json.loads(prompt_path.read_text(encoding="utf-8")) if prompt_path.exists() else {}
@@ -7778,7 +7743,7 @@ class SceneEditorWindow(QMainWindow):
                     f"[warning] Prompt tersimpan, tetapi id_new tidak dimuat ke UI; target={scene_dir.name}"
                 )
             self.append_log(
-                f"[sukses] JSON nested prompt disimpan ke {prompt_path.name}; "
+                f"[MiniMax][UI][sukses] JSON nested prompt disimpan ke {prompt_path.name}; "
                 f"id_new dimuat ke UI={loaded_into_ui}"
             )
             self.statusBar().showMessage("Prompt MiniMax berhasil dibuat.", 4000)
@@ -8080,7 +8045,7 @@ class SceneEditorWindow(QMainWindow):
         self._pending_t2v_batch_slot = slot_index
         self._start_prompt_generation("t2v_batch", slot_index, positive_text, context_text=context)
 
-    def _start_prompt_generation(
+    def _start_prompt_generation_legacy_unused(
         self,
         prompt_kind: str,
         slot_index: int | None = None,
@@ -8130,6 +8095,8 @@ class SceneEditorWindow(QMainWindow):
             "minimax_h3_t2v": "MiniMax H3 T2VA",
             "minimax_h3_i2v": "MiniMax H3 I2VA",
             "minimax_h3_i2v_standalone": "MiniMax H3 I2VA",
+            "minimax_h3_s2v": "MiniMax H3 Ref2VA",
+            "minimax_h3_r2v": "MiniMax H3 R2V Ref2VA",
             "wan_s2v": f"WAN22 S2V ({prompt_key or 'prompt'})",
             "t2v_batch": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
         }.get(prompt_kind, prompt_kind)
@@ -8148,7 +8115,10 @@ class SceneEditorWindow(QMainWindow):
         ).strip() or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["model"]
         self.append_log(f"Provider prompt generation: {prompt_provider} ({prompt_model})")
         if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"}:
-            self.append_log("LLM MiniMax dipanggil dalam dua tahap: generate `en`, lalu terjemahkan field menjadi `id_new`; `id_old` adalah salinan `id_new`.")
+            self.append_log(
+                "[MiniMax][UI] Tahap 1/2 generate `en`; tahap 2/2 translate per-field "
+                "`en` -> `id_new`; lalu sinkronkan `id_old` dari `id_new`."
+            )
         else:
             self.append_log("LLM dipanggil sekali untuk mengembalikan `en` dan `id_new`; `id_old` akan disamakan dengan `id_new`.")
 

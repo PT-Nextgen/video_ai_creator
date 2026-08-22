@@ -1670,6 +1670,10 @@ def _normalize_minimax_agentic_output(
         except Exception as exc:
             return None, [f"{filename}: gagal menerjemahkan en per field ke id_new: {exc}"]
 
+    write_log(
+        f"[MiniMax][Agentic] {filename}: generate `en` selesai; "
+        "translate per-field `en` -> `id_new` selesai; `id_old` disinkronkan dari `id_new`."
+    )
     result = copy.deepcopy(input_payload)
     original_entry = input_payload.get("positive_prompt")
     entry_keys = list(original_entry.keys()) if isinstance(original_entry, dict) else ["id_old", "id_new", "en"]
@@ -1972,8 +1976,10 @@ def generate_variations(
     scene_dir = Path(scene_dir)
 
     global_prompt_config = load_server_config().get("prompt_generation", {})
-    pg = global_prompt_config if isinstance(global_prompt_config, dict) else {}
-    provider = str(pg.get("provider", "gemini")).strip().lower() or "gemini"
+    global_pg = global_prompt_config if isinstance(global_prompt_config, dict) else {}
+    project_prompt_config = project_settings.get("prompt_generation", {})
+    project_pg = project_prompt_config if isinstance(project_prompt_config, dict) else {}
+    provider = str(project_pg.get("provider", global_pg.get("provider", "gemini"))).strip().lower() or "gemini"
     if provider == LEGACY_LOCAL_PROMPT_PROVIDER:
         provider = LOCAL_PROMPT_PROVIDER
     if provider not in {"gemini", LOCAL_PROMPT_PROVIDER}:
@@ -1981,12 +1987,12 @@ def generate_variations(
 
     # Determine model
     if not model_name:
-        model_name = str(pg.get("model", "gemini-3.1-flash-lite")).strip()
+        model_name = str(project_pg.get("model", global_pg.get("model", "gemini-3.1-flash-lite"))).strip()
     if not model_name:
         model_name = "gemini-3.1-flash-lite"
-    local_host = str(pg.get("host", DEFAULT_LOCAL_PROMPT_HOST)).strip() or DEFAULT_LOCAL_PROMPT_HOST
+    local_host = str(project_pg.get("host", global_pg.get("host", DEFAULT_LOCAL_PROMPT_HOST))).strip() or DEFAULT_LOCAL_PROMPT_HOST
     try:
-        local_port = int(pg.get("port", DEFAULT_LOCAL_PROMPT_PORT))
+        local_port = int(project_pg.get("port", global_pg.get("port", DEFAULT_LOCAL_PROMPT_PORT)))
     except (TypeError, ValueError):
         local_port = DEFAULT_LOCAL_PROMPT_PORT
     # Build prompt
@@ -2001,7 +2007,13 @@ def generate_variations(
     output_schema = build_agentic_output_schema(scene_dir, scene_type, agentic_config)
     latest_response_text = ""
 
-    write_log(f"[agentic] Memulai LLM variation untuk {scene_dir} (provider={provider}, model={model_name})")
+    if scene_type in MINIMAX_AGENTIC_SCENE_TYPES:
+        write_log(
+            f"[MiniMax][Agentic] mulai LLM variasi untuk {scene_dir} "
+            f"(type={scene_type}, provider={provider}, model={model_name})"
+        )
+    else:
+        write_log(f"[agentic] Memulai LLM variation untuk {scene_dir} (provider={provider}, model={model_name})")
 
     # Call Gemini with retry
     max_retries = 3

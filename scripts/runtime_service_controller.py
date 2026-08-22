@@ -139,13 +139,16 @@ class RuntimeServiceController:
 
     def ensure(self, target: str, reason: str = "video_ai_creator") -> None:
         target = str(target).strip().lower()
+        if target not in {"llama", "comfyui"}:
+            raise RuntimeServiceError(f"Target service tidak valid: {target}")
         write_log(f"[runtime] Ensure mulai target={target}, reason={reason}")
         if self._health(target):
             other = "comfyui" if target == "llama" else "llama"
             if not self._health(other):
+                write_log(f"[runtime] Ensure selesai target={target}, result=sudah_aktif")
                 return
         self.switch(target, reason=reason)
-        write_log(f"[runtime] Ensure selesai target={target}")
+        write_log(f"[runtime] Ensure selesai target={target}, result=switch")
 
     def ensure_llama(self, reason: str = "prompt_generation") -> None:
         self.ensure("llama", reason)

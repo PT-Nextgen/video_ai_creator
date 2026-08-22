@@ -30,7 +30,6 @@ VENV_PYTHON = Path(ROOT) / ".venv" / "Scripts" / "python.exe"
 
 from logging_config import write_log
 from scripts.project_settings import load_project_settings
-from scripts.server_config import load_server_config
 from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
 from prompt_localization import prepare_project_prompts_for_runtime
 from agentic.agentic_config import load_agentic_config
@@ -486,11 +485,7 @@ def generate_variation_configs_for_scene(
 
     project_prompt_config = project_settings.get("prompt_generation", {})
     project_provider = str(project_prompt_config.get("provider", "gemini")).strip().lower() if isinstance(project_prompt_config, dict) else "gemini"
-    server_config = load_server_config()
-    if project_provider == "llama.cpp":
-        model_name = str(server_config.get("prompt_generation", {}).get("model", "")).strip()
-    else:
-        model_name = str(server_config.get("translate", {}).get("model", "")).strip()
+    model_name = str(project_prompt_config.get("model", "")).strip() if isinstance(project_prompt_config, dict) else ""
     allowed_output_files = set(expected_output_files(scene_type, agentic_config))
     start_variation_index = _next_variation_index(scene_dir)
 
@@ -509,7 +504,10 @@ def generate_variation_configs_for_scene(
         variation_dir = scene_dir / _variation_dir_name(variation_index)
         variation_dir.mkdir(parents=True, exist_ok=True)
         (variation_dir / STATUS_FAILED_FILENAME).unlink(missing_ok=True)
-        write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Generate JSON variasi")
+        if scene_type.startswith("minimax-h3"):
+            write_log(f"[MiniMax][Agentic] {scene_dir.name}/{variation_dir.name}: mulai generate variasi JSON")
+        else:
+            write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Generate JSON variasi")
         variations, input_prompt_text, output_prompt_text = generate_variations(
             scene_dir=scene_dir,
             scene_type=scene_type,
@@ -536,6 +534,11 @@ def generate_variation_configs_for_scene(
                 "LLM gagal membuat variasi prompt setelah 3 percobaan.",
             )
             continue
+        if scene_type.startswith("minimax-h3"):
+            write_log(
+                f"[MiniMax][Agentic] {scene_dir.name}/{variation_dir.name}: "
+                f"semua prompt berhasil divalidasi ({', '.join(sorted(variations.keys()))})"
+            )
         if not _copy_scene_baseline_files(scene_dir, variation_dir):
             _write_variation_failure_marker(variation_dir, "Gagal menyalin baseline scene ke folder variasi.")
             return False

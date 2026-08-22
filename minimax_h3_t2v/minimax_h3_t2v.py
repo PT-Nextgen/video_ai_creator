@@ -153,11 +153,8 @@ def build_workflow(
     except (TypeError, ValueError):
         duration = 5.0
     _set_input(workflow, "133", "value", duration)
-    fps = fps_override if fps_override is not None else prompt.get("fps", 24)
-    try:
-        fps = int(fps)
-    except (TypeError, ValueError):
-        fps = 24
+    # MiniMax H3 hanya mendukung/menjalankan workflow pada 24 FPS.
+    fps = 24
     _set_input(workflow, "130", "fps", fps)
     frame_expression = (
         f"max(5, round(a * {fps})) + "

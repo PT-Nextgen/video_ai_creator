@@ -13,7 +13,7 @@ DEFAULT_SERVER_CONFIG = {
     },
     "translate": {
         "provider": "gemini",
-        "model": "gemini-2.5-flash-lite",
+        "model": "gemini-3.1-flash-lite",
     },
     "prompt_generation": {
         "provider": "llama.cpp",

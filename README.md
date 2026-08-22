@@ -213,21 +213,21 @@ Kebutuhan prompt per `scene_type`:
   - durasi scene berupa angka desimal `1.0` sampai `30.0` dengan maksimal 1 angka desimal
   - durasi sampai `15.0` detik hanya menjalankan stage MiniMax H3 T2V
   - durasi di atas `15.0` detik menjalankan T2V `15.0` detik lalu I2V dengan frame terakhir T2V sebagai gambar awal; sisa durasi dikirim ke stage I2V
-  - dropdown FPS pada tab T2V berisi `16` dan `24`, dan nilainya berlaku untuk stage T2V maupun I2V
+  - FPS MiniMax H3 ditetapkan `24`, dan nilainya berlaku untuk stage T2V maupun I2V
 - `minimax-h3_i2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_i2v_prompt.json`, dan minimal satu gambar di root folder scene
   - durasi scene berupa angka desimal `1.0` sampai `15.0` dengan maksimal 1 angka desimal
   - memakai gambar terbaru dari root folder scene sebagai `Picture 1` untuk workflow MiniMax H3 I2VA
-  - dropdown FPS pada tab I2V berisi `16` dan `24`
+  - FPS MiniMax H3 ditetapkan `24`
 - `minimax-h3_r2v`
   - membutuhkan `scene_meta.json`, `minimax_h3_r2v_prompt.json`, dan minimal satu reference image, video, atau audio sesuai manifest prompt
   - durasi scene berupa angka desimal `1.0` sampai `15.0` dengan maksimal 1 angka desimal
-  - dropdown FPS pada tab R2V berisi `16` dan `24`
+  - FPS MiniMax H3 ditetapkan `24`
 - `minimax-h3_s2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_`
-  - durasi voice dikirim sebagai float ke workflow; output video MiniMax dipertahankan utuh tanpa post-trim sehingga frame padding dari perhitungan workflow tetap tersedia
+  - durasi voice dikirim sebagai float ke workflow; setelah video diunduh, frame padding MiniMax dipotong sebelum proses finalisasi audio
   - durasi audio speech tidak boleh lebih dari 15 detik; jika melebihi batas, scene diblokir
-  - dropdown FPS pada tab MiniMax S2V berisi `16` dan `24`
+  - FPS MiniMax H3 ditetapkan `24`
   - workflow memakai `minimax_h3_r2v_api.json` secara in-memory dan menghapus referensi Picture 2, Picture 3, Video 1, Audio 2, dan Audio 3
   - Picture 1 berasal dari gambar root terbaru dan Audio 1 berasal dari audio speech root terbaru
 - `wan22_t2v_batch`
@@ -271,7 +271,7 @@ Catatan sumber image:
 - `minimax-h3_i2v`
   - memakai satu gambar terbaru dari root folder scene sebagai input first frame
   - durasi workflow MiniMax H3 I2VA mengikuti durasi scene desimal (`1.0` sampai `15.0`)
-  - FPS workflow mengikuti pilihan UI `16` atau `24`
+  - FPS workflow MiniMax H3 ditetapkan `24`
 - `wan22_t2v_i2v`
   - stage `WAN22_T2V` selalu dijalankan terlebih dahulu
   - jika durasi scene `5`, hasil akhir langsung dari stage `WAN22_T2V`
@@ -330,7 +330,9 @@ Catatan voice dan caption:
 
 Catatan trimming video:
 - `wan22_s2v` dipotong mengikuti durasi speech dengan tambahan maksimal empat frame
-- `minimax-h3_s2v` tidak dipotong otomatis setelah output ComfyUI diunduh
+- seluruh scene MiniMax (`minimax-h3_i2v`, `minimax-h3_t2v_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`) membuang frame padding setelah output ComfyUI diunduh
+- trimming MiniMax mempertahankan frame dasar `round(durasi * 24)` dan membuang frame alignment tambahan sebelum proses audio, ekstraksi frame, atau concat
+- pada `minimax-h3_t2v_i2v`, trimming dilakukan terpisah untuk output stage T2V dan stage I2V
 - scene type lain tidak dipotong otomatis mengikuti speech
 
 ## Audio Scene dan Final Compose
@@ -380,6 +382,8 @@ Contoh:
 Pemakaian:
 - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_image_edit.py`, `scripts/generate_voice.py`, `scripts/generate_cover_image.py`, dan `scene_manager_ui.py`
 - model `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
+- default model Gemini untuk `prompt_generation` dan `translate` adalah `gemini-3.1-flash-lite`
+- `gemini-3.1-flash-lite` juga menjadi model default Agentic saat provider project adalah Gemini
 - jika provider `llama.cpp` dipilih, UI akan membaca model yang tersimpan di JSON lalu mencoba mengambil daftar model dari server `host:port`
 - jika model tersimpan tersedia, dropdown akan memilih model itu
 - jika model tersimpan tidak tersedia, nilai tersimpan tetap ditampilkan sebagai opsi supaya konfigurasi lama tidak hilang
@@ -699,7 +703,7 @@ Perilaku UI:
 - tab `WAN22_I2V` juga menyediakan tombol `Edit Variasi` dengan fungsi serupa untuk file `wan22_i2v_prompt.json`
 - tab MiniMax T2V dan I2V masing-masing menyediakan:
   - `Ukuran` yang mengikuti ukuran video project
-  - `FPS` (`16` atau `24`)
+  - FPS MiniMax H3 ditetapkan `24`
   - `Lora` dan kekuatannya
   - `Prompt Positif` berupa JSON `id_new`
   - tombol `Buat Prompt`
@@ -707,8 +711,8 @@ Perilaku UI:
 - `Edit Variasi` MiniMax T2V hanya mengkopikan `lora_name` dan `lora_strength` dari `minimax_h3_t2v_prompt.json` ke file T2V semua variasi
 - `Edit Variasi` MiniMax I2V melakukan hal yang sama secara terpisah dari `minimax_h3_i2v_prompt.json`; LoRA T2V dan I2V tidak harus sama
 - tab `MINIMAX-H3_S2V` tidak menampilkan CFG atau Negative Prompt; prompt positif memakai JSON `id_new` Ref2VA dan tombol `Buat Prompt` mengikuti schema enam field Ref2VA
-- tab `MINIMAX-H3_R2V` menyediakan `Ukuran`, `FPS` (`16` atau `24`), dua LoRA, manifest reference, dan prompt positif Ref2VA
-- tab `MINIMAX-H3_S2V` menyediakan `Ukuran`, `FPS` (`16` atau `24`), dua LoRA, dan prompt positif Ref2VA
+- tab `MINIMAX-H3_R2V` menyediakan `Ukuran`, FPS `24`, dua LoRA, manifest reference, dan prompt positif Ref2VA
+- tab `MINIMAX-H3_S2V` menyediakan `Ukuran`, FPS `24`, dua LoRA, dan prompt positif Ref2VA
 - tombol `Edit Variasi` hanya aktif saat `Root Scene` sedang dipilih dan scene aktif memang memiliki folder variasi
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
@@ -1355,7 +1359,8 @@ Kontrol audio per stage:
 
 - tab `MINIMAX-H3_T2V` memiliki checkbox `Hapus Sound` untuk output T2V;
 - tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound` untuk output I2V;
-- jika dicentang, audio output stage dihapus segera setelah file video selesai diunduh dari ComfyUI, sebelum ekstraksi frame, concat T2V-I2V, penyimpanan master audio, atau proses audio scene berikutnya;
+- setelah file video selesai diunduh, frame padding stage dipotong terlebih dahulu;
+- jika `Hapus Sound` dicentang, audio output stage kemudian dihapus sebelum ekstraksi frame, concat T2V-I2V, penyimpanan master audio, atau proses audio scene berikutnya;
 - jika hanya satu stage yang dibisukan, concat memasukkan audio silence pada stage tersebut sehingga audio stage lain tetap berada pada timeline yang benar.
 
 Node workflow utama:
@@ -1363,13 +1368,13 @@ Node workflow utama:
 - T2V:
   - durasi: node `133`, input `value`
   - resolusi: node `115` (`ResolutionSelector`)
-  - FPS: node `130`, input `fps`; expression frame pada node `132` mengikuti FPS yang dipilih
+  - FPS workflow tetap `24` pada node `130`; expression frame pada node `132` menggunakan FPS `24`
 - LoRA: node `135`
 - LoRA kedua: node `136`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
 - I2V:
   - durasi: node `135`, input `value`
   - resolusi: node `115` (`ResolutionSelector`)
-  - FPS: node `132`, input `fps`; expression frame pada node `134` mengikuti FPS yang dipilih
+  - FPS workflow tetap `24` pada node `132`; expression frame pada node `134` menggunakan FPS `24`
 - gambar awal: node `114`
 - LoRA: node `136`
 - LoRA kedua: node `137`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
@@ -1388,13 +1393,14 @@ Scene type: `minimax-h3_i2v`
 - tab berurutan: `Meta`, `Gambar Awal`, `Image Edit`, `MINIMAX-H3_I2V`, `Agentic`, `Aset`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
+- setelah output ComfyUI diunduh, frame padding MiniMax dipotong terlebih dahulu;
 - secara default audio hasil ComfyUI dipertahankan di video root/variasi dan baru dicampur dengan speech serta sound effect saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
-- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus segera setelah download dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari stage yang sudah tidak memiliki audio
+- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus setelah trimming frame dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari video yang sudah tidak memiliki audio
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA pertama dan kedua dibaca dari `lora_name`/`lora_strength` serta `lora_name_2`/`lora_strength_2` pada file prompt dan folder `MINIMAX-H3`
 - ukuran project diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`
-- FPS tersedia sebagai dropdown `16` atau `24`; nilai FPS diterapkan ke node `132` dan expression frame node `134`
+- FPS workflow ditetapkan `24`; nilai FPS diterapkan ke node `132` dan expression frame node `134`
 - tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
 
 ## MiniMax H3 R2V Workflow
@@ -1407,7 +1413,7 @@ Template workflow:
 - resolusi dibaca dari node `115` (`ResolutionSelector`)
 - durasi dibaca dari node `132` (`PrimitiveFloat`)
 - durasi menerima angka desimal `1.0` sampai `15.0` dengan maksimal 1 angka desimal
-- FPS tersedia sebagai dropdown `16` atau `24`; nilai FPS diterapkan ke node `130` dan expression frame node `131`
+- FPS workflow ditetapkan `24`; nilai FPS diterapkan ke node `130` dan expression frame node `131`
 - LoRA pertama memakai node `156`, sedangkan LoRA kedua memakai node `157`
 - field prompt `lora_name`/`lora_strength` dan `lora_name_2`/`lora_strength_2` diisi melalui dropdown UI
 - output video disimpan melalui node `92`
@@ -1510,7 +1516,7 @@ Scene ini memakai tab dan alur S2V WAN22, dengan perbedaan berikut:
 - tab utama bernama `MINIMAX-H3_S2V`;
 - tab `Image Edit` tidak tersedia;
 - urutan tab: `Meta`, `Gambar Awal`, `MINIMAX-H3_S2V`, `Agentic`, `Aset`;
-- tab utama memiliki `Ukuran`, `FPS` (`16` atau `24`), dua LoRA, `Prompt Positif`, dan `Buat Prompt`;
+- tab utama memiliki `Ukuran`, dua LoRA, `Prompt Positif`, dan `Buat Prompt`; FPS workflow tetap `24` tanpa dropdown UI;
 - tidak ada `CFG` dan `Prompt Negatif`;
 - workflow sumber selalu `api_template/minimax_h3_r2v_api.json`;
 - hanya Picture 1 dan Audio 1 yang digunakan.
@@ -1528,8 +1534,8 @@ Durasi:
 - durasi dibaca dari file audio speech yang dipilih memakai `ffprobe`;
 - audio dengan durasi lebih dari `15` detik membuat scene tidak dapat dijalankan;
 - durasi audio dimasukkan langsung ke node `132` (`PrimitiveFloat`), yang menjadi sumber panjang frame node `131`;
-- output video MiniMax dipertahankan utuh setelah download dan tidak dipotong mengikuti durasi audio; frame padding hasil perhitungan node `131` tetap dipakai.
-- FPS diterapkan ke node `130` dan expression frame node `131` mengikuti FPS yang dipilih.
+- setelah output video diunduh, frame padding hasil perhitungan node `131` dipotong; frame dasar `round(durasi audio * 24)` dipertahankan.
+- FPS workflow ditetapkan `24` pada node `130` dan expression frame node `131`.
 Ukuran mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan scene MiniMax H3 lainnya. Prompt memakai mode `Ref2VA` dengan enam section skill MINIMAX: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`.
 
 ## Format Prompt MiniMax H3
@@ -1633,7 +1639,7 @@ Mapping ukuran project ke `ResolutionSelector`:
 
 Semua mapping memakai `multiple=32`. Karena itu, output aktual node `ResolutionSelector` MiniMax dapat dibulatkan ke ukuran kompatibel terdekat yang lebih kecil, misalnya target UI/project `368x640` dapat menghasilkan raw output MiniMax `352x608`. Final Compose kemudian menormalkan kembali video ke ukuran `project_settings.json.video_size` menggunakan `scale + pad`.
 
-Pada workflow MiniMax, expression jumlah frame mengikuti FPS yang dipilih pada UI. Formula frame tetap mengikuti kelipatan/aturan frame MiniMax, sehingga durasi aktual dapat memiliki padding frame kecil; mismatch besar akibat expression hardcoded 24 FPS sudah dihindari.
+Pada workflow MiniMax, expression jumlah frame selalu menggunakan FPS `24`. Formula frame tetap mengikuti kelipatan/aturan frame MiniMax, sehingga durasi aktual dapat memiliki padding frame kecil.
 
 Timeout runtime:
 
