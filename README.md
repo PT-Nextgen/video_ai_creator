@@ -1399,7 +1399,7 @@ Scene type: `minimax-h3_i2v`
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA pertama dan kedua dibaca dari `lora_name`/`lora_strength` serta `lora_name_2`/`lora_strength_2` pada file prompt dan folder `MINIMAX-H3`
-- ukuran project diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`
+- ukuran scene pada prompt JSON diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`; untuk `minimax-h3_t2v_i2v`, ukuran pada tab T2V menjadi sumber ukuran kedua stage
 - FPS workflow ditetapkan `24`; nilai FPS diterapkan ke node `132` dan expression frame node `134`
 - tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
 
@@ -1626,18 +1626,20 @@ Token yang wajib dipertahankan persis selama translasi per-field:
 - token kontrol `<d>`, `</d>`, `<scenetrans>`, dan `<cutoff>`
 - identifier `[Shot N]`, `(S1)`, `(S2)`, `(S1,S2)`, serta mode `T2VA`, `I2VA`, `FL2VA`, `L2VA`, dan `Ref2VA`
 
-Mapping ukuran project ke `ResolutionSelector`:
+Mapping ukuran scene MiniMax H3 ke `ResolutionSelector`:
 
 | Ukuran | `aspect_ratio` | `megapixels` |
 | --- | --- | ---: |
 | `368x640` | `9:16 (Portrait Widescreen)` | `0.2` |
-| `480x848` | `9:16 (Portrait Widescreen)` | `0.4` |
-| `720x1280` | `9:16 (Portrait Widescreen)` | `0.9` |
+| `480x848` | `9:16 (Portrait Widescreen)` | `0.3` |
+| `720x1280` | `9:16 (Portrait Widescreen)` | `0.4` |
 | `640x368` | `16:9 (Widescreen)` | `0.2` |
-| `848x480` | `16:9 (Widescreen)` | `0.4` |
-| `1280x720` | `16:9 (Widescreen)` | `0.9` |
+| `848x480` | `16:9 (Widescreen)` | `0.3` |
+| `1280x720` | `16:9 (Widescreen)` | `0.4` |
 
 Semua mapping memakai `multiple=32`. Karena itu, output aktual node `ResolutionSelector` MiniMax dapat dibulatkan ke ukuran kompatibel terdekat yang lebih kecil, misalnya target UI/project `368x640` dapat menghasilkan raw output MiniMax `352x608`. Final Compose kemudian menormalkan kembali video ke ukuran `project_settings.json.video_size` menggunakan `scale + pad`.
+
+Mapping ini berlaku untuk `minimax-h3_t2v_i2v`, `minimax-h3_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`. Nilai `width` dan `height` tetap disimpan di file prompt scene; workflow JSON meneruskannya melalui node `115` (`ResolutionSelector`) sebagai kombinasi `aspect_ratio`, `megapixels`, dan `multiple`.
 
 Pada workflow MiniMax, expression jumlah frame selalu menggunakan FPS `24`. Formula frame tetap mengikuti kelipatan/aturan frame MiniMax, sehingga durasi aktual dapat memiliki padding frame kecil.
 

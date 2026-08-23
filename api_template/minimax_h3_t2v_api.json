@@ -87,10 +87,10 @@
   "124": {
     "inputs": {
       "scheduler": "simple",
-      "steps": 50,
+      "steps": 40,
       "denoise": 1,
       "model": [
-        "135",
+        "137",
         0
       ]
     },
@@ -130,7 +130,7 @@
   "126": {
     "inputs": {
       "model": [
-        "135",
+        "137",
         0
       ],
       "conditioning": [
@@ -155,7 +155,7 @@
   },
   "128": {
     "inputs": {
-      "clip_name": "MINIMAX-H3/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "clip_name": "MINIMAX-H3/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
       "type": "minimax",
       "device": "default"
     },
@@ -268,6 +268,24 @@
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
       "title": "Load LoRA"
+    }
+  },
+  "137": {
+    "inputs": {
+      "reuse_threshold": 0.05,
+      "start_percent": 0.15,
+      "end_percent": 0.9,
+      "max_steps": 2,
+      "device": "auto",
+      "verbose": false,
+      "model": [
+        "135",
+        0
+      ]
+    },
+    "class_type": "UC_MiniMaxH3Cache",
+    "_meta": {
+      "title": "MiniMax H3 Cache"
     }
   }
 }

@@ -4,6 +4,7 @@
       "filename_prefix": "video/MiniMax_H3",
       "format": "auto",
       "codec": "auto",
+      "video-preview": "",
       "video": [
         "130",
         0
@@ -87,10 +88,10 @@
   "124": {
     "inputs": {
       "scheduler": "simple",
-      "steps": 50,
+      "steps": 40,
       "denoise": 1,
       "model": [
-        "157",
+        "162",
         0
       ]
     },
@@ -130,7 +131,7 @@
   "126": {
     "inputs": {
       "model": [
-        "157",
+        "162",
         0
       ],
       "conditioning": [
@@ -166,7 +167,7 @@
   },
   "129": {
     "inputs": {
-      "noise_seed": 643011545506134
+      "noise_seed": 248810549919671
     },
     "class_type": "RandomNoise",
     "_meta": {
@@ -215,7 +216,7 @@
   },
   "136": {
     "inputs": {
-      "prompt": "",
+      "prompt": "Prompt",
       "width": [
         "115",
         0
@@ -290,7 +291,7 @@
   },
   "143": {
     "inputs": {
-      "image": "Flux2-Klein_00001_.png"
+      "image": "ustadzah-16.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -317,6 +318,7 @@
   },
   "152": {
     "inputs": {
+      "video": "MiniMax_H3_00015_.mp4",
       "force_rate": 0,
       "custom_width": 0,
       "custom_height": 0,
@@ -332,7 +334,7 @@
   },
   "153": {
     "inputs": {
-      "audio": "speech_gemini_tts_1786233291.wav"
+      "audio": "speech_gemini_tts_1787131781.wav"
     },
     "class_type": "LoadAudio",
     "_meta": {
@@ -383,6 +385,24 @@
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
       "title": "Load LoRA"
+    }
+  },
+  "162": {
+    "inputs": {
+      "reuse_threshold": 0.05,
+      "start_percent": 0.15,
+      "end_percent": 0.9,
+      "max_steps": 2,
+      "device": "auto",
+      "verbose": false,
+      "model": [
+        "157",
+        0
+      ]
+    },
+    "class_type": "UC_MiniMaxH3Cache",
+    "_meta": {
+      "title": "MiniMax H3 Cache"
     }
   }
 }

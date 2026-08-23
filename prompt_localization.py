@@ -660,6 +660,7 @@ class PromptTranslator:
             mode_instruction = (
                 "The target is a MiniMax H3 audiovisual video prompt. Follow the MiniMax H3 base prompt guide.\n"
                 "This is the creative generation phase. Return only the English workflow object; do not generate id_new or id_old in this phase.\n"
+                "The JSON schema is authoritative: use only the keys explicitly required below. The phrase integrated_multimodal_description describes the content of the shots timeline; it is not a JSON key. Never create an integrated_multimodal_description key.\n"
                 "Every shot.shot_id must be a string exactly like Shot 1, Shot 2, and never a number.\n"
                 "Every shot.start and shot.end must be JSON numbers. All other shot fields and both audio fields must be JSON strings.\n"
                 "en must be a JSON object with mode, shots, overall_soundscape, and non_diegetic_music.\n"
@@ -677,6 +678,7 @@ class PromptTranslator:
                 )
                 mode_instruction += (
                     "This is I2VA. en must additionally contain reference with picture Picture 1, source [Shot 1], time 0.0, and instruction fully referenced.\n"
+                    "The reference object is structural metadata; do not replace it with a text alignment field or an integrated_multimodal_description key.\n"
                 )
             elif "Active MiniMax H3 mode: T2VA" in active_mode:
                 output_shape = (
@@ -685,7 +687,7 @@ class PromptTranslator:
                     '"camera":"...","dialogue":"...","diegetic_sound":"..."}],'
                     '"overall_soundscape":"...","non_diegetic_music":"..."}}'
                 )
-                mode_instruction += "This is T2VA. Do not add an image-alignment instruction.\n"
+                mode_instruction += "This is T2VA. Do not add reference, image-alignment instructions, or an integrated_multimodal_description key.\n"
             else:
                 raise ValueError("MiniMax H3 prompt context must declare the active T2VA or I2VA mode.")
             instruction = (

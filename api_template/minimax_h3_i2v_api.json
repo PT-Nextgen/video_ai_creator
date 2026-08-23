@@ -96,10 +96,10 @@
   "126": {
     "inputs": {
       "scheduler": "simple",
-      "steps": 50,
+      "steps": 40,
       "denoise": 1,
       "model": [
-        "136",
+        "138",
         0
       ]
     },
@@ -139,7 +139,7 @@
   "128": {
     "inputs": {
       "model": [
-        "136",
+        "138",
         0
       ],
       "conditioning": [
@@ -281,6 +281,24 @@
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
       "title": "Load LoRA"
+    }
+  },
+  "138": {
+    "inputs": {
+      "reuse_threshold": 0.05,
+      "start_percent": 0.15,
+      "end_percent": 0.9,
+      "max_steps": 2,
+      "device": "auto",
+      "verbose": false,
+      "model": [
+        "136",
+        0
+      ]
+    },
+    "class_type": "UC_MiniMaxH3Cache",
+    "_meta": {
+      "title": "MiniMax H3 Cache"
     }
   }
 }

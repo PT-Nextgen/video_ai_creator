@@ -128,11 +128,11 @@ def _set_resolution_selector(workflow: dict, width: int, height: int) -> bool:
 
     resolution_map = {
         (368, 640): ("9:16 (Portrait Widescreen)", 0.2),
-        (480, 848): ("9:16 (Portrait Widescreen)", 0.4),
-        (720, 1280): ("9:16 (Portrait Widescreen)", 0.9),
+        (480, 848): ("9:16 (Portrait Widescreen)", 0.3),
+        (720, 1280): ("9:16 (Portrait Widescreen)", 0.4),
         (640, 368): ("16:9 (Widescreen)", 0.2),
-        (848, 480): ("16:9 (Widescreen)", 0.4),
-        (1280, 720): ("16:9 (Widescreen)", 0.9),
+        (848, 480): ("16:9 (Widescreen)", 0.3),
+        (1280, 720): ("16:9 (Widescreen)", 0.4),
     }
     aspect_ratio, megapixels = resolution_map.get(
         (int(width), int(height)),

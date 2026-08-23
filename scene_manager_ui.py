@@ -975,6 +975,20 @@ def sync_project_size_to_scene_files(project_dir: Path, project_settings: dict |
             "image_pan_prompt.json",
             "image_zoom_prompt.json",
         ]
+        # MiniMax resolutions are scene-local overrides. Project-size
+        # synchronization must never overwrite them, regardless of whether
+        # the scene is T2V-I2V, standalone I2V, S2V, or R2V.
+        if scene_type in {
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_S2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
+        }:
+            prompt_files = [
+                filename for filename in prompt_files
+                if not filename.startswith("minimax_h3_")
+                and filename not in {MINIMAX_H3_S2V_PROMPT_FILENAME, MINIMAX_H3_R2V_PROMPT_FILENAME}
+            ]
         if scene_type in {"wan22_i2v", "wan22_s2v", MINIMAX_H3_I2V_SCENE_TYPE, "i2v"}:
             prompt_files.insert(0, "z_image_prompt.json")
         for filename in prompt_files:
@@ -2865,6 +2879,11 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_generate_positive_button.clicked.connect(
             lambda _checked=False: self.generate_s2v_prompt_from_ui("positive_prompt")
         )
+        self.copy_minimax_h3_s2v_variations_button = QToolButton()
+        self.copy_minimax_h3_s2v_variations_button.setText("Edit Variasi")
+        self.copy_minimax_h3_s2v_variations_button.clicked.connect(
+            self.copy_minimax_h3_s2v_config_to_variations
+        )
         self.s2v_size_input = QComboBox()
         for label, width, height in MINIMAX_H3_S2V_SIZE_OPTIONS:
             self.s2v_size_input.addItem(label, (width, height))
@@ -2882,6 +2901,11 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_generate_prompt_button.setText("Buat Prompt")
         self.minimax_h3_r2v_generate_prompt_button.clicked.connect(
             lambda _checked=False: self.generate_r2v_prompt_from_ui()
+        )
+        self.copy_minimax_h3_r2v_variations_button = QToolButton()
+        self.copy_minimax_h3_r2v_variations_button.setText("Edit Variasi")
+        self.copy_minimax_h3_r2v_variations_button.clicked.connect(
+            self.copy_minimax_h3_r2v_config_to_variations
         )
         self.minimax_h3_r2v_image_list = QListWidget()
         self.minimax_h3_r2v_audio_list = QListWidget()
@@ -3141,6 +3165,9 @@ class SceneEditorWindow(QMainWindow):
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
         self.scene_type_combo.currentTextChanged.connect(self.update_run_action_buttons_state)
+        self.minimax_h3_t2v_size_input.currentTextChanged.connect(
+            self._sync_minimax_t2v_i2v_size
+        )
 
     def build_ui(self):
         self.toolbar = QToolBar("Aksi")
@@ -3361,17 +3388,30 @@ class SceneEditorWindow(QMainWindow):
         tabs.addTab(self.minimax_h3_i2v_tab, "MINIMAX-H3_I2V")
 
         self.minimax_h3_r2v_tab = QWidget()
-        r2v_layout = QFormLayout(self.minimax_h3_r2v_tab)
-        r2v_layout.addRow("Ukuran", self.minimax_h3_r2v_size_input)
-        r2v_layout.addRow("Lora", self.minimax_h3_r2v_lora_name_input)
-        r2v_layout.addRow("Kekuatan Lora", self.minimax_h3_r2v_lora_strength_input)
-        r2v_layout.addRow("Lora 2", self.minimax_h3_r2v_lora_name_2_input)
-        r2v_layout.addRow("Kekuatan Lora 2", self.minimax_h3_r2v_lora_strength_2_input)
-        r2v_layout.addRow("Gambar (maks. 3)", self.minimax_h3_r2v_image_list)
-        r2v_layout.addRow("Video (maks. 1)", self.minimax_h3_r2v_video_list)
-        r2v_layout.addRow("Audio (maks. 3)", self.minimax_h3_r2v_audio_list)
-        r2v_layout.addRow("Prompt Positif", self.minimax_h3_r2v_positive_input)
-        r2v_layout.addRow("", self.minimax_h3_r2v_generate_prompt_button)
+        r2v_layout = QGridLayout(self.minimax_h3_r2v_tab)
+        r2v_layout.setColumnStretch(1, 1)
+        self.minimax_h3_r2v_lora_strength_input.setFixedWidth(84)
+        self.minimax_h3_r2v_lora_strength_2_input.setFixedWidth(84)
+        r2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_size_input, 0, 1, 1, 3)
+        r2v_layout.addWidget(QLabel("Lora"), 1, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_lora_name_input, 1, 1)
+        r2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
+        r2v_layout.addWidget(self.minimax_h3_r2v_lora_strength_input, 1, 3)
+        r2v_layout.addWidget(QLabel("Lora 2"), 2, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_lora_name_2_input, 2, 1)
+        r2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
+        r2v_layout.addWidget(self.minimax_h3_r2v_lora_strength_2_input, 2, 3)
+        r2v_layout.addWidget(self.copy_minimax_h3_r2v_variations_button, 3, 3, Qt.AlignLeft)
+        r2v_layout.addWidget(QLabel("Gambar (maks. 3)"), 4, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_image_list, 4, 1, 1, 3)
+        r2v_layout.addWidget(QLabel("Video (maks. 1)"), 5, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_video_list, 5, 1, 1, 3)
+        r2v_layout.addWidget(QLabel("Audio (maks. 3)"), 6, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_audio_list, 6, 1, 1, 3)
+        r2v_layout.addWidget(QLabel("Prompt Positif"), 7, 0)
+        r2v_layout.addWidget(self.minimax_h3_r2v_positive_input, 7, 1, 1, 3)
+        r2v_layout.addWidget(self.minimax_h3_r2v_generate_prompt_button, 8, 1, 1, 3, Qt.AlignLeft)
         tabs.addTab(self.minimax_h3_r2v_tab, "MINIMAX-H3_R2V")
 
         self.t2v_batch_extra_tab = QWidget()
@@ -3387,22 +3427,34 @@ class SceneEditorWindow(QMainWindow):
         tabs.addTab(self.t2v_batch_extra_tab, "Prompt Tambahan")
 
         self.s2v_tab = QWidget()
-        s2v_layout = QFormLayout(self.s2v_tab)
-        s2v_layout.addRow("Ukuran", self.s2v_size_input)
+        s2v_layout = QGridLayout(self.s2v_tab)
+        s2v_layout.setColumnStretch(1, 1)
+        self.minimax_h3_s2v_lora_strength_input.setFixedWidth(84)
+        self.minimax_h3_s2v_lora_strength_2_input.setFixedWidth(84)
+        s2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
+        s2v_layout.addWidget(self.s2v_size_input, 0, 1, 1, 3)
         self.minimax_h3_s2v_lora_label = QLabel("Lora")
         self.minimax_h3_s2v_lora_strength_label = QLabel("Kekuatan Lora")
         self.minimax_h3_s2v_lora_2_label = QLabel("Lora 2")
         self.minimax_h3_s2v_lora_strength_2_label = QLabel("Kekuatan Lora 2")
-        s2v_layout.addRow(self.minimax_h3_s2v_lora_label, self.minimax_h3_s2v_lora_name_input)
-        s2v_layout.addRow(self.minimax_h3_s2v_lora_strength_label, self.minimax_h3_s2v_lora_strength_input)
-        s2v_layout.addRow(self.minimax_h3_s2v_lora_2_label, self.minimax_h3_s2v_lora_name_2_input)
-        s2v_layout.addRow(self.minimax_h3_s2v_lora_strength_2_label, self.minimax_h3_s2v_lora_strength_2_input)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_label, 1, 0)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_name_input, 1, 1)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_strength_label, 1, 2)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_strength_input, 1, 3)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_2_label, 2, 0)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_name_2_input, 2, 1)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_strength_2_label, 2, 2)
+        s2v_layout.addWidget(self.minimax_h3_s2v_lora_strength_2_input, 2, 3)
         self.s2v_cfg_label = QLabel("CFG")
-        s2v_layout.addRow(self.s2v_cfg_label, self.s2v_cfg_input)
-        s2v_layout.addRow("Prompt Positif", self.s2v_positive_input)
-        s2v_layout.addRow("", self.s2v_generate_positive_button)
+        s2v_layout.addWidget(self.s2v_cfg_label, 3, 0)
+        s2v_layout.addWidget(self.s2v_cfg_input, 3, 1)
+        s2v_layout.addWidget(self.copy_minimax_h3_s2v_variations_button, 3, 3, Qt.AlignLeft)
+        s2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
+        s2v_layout.addWidget(self.s2v_positive_input, 4, 1, 1, 3)
+        s2v_layout.addWidget(self.s2v_generate_positive_button, 5, 1, 1, 3, Qt.AlignLeft)
         self.s2v_negative_label = QLabel("Prompt Negatif")
-        s2v_layout.addRow(self.s2v_negative_label, self.s2v_negative_input)
+        s2v_layout.addWidget(self.s2v_negative_label, 6, 0)
+        s2v_layout.addWidget(self.s2v_negative_input, 6, 1, 1, 3)
         tabs.addTab(self.s2v_tab, "WAN22 S2V")
 
         self.web_tab = QWidget()
@@ -3670,6 +3722,7 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_s2v_lora_name_2_input,
             self.minimax_h3_s2v_lora_strength_2_label,
             self.minimax_h3_s2v_lora_strength_2_input,
+            self.copy_minimax_h3_s2v_variations_button,
         ):
             widget.setVisible(is_minimax_h3_s2v)
         if self.s2v_cfg_label is not None:
@@ -3685,7 +3738,7 @@ class SceneEditorWindow(QMainWindow):
         if scene_type != "i2v":
             default_mode_index = self.agentic_image_extra_mode_input.findData("image_extra")
             self.agentic_image_extra_mode_input.setCurrentIndex(default_mode_index if default_mode_index >= 0 else 0)
-        self._apply_z_size_constraint_by_scene_type()
+        self.apply_project_size_constraints_to_ui()
 
     def build_viewer_group(self):
         group = QGroupBox("Tampilan")
@@ -4101,7 +4154,10 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_t2v_prompt.json",
             source_data=minimax_t2v_prompt,
-            keys=["lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
+            keys=[
+                "width", "height",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound",
+            ],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
 
@@ -4113,8 +4169,41 @@ class SceneEditorWindow(QMainWindow):
         self._copy_selected_keys_to_variations(
             filename="minimax_h3_i2v_prompt.json",
             source_data=minimax_i2v_prompt,
-            keys=["lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound"],
+            keys=[
+                "width", "height",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound",
+            ],
             action_title="Edit Variasi MiniMax H3 I2V",
+        )
+
+    def copy_minimax_h3_s2v_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        _meta, _z_prompt, _wan_t2v_prompt, _wan_prompt, s2v_prompt, *_rest = self.gather_scene_data()
+        self._copy_selected_keys_to_variations(
+            filename=MINIMAX_H3_S2V_PROMPT_FILENAME,
+            source_data=s2v_prompt,
+            keys=[
+                "width", "height",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2",
+            ],
+            action_title="Edit Variasi MiniMax H3 S2V",
+        )
+
+    def copy_minimax_h3_r2v_config_to_variations(self):
+        if not self.save_current_scene(silent=True, reload_list=False):
+            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
+            return
+        r2v_prompt = self.gather_minimax_h3_r2v_prompt()
+        self._copy_selected_keys_to_variations(
+            filename=MINIMAX_H3_R2V_PROMPT_FILENAME,
+            source_data=r2v_prompt,
+            keys=[
+                "width", "height",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2",
+            ],
+            action_title="Edit Variasi MiniMax H3 R2V",
         )
 
     def copy_selected_variation_to_root(self):
@@ -4269,6 +4358,23 @@ class SceneEditorWindow(QMainWindow):
         combo.setEnabled(False)
         combo.blockSignals(False)
 
+    @staticmethod
+    def _read_size_combo(combo: QComboBox, fallback: tuple[int, int]) -> tuple[int, int]:
+        value = combo.currentData()
+        if isinstance(value, (tuple, list)) and len(value) == 2:
+            try:
+                return int(value[0]), int(value[1])
+            except (TypeError, ValueError):
+                pass
+        text = str(combo.currentText() or "").strip().lower()
+        if "x" in text:
+            parts = text.split("x", 1)
+            try:
+                return int(parts[0].strip()), int(parts[1].strip())
+            except (TypeError, ValueError):
+                pass
+        return int(fallback[0]), int(fallback[1])
+
     def _set_unlocked_z_size_combo(self, selected_size: tuple[int, int] | None = None):
         current_size = selected_size
         if current_size is None:
@@ -4290,6 +4396,56 @@ class SceneEditorWindow(QMainWindow):
         self.z_size_input.setEnabled(True)
         self.z_size_input.blockSignals(False)
 
+    def _set_unlocked_size_combo(
+        self,
+        combo: QComboBox,
+        options: list[tuple[str, int, int]],
+        selected_size: tuple[int, int] | None = None,
+    ):
+        """Restore a scene-local size selector without changing project settings."""
+        current_size = selected_size
+        if isinstance(current_size, (tuple, list)) and len(current_size) == 2:
+            try:
+                current_size = (int(current_size[0]), int(current_size[1]))
+            except (TypeError, ValueError):
+                current_size = None
+        else:
+            current_size = None
+        if current_size is None:
+            current_data = combo.currentData()
+            if isinstance(current_data, (tuple, list)) and len(current_data) == 2:
+                try:
+                    current_size = (int(current_data[0]), int(current_data[1]))
+                except (TypeError, ValueError):
+                    current_size = None
+
+        combo.blockSignals(True)
+        combo.clear()
+        target_index = -1
+        for index, (label, width, height) in enumerate(options):
+            item_size = (int(width), int(height))
+            combo.addItem(label, item_size)
+            if current_size == item_size:
+                target_index = index
+        combo.setCurrentIndex(max(target_index, 0))
+        combo.setEnabled(True)
+        combo.blockSignals(False)
+
+    def _sync_minimax_t2v_i2v_size(self):
+        """T2V-I2V uses the T2V selector as the single scene-local size."""
+        if str(self.scene_type_combo.currentText() or "").strip() != MINIMAX_H3_T2V_I2V_SCENE_TYPE:
+            return
+        selected_size = self._read_size_combo(
+            self.minimax_h3_t2v_size_input,
+            (368, 640),
+        )
+        self._set_unlocked_size_combo(
+            self.minimax_h3_i2v_size_input,
+            MINIMAX_H3_SIZE_OPTIONS,
+            selected_size,
+        )
+        self.minimax_h3_i2v_size_input.setEnabled(False)
+
     def _apply_z_size_constraint_by_scene_type(self):
         scene_type = str(self.scene_type_combo.currentText() or "").strip()
         if scene_type in {"image_pan", "image_zoom"}:
@@ -4299,6 +4455,16 @@ class SceneEditorWindow(QMainWindow):
         self._set_locked_size_combo(self.z_size_input, width, height)
 
     def apply_project_size_constraints_to_ui(self):
+        scene_type = str(self.scene_type_combo.currentText() or "").strip()
+
+        # Capture scene-local values before the project-locked controls are
+        # rebuilt below. Otherwise the project size would replace the local
+        # MiniMax override in the editor.
+        local_t2v_size = self._read_size_combo(self.minimax_h3_t2v_size_input, (368, 640))
+        local_i2v_size = self._read_size_combo(self.minimax_h3_i2v_size_input, (368, 640))
+        local_r2v_size = self._read_size_combo(self.minimax_h3_r2v_size_input, (368, 640))
+        local_s2v_size = self._read_size_combo(self.s2v_size_input, (368, 640))
+
         width, height = self._project_video_size()
         for combo in (
             self.wan_size_input,
@@ -4313,6 +4479,36 @@ class SceneEditorWindow(QMainWindow):
             self.web_search_size_input,
         ):
             self._set_locked_size_combo(combo, width, height)
+
+        # MiniMax resolutions are scene-local overrides. They must remain
+        # editable and must not change project_settings.json.
+        if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE:
+            selected_t2v = local_t2v_size
+            selected_i2v = local_i2v_size
+            self._set_unlocked_size_combo(
+                self.minimax_h3_t2v_size_input,
+                MINIMAX_H3_SIZE_OPTIONS,
+                selected_t2v,
+            )
+            self._sync_minimax_t2v_i2v_size()
+        elif scene_type == MINIMAX_H3_I2V_SCENE_TYPE:
+            self._set_unlocked_size_combo(
+                self.minimax_h3_i2v_size_input,
+                MINIMAX_H3_SIZE_OPTIONS,
+                local_i2v_size,
+            )
+        elif scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+            self._set_unlocked_size_combo(
+                self.minimax_h3_r2v_size_input,
+                MINIMAX_H3_S2V_SIZE_OPTIONS,
+                local_r2v_size,
+            )
+        elif scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
+            self._set_unlocked_size_combo(
+                self.s2v_size_input,
+                MINIMAX_H3_S2V_SIZE_OPTIONS,
+                local_s2v_size,
+            )
         self._apply_z_size_constraint_by_scene_type()
 
     def _sync_project_size_to_scene_file(self, scene_dir: Path, filename: str, width: int, height: int):
@@ -4340,10 +4536,16 @@ class SceneEditorWindow(QMainWindow):
             if scene_type in {"wan22_i2v", "wan22_s2v", MINIMAX_H3_I2V_SCENE_TYPE, "i2v"}:
                 self._sync_project_size_to_scene_file(scene_dir, "z_image_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "wan22_i2v_prompt.json", width, height)
-            self._sync_project_size_to_scene_file(scene_dir, "minimax_h3_t2v_prompt.json", width, height)
-            self._sync_project_size_to_scene_file(scene_dir, "minimax_h3_i2v_prompt.json", width, height)
-            self._sync_project_size_to_scene_file(scene_dir, MINIMAX_H3_R2V_PROMPT_FILENAME, width, height)
-            self._sync_project_size_to_scene_file(scene_dir, "wan22_s2v_prompt.json", width, height)
+            # MiniMax sizes are explicit per-scene overrides. Changing the
+            # project master size must not overwrite them.
+            if scene_type != MINIMAX_H3_T2V_I2V_SCENE_TYPE:
+                self._sync_project_size_to_scene_file(scene_dir, "minimax_h3_t2v_prompt.json", width, height)
+            if scene_type not in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE}:
+                self._sync_project_size_to_scene_file(scene_dir, "minimax_h3_i2v_prompt.json", width, height)
+            if scene_type != MINIMAX_H3_R2V_SCENE_TYPE:
+                self._sync_project_size_to_scene_file(scene_dir, MINIMAX_H3_R2V_PROMPT_FILENAME, width, height)
+            if scene_type != MINIMAX_H3_S2V_SCENE_TYPE:
+                self._sync_project_size_to_scene_file(scene_dir, "wan22_s2v_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "web_scroll_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "image_pan_prompt.json", width, height)
             self._sync_project_size_to_scene_file(scene_dir, "image_zoom_prompt.json", width, height)
@@ -5655,12 +5857,22 @@ class SceneEditorWindow(QMainWindow):
                 widget.setPlainText(str(wan_prompt.get(key, "")))
             minimax_t2v_width = int(minimax_h3_t2v_prompt.get("width", DEFAULT_MINIMAX_H3_T2V_PROMPT["width"]))
             minimax_t2v_height = int(minimax_h3_t2v_prompt.get("height", DEFAULT_MINIMAX_H3_T2V_PROMPT["height"]))
-            minimax_t2v_index = self.minimax_h3_t2v_size_input.findData((minimax_t2v_width, minimax_t2v_height))
-            self.minimax_h3_t2v_size_input.setCurrentIndex(max(minimax_t2v_index, 0))
+            # The combo may still contain only the project-locked size from the
+            # previously loaded scene. Rebuild its scene-local options before
+            # selecting the value from JSON; otherwise findData() falls back to
+            # item 0 and silently replaces the saved MiniMax override.
+            self._set_unlocked_size_combo(
+                self.minimax_h3_t2v_size_input,
+                MINIMAX_H3_SIZE_OPTIONS,
+                (minimax_t2v_width, minimax_t2v_height),
+            )
             minimax_i2v_width = int(minimax_h3_i2v_prompt.get("width", DEFAULT_MINIMAX_H3_I2V_PROMPT["width"]))
             minimax_i2v_height = int(minimax_h3_i2v_prompt.get("height", DEFAULT_MINIMAX_H3_I2V_PROMPT["height"]))
-            minimax_i2v_index = self.minimax_h3_i2v_size_input.findData((minimax_i2v_width, minimax_i2v_height))
-            self.minimax_h3_i2v_size_input.setCurrentIndex(max(minimax_i2v_index, 0))
+            self._set_unlocked_size_combo(
+                self.minimax_h3_i2v_size_input,
+                MINIMAX_H3_SIZE_OPTIONS,
+                (minimax_i2v_width, minimax_i2v_height),
+            )
             minimax_t2v_lora_name = str(
                 minimax_h3_t2v_prompt.get(
                     "lora_name",
@@ -5748,13 +5960,20 @@ class SceneEditorWindow(QMainWindow):
             )
             s2v_width = int(s2v_prompt.get("width", DEFAULT_WAN22_S2V_PROMPT["width"]))
             s2v_height = int(s2v_prompt.get("height", DEFAULT_WAN22_S2V_PROMPT["height"]))
-            index = -1
-            for i in range(self.s2v_size_input.count()):
-                size_value = self.s2v_size_input.itemData(i)
-                if isinstance(size_value, tuple) and size_value == (s2v_width, s2v_height):
-                    index = i
-                    break
-            self.s2v_size_input.setCurrentIndex(max(index, 0))
+            if scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
+                self._set_unlocked_size_combo(
+                    self.s2v_size_input,
+                    MINIMAX_H3_S2V_SIZE_OPTIONS,
+                    (s2v_width, s2v_height),
+                )
+            else:
+                index = -1
+                for i in range(self.s2v_size_input.count()):
+                    size_value = self.s2v_size_input.itemData(i)
+                    if isinstance(size_value, tuple) and size_value == (s2v_width, s2v_height):
+                        index = i
+                        break
+                self.s2v_size_input.setCurrentIndex(max(index, 0))
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
             self.s2v_positive_input.setPlainText(
                 json.dumps(
@@ -5771,8 +5990,11 @@ class SceneEditorWindow(QMainWindow):
             self.s2v_negative_input.setPlainText(str(s2v_prompt.get("negative_prompt", DEFAULT_WAN22_S2V_PROMPT["negative_prompt"])))
             r2v_width = int(minimax_h3_r2v_prompt.get("width", DEFAULT_MINIMAX_H3_R2V_PROMPT["width"]))
             r2v_height = int(minimax_h3_r2v_prompt.get("height", DEFAULT_MINIMAX_H3_R2V_PROMPT["height"]))
-            r2v_index = self.minimax_h3_r2v_size_input.findData((r2v_width, r2v_height))
-            self.minimax_h3_r2v_size_input.setCurrentIndex(max(r2v_index, 0))
+            self._set_unlocked_size_combo(
+                self.minimax_h3_r2v_size_input,
+                MINIMAX_H3_S2V_SIZE_OPTIONS,
+                (r2v_width, r2v_height),
+            )
             r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
             r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
             self.minimax_h3_r2v_positive_input.setPlainText(
@@ -5912,9 +6134,13 @@ class SceneEditorWindow(QMainWindow):
             i2v_lora_strength_2 = float(self.minimax_h3_i2v_lora_strength_2_input.text().strip() or 0)
         except ValueError:
             raise ValueError("Kekuatan Lora MiniMax H3 I2V kedua harus berupa angka.")
-        t2v_size = self.minimax_h3_t2v_size_input.currentData() or (368, 640)
-        i2v_size = self.minimax_h3_i2v_size_input.currentData() or t2v_size
         scene_type = self.scene_type_combo.currentText().strip()
+        t2v_size = self._read_size_combo(self.minimax_h3_t2v_size_input, (368, 640))
+        i2v_size = (
+            t2v_size
+            if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
+            else self._read_size_combo(self.minimax_h3_i2v_size_input, t2v_size)
+        )
         t2v_prompt = {
             "width": int(t2v_size[0]),
             "height": int(t2v_size[1]),
@@ -6891,15 +7117,21 @@ class SceneEditorWindow(QMainWindow):
             meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
             minimax_h3_t2v_prompt, minimax_h3_i2v_prompt = self.gather_minimax_h3_prompts()
             r2v_prompt = self.gather_minimax_h3_r2v_prompt()
-            minimax_h3_t2v_prompt = self._synchronize_minimax_h3_prompt_translation(
-                minimax_h3_t2v_prompt, "T2VA"
-            )
-            minimax_h3_i2v_prompt = self._synchronize_minimax_h3_prompt_translation(
-                minimax_h3_i2v_prompt, "I2VA"
-            )
-            if meta.get("scene_type") == MINIMAX_H3_S2V_SCENE_TYPE:
+            scene_type = str(meta.get("scene_type", "")).strip()
+            if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE:
+                minimax_h3_t2v_prompt = self._synchronize_minimax_h3_prompt_translation(
+                    minimax_h3_t2v_prompt, "T2VA"
+                )
+                minimax_h3_i2v_prompt = self._synchronize_minimax_h3_prompt_translation(
+                    minimax_h3_i2v_prompt, "I2VA"
+                )
+            elif scene_type == MINIMAX_H3_I2V_SCENE_TYPE:
+                minimax_h3_i2v_prompt = self._synchronize_minimax_h3_prompt_translation(
+                    minimax_h3_i2v_prompt, "I2VA"
+                )
+            if scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
                 s2v_prompt = self._synchronize_minimax_h3_s2v_prompt_translation(s2v_prompt)
-            if meta.get("scene_type") == MINIMAX_H3_R2V_SCENE_TYPE:
+            if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
                 r2v_prompt = self._synchronize_minimax_h3_r2v_prompt_translation(r2v_prompt)
         except ValueError as e:
             self.append_log(f"[gagal] Data scene tidak valid saat Save: {e}")
@@ -7425,7 +7657,8 @@ class SceneEditorWindow(QMainWindow):
             lines.extend([
                 "Target: MiniMax H3 T2VA positive prompt",
                 "Active MiniMax H3 mode: T2VA",
-                "T2VA format: return integrated_multimodal_description, overall_soundscape, and non_diegetic_music in English.",
+                "T2VA format: encode the integrated multimodal timeline in the `shots` array, plus `overall_soundscape` and `non_diegetic_music`.",
+                "Do not create an `integrated_multimodal_description` JSON key; it is only the semantic description represented by `shots`.",
                 f"Scene duration: {self._duration_text() or '10'}",
                 f"MiniMax H3 T2V size: {int(size_data[0])}x{int(size_data[1])}",
             ])
@@ -7435,7 +7668,8 @@ class SceneEditorWindow(QMainWindow):
             lines.extend([
                 "Target: MiniMax H3 I2VA positive prompt",
                 "Active MiniMax H3 mode: I2VA",
-                "I2VA format: begin with the exact first-frame alignment instruction, then return the fields required by the referenced skill.",
+                "I2VA format: use the required `reference` object and encode the audiovisual timeline in the `shots` array, plus `overall_soundscape` and `non_diegetic_music`.",
+                "Do not create an `integrated_multimodal_description` JSON key; it is only the semantic description represented by `shots`.",
                 f"Scene duration: {self._duration_text() or '10'}",
                 f"MiniMax H3 I2V size: {int(size_data[0])}x{int(size_data[1])}",
             ])
@@ -7682,12 +7916,14 @@ class SceneEditorWindow(QMainWindow):
             return
         if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"}:
             structured = result.get("structured")
+            entry = None
+            errors = []
             if prompt_kind in {"minimax_h3_s2v", "minimax_h3_r2v"}:
                 entry = structured.get("positive_prompt") if isinstance(structured, dict) else None
                 if isinstance(entry, dict) and isinstance(entry.get("en"), dict):
                     entry["id_old"] = copy.deepcopy(entry.get("id_new", {}))
                     entry["id_new"] = copy.deepcopy(entry.get("id_new", {}))
-                errors = [] if isinstance(entry, dict) and not validate_ref2va_prompt(entry.get("en")) else validate_ref2va_prompt(entry.get("en") if isinstance(entry, dict) else None)
+                errors.extend(validate_ref2va_prompt(entry.get("en") if isinstance(entry, dict) else None))
                 if not errors and prompt_kind == "minimax_h3_r2v":
                     errors.extend(validate_ref2va_reference_tokens(
                         entry.get("en"),
@@ -7695,7 +7931,7 @@ class SceneEditorWindow(QMainWindow):
                         audio_count=len(self._r2v_selected_names(self.minimax_h3_r2v_audio_list)),
                         has_video=bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list)),
                     ))
-            if not errors and prompt_kind == "minimax_h3_s2v":
+                elif not errors and prompt_kind == "minimax_h3_s2v":
                     errors.extend(validate_ref2va_reference_tokens(
                         entry.get("en"),
                         image_count=1,
