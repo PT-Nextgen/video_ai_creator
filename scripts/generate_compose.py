@@ -540,9 +540,15 @@ def ensure_video_fps_size_and_length(
         # This is more reliable than concat for seamless visual result
         pad = target_duration - dur
         pad_filter = f',tpad=stop_mode=clone:stop_duration={pad}' if pad > 0.001 else ''
+        audio_args = ''
+        if preserve_audio and ffprobe_has_audio(src):
+            audio_args = '-map 0:a:0 -c:a aac -b:a 192k -ac 2 -ar 44100'
+        else:
+            audio_args = '-an'
         cmd = (
             f'ffmpeg -y -i "{src}" -vf "fps={fps}{pad_filter}" '
-            f'-c:v libx264 -b:v 2M -preset fast -pix_fmt yuv420p -an "{dst}"'
+            f'-map 0:v:0 {audio_args} '
+            f'-c:v libx264 -b:v 2M -preset fast -pix_fmt yuv420p "{dst}"'
         )
         run(cmd)
         logger.debug('Extended video duration using tpad re-encode: %s', src)
@@ -575,9 +581,15 @@ def ensure_video_fps_size_and_length(
         f'scale={width}:{height}:force_original_aspect_ratio=decrease,'
         f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2'
     )
+    audio_args = ''
+    if preserve_audio and ffprobe_has_audio(src):
+        audio_args = '-map 0:a:0 -c:a aac -b:a 192k -ac 2 -ar 44100'
+    else:
+        audio_args = '-an'
     cmd = (
         f'ffmpeg -y -i "{src}" -vf "{fit_filter},fps={fps}{pad_filter}" '
-        f'-c:v libx264 -b:v 2M -preset fast -pix_fmt yuv420p -an "{dst}"'
+        f'-map 0:v:0 {audio_args} '
+        f'-c:v libx264 -b:v 2M -preset fast -pix_fmt yuv420p "{dst}"'
     )
     run(cmd)
     logger.debug('Full video transformation applied: %s', src)
