@@ -88,7 +88,7 @@
   "124": {
     "inputs": {
       "scheduler": "simple",
-      "steps": 40,
+      "steps": 20,
       "denoise": 1,
       "model": [
         "162",
@@ -392,9 +392,9 @@
       "reuse_threshold": 0.05,
       "start_percent": 0.15,
       "end_percent": 0.9,
-      "max_steps": 2,
+      "max_steps": 1,
       "device": "auto",
-      "verbose": false,
+      "verbose": true,
       "model": [
         "157",
         0

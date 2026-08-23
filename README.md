@@ -1344,6 +1344,20 @@ File prompt scene:
 
 Kedua file memakai satu `positive_prompt` nested dengan field `id_old`, `id_new`, dan `en`; ketiganya berupa object JSON dengan struktur yang sama. Scene MiniMax H3 tidak memakai `negative_prompt`. Konfigurasi `lora_name` dan `lora_strength` untuk stage T2V dan I2V terpisah, tidak harus sama, dan masing-masing harus berasal dari folder `MINIMAX-H3` di ComfyUI.
 
+Setiap tab MiniMax H3 memiliki group `H3 Cache` di bawah prompt. Konfigurasi ini disimpan pada key `h3_cache` di file prompt scene:
+
+```json
+"h3_cache": {
+  "steps": 20,
+  "reuse_threshold": 0.05,
+  "start_percent": 0.15,
+  "end_percent": 0.90,
+  "max_steps": 1
+}
+```
+
+Validasi field H3 Cache: `Steps` integer `20`-`50`, `Reuse Threshold` `0.00`-`0.50`, `Start Percent` dan `End Percent` `0.00`-`1.00` dengan tepat dua desimal, serta `Max Steps` integer `1`-`3`. Semua field wajib diisi. Nilai default mengikuti API workflow MiniMax H3 dan konfigurasi ini ikut disalin oleh tombol `Edit Variasi`.
+
 Aturan durasi:
 
 - durasi scene adalah angka `1.0` sampai `30.0` dengan maksimal 1 angka desimal;
@@ -1367,17 +1381,21 @@ Node workflow utama:
 
 - T2V:
   - durasi: node `133`, input `value`
+  - H3 Cache: Steps node `124`; parameter cache node `137`
   - resolusi: node `115` (`ResolutionSelector`)
   - FPS workflow tetap `24` pada node `130`; expression frame pada node `132` menggunakan FPS `24`
 - LoRA: node `135`
 - LoRA kedua: node `136`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
 - I2V:
   - durasi: node `135`, input `value`
+  - H3 Cache: Steps node `126`; parameter cache node `138`
   - resolusi: node `115` (`ResolutionSelector`)
   - FPS workflow tetap `24` pada node `132`; expression frame pada node `134` menggunakan FPS `24`
 - gambar awal: node `114`
 - LoRA: node `136`
 - LoRA kedua: node `137`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
+
+Untuk scene `minimax-h3_s2v` dan `minimax-h3_r2v`, H3 Cache memakai Steps node `124` dan parameter cache node `162`.
 
 Prompt MiniMax H3 mengikuti:
 

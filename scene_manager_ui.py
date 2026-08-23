@@ -2,6 +2,7 @@ import copy
 import datetime
 import json
 import logging
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ from urllib.parse import urlparse
 
 import requests
 from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, QThread, QObject, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QDoubleValidator, QIcon, QPixmap
+from PySide6.QtGui import QAction, QDesktopServices, QDoubleValidator, QIcon, QPixmap, QIntValidator
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -38,16 +39,19 @@ from z_image.z_image import get_template_name as get_z_image_template_name
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
 from minimax_h3_t2v.minimax_h3_t2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_T2V_PROMPT,
+    DEFAULT_H3_CACHE as DEFAULT_MINIMAX_H3_T2V_CACHE,
     SIZE_OPTIONS as MINIMAX_H3_SIZE_OPTIONS,
 )
 from minimax_h3_i2v.minimax_h3_i2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_I2V_PROMPT,
+    DEFAULT_H3_CACHE as DEFAULT_MINIMAX_H3_I2V_CACHE,
     I2VA_FIRST_FRAME_PREFIX,
     is_valid_minimax_h3_i2v_prompt,
 )
 from minimax_h3_r2v.minimax_h3_r2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_S2V_PROMPT,
     DEFAULT_R2V_PROMPT as DEFAULT_MINIMAX_H3_R2V_PROMPT,
+    DEFAULT_H3_CACHE as DEFAULT_MINIMAX_H3_R2V_CACHE,
     MAX_AUDIO_DURATION as MINIMAX_H3_S2V_MAX_AUDIO_DURATION,
     MAX_DURATION as MINIMAX_H3_R2V_MAX_DURATION,
     SIZE_OPTIONS as MINIMAX_H3_S2V_SIZE_OPTIONS,
@@ -2604,6 +2608,67 @@ class MediaPreviewLabel(QLabel):
 
 
 class SceneEditorWindow(QMainWindow):
+    H3_CACHE_FIELDS = (
+        ("steps", "Steps", "int", 20, 50),
+        ("reuse_threshold", "Reuse Threshold", "decimal", 0.0, 0.5),
+        ("start_percent", "Start Percent", "decimal", 0.0, 1.0),
+        ("end_percent", "End Percent", "decimal", 0.0, 1.0),
+        ("max_steps", "Max Steps", "int", 1, 3),
+    )
+
+    def _create_h3_cache_inputs(self, defaults: dict) -> dict:
+        widgets = {}
+        for key, _label, kind, minimum, maximum in self.H3_CACHE_FIELDS:
+            widget = QLineEdit()
+            if kind == "int":
+                widget.setValidator(QIntValidator(int(minimum), int(maximum), widget))
+                widget.setText(str(int(defaults.get(key, minimum))))
+            else:
+                widget.setValidator(QDoubleValidator(float(minimum), float(maximum), 2, widget))
+                widget.setText(f"{float(defaults.get(key, minimum)):.2f}")
+            widget.setFixedWidth(100)
+            widgets[key] = widget
+        return widgets
+
+    def _h3_cache_group(self, fields: dict) -> QGroupBox:
+        group = QGroupBox("H3 Cache")
+        layout = QFormLayout(group)
+        for key, label, _kind, _minimum, _maximum in self.H3_CACHE_FIELDS:
+            layout.addRow(label, fields[key])
+        return group
+
+    def _read_h3_cache_fields(self, fields: dict, label: str) -> dict:
+        values = {}
+        for key, field_label, kind, minimum, maximum in self.H3_CACHE_FIELDS:
+            raw = field_text = fields[key].text().strip()
+            if not raw:
+                raise ValueError(f"{label} H3 Cache {field_label} wajib diisi.")
+            if kind == "int":
+                if not re.fullmatch(r"[0-9]+", raw):
+                    raise ValueError(f"{label} H3 Cache {field_label} harus integer.")
+                value = int(raw)
+            else:
+                if not re.fullmatch(r"[0-9]+\.[0-9]{2}", raw):
+                    raise ValueError(f"{label} H3 Cache {field_label} harus memiliki 2 desimal.")
+                value = float(raw)
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{label} H3 Cache {field_label} harus berada pada {minimum} sampai {maximum}.")
+            values[key] = value
+        return values
+
+    def _load_h3_cache_fields(self, fields: dict, prompt: dict, defaults: dict):
+        source = prompt.get("h3_cache") if isinstance(prompt, dict) else None
+        source = source if isinstance(source, dict) else defaults
+        for key, _label, kind, _minimum, _maximum in self.H3_CACHE_FIELDS:
+            value = source.get(key, defaults[key])
+            if kind == "int":
+                fields[key].setText(str(value))
+            else:
+                try:
+                    fields[key].setText(f"{float(value):.2f}")
+                except (TypeError, ValueError):
+                    fields[key].setText(str(value))
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pengelola Adegan")
@@ -2844,6 +2909,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_t2v_remove_sound_input = QCheckBox("Hapus Sound")
         self.minimax_h3_i2v_remove_sound_input = QCheckBox("Hapus Sound")
+        self.minimax_h3_t2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_T2V_CACHE)
+        self.minimax_h3_i2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_I2V_CACHE)
         self.minimax_h3_t2v_positive_input = QTextEdit()
         self.minimax_h3_i2v_positive_input = QTextEdit()
         self.minimax_h3_t2v_generate_prompt_button = QToolButton()
@@ -2874,6 +2941,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_s2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_s2v_lora_strength_input = QLineEdit()
         self.minimax_h3_s2v_lora_strength_2_input = QLineEdit()
+        self.minimax_h3_s2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.s2v_generate_positive_button = QToolButton()
         self.s2v_generate_positive_button.setText("Buat Prompt")
         self.s2v_generate_positive_button.clicked.connect(
@@ -2897,6 +2965,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_r2v_lora_strength_input = QLineEdit()
         self.minimax_h3_r2v_lora_strength_2_input = QLineEdit()
+        self.minimax_h3_r2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.minimax_h3_r2v_generate_prompt_button = QToolButton()
         self.minimax_h3_r2v_generate_prompt_button.setText("Buat Prompt")
         self.minimax_h3_r2v_generate_prompt_button.clicked.connect(
@@ -3361,6 +3430,7 @@ class SceneEditorWindow(QMainWindow):
         minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 4, 1, 1, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 5, 1, 1, 3, Qt.AlignLeft)
+        minimax_t2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_t2v_h3_cache_inputs), 6, 0, 1, 4)
         tabs.addTab(self.minimax_h3_t2v_tab, "MINIMAX-H3_T2V")
 
         self.minimax_h3_i2v_tab = QWidget()
@@ -3385,6 +3455,7 @@ class SceneEditorWindow(QMainWindow):
         minimax_i2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 4, 1, 1, 3)
         minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 5, 1, 1, 3, Qt.AlignLeft)
+        minimax_i2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_i2v_h3_cache_inputs), 6, 0, 1, 4)
         tabs.addTab(self.minimax_h3_i2v_tab, "MINIMAX-H3_I2V")
 
         self.minimax_h3_r2v_tab = QWidget()
@@ -3412,6 +3483,7 @@ class SceneEditorWindow(QMainWindow):
         r2v_layout.addWidget(QLabel("Prompt Positif"), 7, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_positive_input, 7, 1, 1, 3)
         r2v_layout.addWidget(self.minimax_h3_r2v_generate_prompt_button, 8, 1, 1, 3, Qt.AlignLeft)
+        r2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_r2v_h3_cache_inputs), 9, 0, 1, 4)
         tabs.addTab(self.minimax_h3_r2v_tab, "MINIMAX-H3_R2V")
 
         self.t2v_batch_extra_tab = QWidget()
@@ -3455,6 +3527,7 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_negative_label = QLabel("Prompt Negatif")
         s2v_layout.addWidget(self.s2v_negative_label, 6, 0)
         s2v_layout.addWidget(self.s2v_negative_input, 6, 1, 1, 3)
+        s2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_s2v_h3_cache_inputs), 7, 0, 1, 4)
         tabs.addTab(self.s2v_tab, "WAN22 S2V")
 
         self.web_tab = QWidget()
@@ -4156,7 +4229,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_t2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
@@ -4171,7 +4244,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_i2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 I2V",
         )
@@ -4186,7 +4259,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=s2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 S2V",
         )
@@ -4201,7 +4274,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=r2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 R2V",
         )
@@ -5942,6 +6015,16 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_remove_sound_input.setChecked(
                 bool(minimax_h3_i2v_prompt.get("remove_sound", False))
             )
+            self._load_h3_cache_fields(
+                self.minimax_h3_t2v_h3_cache_inputs,
+                minimax_h3_t2v_prompt,
+                DEFAULT_MINIMAX_H3_T2V_CACHE,
+            )
+            self._load_h3_cache_fields(
+                self.minimax_h3_i2v_h3_cache_inputs,
+                minimax_h3_i2v_prompt,
+                DEFAULT_MINIMAX_H3_I2V_CACHE,
+            )
             minimax_t2v_entry = normalize_minimax_prompt_payload(minimax_h3_t2v_prompt, "T2VA").get(
                 "positive_prompt", ""
             )
@@ -5975,6 +6058,11 @@ class SceneEditorWindow(QMainWindow):
                         break
                 self.s2v_size_input.setCurrentIndex(max(index, 0))
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
+            self._load_h3_cache_fields(
+                self.minimax_h3_s2v_h3_cache_inputs,
+                s2v_prompt,
+                DEFAULT_MINIMAX_H3_R2V_CACHE,
+            )
             self.s2v_positive_input.setPlainText(
                 json.dumps(
                     s2v_prompt.get("positive_prompt", {}).get("id_new", {})
@@ -5994,6 +6082,11 @@ class SceneEditorWindow(QMainWindow):
                 self.minimax_h3_r2v_size_input,
                 MINIMAX_H3_S2V_SIZE_OPTIONS,
                 (r2v_width, r2v_height),
+            )
+            self._load_h3_cache_fields(
+                self.minimax_h3_r2v_h3_cache_inputs,
+                minimax_h3_r2v_prompt,
+                DEFAULT_MINIMAX_H3_R2V_CACHE,
             )
             r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
             r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
@@ -6114,6 +6207,7 @@ class SceneEditorWindow(QMainWindow):
         self.update_run_action_buttons_state()
 
     def gather_minimax_h3_prompts(self):
+        scene_type = self.scene_type_combo.currentText().strip()
         t2v_lora_name = self.minimax_h3_t2v_lora_name_input.currentText().strip()
         t2v_lora_name_2 = self.minimax_h3_t2v_lora_name_2_input.currentText().strip()
         i2v_lora_name = self.minimax_h3_i2v_lora_name_input.currentText().strip()
@@ -6134,7 +6228,6 @@ class SceneEditorWindow(QMainWindow):
             i2v_lora_strength_2 = float(self.minimax_h3_i2v_lora_strength_2_input.text().strip() or 0)
         except ValueError:
             raise ValueError("Kekuatan Lora MiniMax H3 I2V kedua harus berupa angka.")
-        scene_type = self.scene_type_combo.currentText().strip()
         t2v_size = self._read_size_combo(self.minimax_h3_t2v_size_input, (368, 640))
         i2v_size = (
             t2v_size
@@ -6154,6 +6247,11 @@ class SceneEditorWindow(QMainWindow):
             "lora_name_2": t2v_lora_name_2,
             "lora_strength_2": t2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
+            "h3_cache": (
+                self._read_h3_cache_fields(self.minimax_h3_t2v_h3_cache_inputs, "MiniMax H3 T2V")
+                if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
+                else copy.deepcopy(DEFAULT_MINIMAX_H3_T2V_CACHE)
+            ),
         }
         i2v_prompt = {
             "width": int(i2v_size[0]),
@@ -6168,6 +6266,11 @@ class SceneEditorWindow(QMainWindow):
             "lora_name_2": i2v_lora_name_2,
             "lora_strength_2": i2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
+            "h3_cache": (
+                self._read_h3_cache_fields(self.minimax_h3_i2v_h3_cache_inputs, "MiniMax H3 I2V")
+                if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE}
+                else copy.deepcopy(DEFAULT_MINIMAX_H3_I2V_CACHE)
+            ),
         }
         return t2v_prompt, i2v_prompt
 
@@ -6394,6 +6497,7 @@ class SceneEditorWindow(QMainWindow):
                 "lora_strength": s2v_lora_strength,
                 "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
                 "lora_strength_2": s2v_lora_strength_2,
+                "h3_cache": self._read_h3_cache_fields(self.minimax_h3_s2v_h3_cache_inputs, "MiniMax H3 S2V"),
             }
         web_prompt = {
             "url": self.web_url_input.text().strip(),
@@ -7095,6 +7199,11 @@ class SceneEditorWindow(QMainWindow):
             "lora_strength": r2v_lora_strength,
             "lora_name_2": self.minimax_h3_r2v_lora_name_2_input.currentText().strip(),
             "lora_strength_2": r2v_lora_strength_2,
+            "h3_cache": (
+                self._read_h3_cache_fields(self.minimax_h3_r2v_h3_cache_inputs, "MiniMax H3 R2V")
+                if self.scene_type_combo.currentText().strip() == MINIMAX_H3_R2V_SCENE_TYPE
+                else copy.deepcopy(DEFAULT_MINIMAX_H3_R2V_CACHE)
+            ),
         }
 
     def save_current_scene(self, silent=False, reload_list=True):

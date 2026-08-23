@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import random
+import copy
 
 from minimax_h3_prompt import (
     I2VA_FIRST_SHOT_VISUAL_EN,
@@ -39,6 +40,14 @@ SIZE_OPTIONS = [
     ("1280x720", 1280, 720),
 ]
 
+DEFAULT_H3_CACHE = {
+    "steps": 20,
+    "reuse_threshold": 0.05,
+    "start_percent": 0.15,
+    "end_percent": 0.90,
+    "max_steps": 1,
+}
+
 _DEFAULT_I2VA_ID_NEW = default_structured_prompt("I2VA")
 _DEFAULT_I2VA_ID_NEW["shots"][0]["visual"] = I2VA_FIRST_SHOT_VISUAL_ID
 _DEFAULT_I2VA_EN = default_structured_prompt("I2VA")
@@ -58,7 +67,44 @@ DEFAULT_PROMPT = {
     "height": 640,
     "fps": 24,
     "remove_sound": False,
+    "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
+
+
+def _h3_cache_values(prompt: dict) -> dict:
+    raw = prompt.get("h3_cache") if isinstance(prompt, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    values = {}
+    specs = {
+        "steps": (int, 20, 50),
+        "reuse_threshold": (float, 0.0, 0.5),
+        "start_percent": (float, 0.0, 1.0),
+        "end_percent": (float, 0.0, 1.0),
+        "max_steps": (int, 1, 3),
+    }
+    for key, (converter, minimum, maximum) in specs.items():
+        value = raw[key] if key in raw else DEFAULT_H3_CACHE[key]
+        if isinstance(value, str) and not value.strip():
+            raise ValueError(f"H3 Cache {key} wajib diisi")
+        try:
+            parsed = converter(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"H3 Cache {key} tidak valid") from None
+        if converter is int and isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"H3 Cache {key} harus integer")
+        if not minimum <= parsed <= maximum:
+            raise ValueError(f"H3 Cache {key} di luar rentang")
+        values[key] = parsed
+    return values
+
+
+def _apply_h3_cache(workflow: dict, prompt: dict) -> None:
+    values = _h3_cache_values(prompt)
+    _set_input(workflow, "126", "steps", values["steps"])
+    _set_input(workflow, "138", "reuse_threshold", values["reuse_threshold"])
+    _set_input(workflow, "138", "start_percent", values["start_percent"])
+    _set_input(workflow, "138", "end_percent", values["end_percent"])
+    _set_input(workflow, "138", "max_steps", values["max_steps"])
 
 
 def is_valid_minimax_h3_i2v_prompt(value) -> bool:
@@ -224,6 +270,7 @@ def build_workflow(
         prompt.get("lora_name_2", DEFAULT_PROMPT["lora_name_2"]),
         prompt.get("lora_strength_2", DEFAULT_PROMPT["lora_strength_2"]),
     )
+    _apply_h3_cache(workflow, prompt)
     return _inject_random_noise_seed(workflow)
 
 

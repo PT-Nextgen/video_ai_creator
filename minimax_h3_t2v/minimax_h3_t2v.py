@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import random
+import copy
 
 from minimax_h3_prompt import default_structured_prompt, serialize_structured_prompt, structured_prompt_entry
 
@@ -23,6 +24,14 @@ SIZE_OPTIONS = [
     ("1280x720", 1280, 720),
 ]
 
+DEFAULT_H3_CACHE = {
+    "steps": 20,
+    "reuse_threshold": 0.05,
+    "start_percent": 0.15,
+    "end_percent": 0.90,
+    "max_steps": 1,
+}
+
 DEFAULT_PROMPT = {
     "positive_prompt": structured_prompt_entry(
         "T2VA",
@@ -37,7 +46,44 @@ DEFAULT_PROMPT = {
     "height": 640,
     "fps": 24,
     "remove_sound": False,
+    "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
+
+
+def _h3_cache_values(prompt: dict) -> dict:
+    raw = prompt.get("h3_cache") if isinstance(prompt, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    values = {}
+    specs = {
+        "steps": (int, 20, 50),
+        "reuse_threshold": (float, 0.0, 0.5),
+        "start_percent": (float, 0.0, 1.0),
+        "end_percent": (float, 0.0, 1.0),
+        "max_steps": (int, 1, 3),
+    }
+    for key, (converter, minimum, maximum) in specs.items():
+        value = raw[key] if key in raw else DEFAULT_H3_CACHE[key]
+        if isinstance(value, str) and not value.strip():
+            raise ValueError(f"H3 Cache {key} wajib diisi")
+        try:
+            parsed = converter(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"H3 Cache {key} tidak valid") from None
+        if converter is int and isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"H3 Cache {key} harus integer")
+        if not minimum <= parsed <= maximum:
+            raise ValueError(f"H3 Cache {key} di luar rentang")
+        values[key] = parsed
+    return values
+
+
+def _apply_h3_cache(workflow: dict, prompt: dict) -> None:
+    values = _h3_cache_values(prompt)
+    _set_input(workflow, "124", "steps", values["steps"])
+    _set_input(workflow, "137", "reuse_threshold", values["reuse_threshold"])
+    _set_input(workflow, "137", "start_percent", values["start_percent"])
+    _set_input(workflow, "137", "end_percent", values["end_percent"])
+    _set_input(workflow, "137", "max_steps", values["max_steps"])
 
 
 def _load_template(name: str = TEMPLATE) -> dict:
@@ -174,6 +220,7 @@ def build_workflow(
         prompt.get("lora_name_2", DEFAULT_PROMPT["lora_name_2"]),
         prompt.get("lora_strength_2", DEFAULT_PROMPT["lora_strength_2"]),
     )
+    _apply_h3_cache(workflow, prompt)
     return _inject_random_noise_seed(workflow)
 
 
