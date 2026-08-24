@@ -634,6 +634,20 @@ Perilaku UI:
 - tombol `Clear VRAM` tersedia di dialog `Konfigurasi Project`
 - daftar LoRa dimuat sekali saat UI dijalankan, lalu dipakai dari memory cache untuk semua dropdown LoRa
 - jika ComfyUI tidak menjawab saat startup UI, akan muncul popup error berbahasa Indonesia dan daftar LoRa tidak dimuat
+- grup toolbar runtime menyediakan tombol:
+  - `L`: switch ke Llama
+  - `C`: switch ke ComfyUI
+  - `V`: memeriksa status kedua service
+  - `LC`: membuka dialog log ComfyUI
+  - `LL`: membuka dialog log Llama
+- dialog `LC` dan `LL` berukuran sekitar dua pertiga layar, berada di tengah, dan mengambil 100 baris log terakhir
+- dialog log bersifat read-only dan melakukan refresh async setiap 5 detik; waktu refresh terakhir ditampilkan
+- posisi scroll vertikal dan horizontal dipertahankan saat isi log diperbarui, tanpa memaksa scrollbar ke baris paling akhir
+- endpoint log runtime yang digunakan adalah:
+  - `GET /v1/runtime/logs/comfyui`
+  - `GET /v1/runtime/logs/llama`
+- endpoint log memerlukan autentikasi Bearer yang sama dengan endpoint runtime lainnya; API key client dibaca dari `switch-key.cfg`
+- jika Runtime Controller belum menyediakan endpoint log, dialog menampilkan error HTTP (misalnya `404`) dan tetap mencoba refresh setiap 5 detik
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_text` diisi
   - pilihan suara scene tersedia di metadata scene melalui `voice_character`, termasuk `lily_arab` (Lily - Arab)
@@ -1356,6 +1370,16 @@ Setiap tab MiniMax H3 memiliki group `H3 Cache` di bawah prompt. Konfigurasi ini
 }
 ```
 
+Checkbox `H3 Cache` disimpan sebagai `h3_cache_enabled` dan default-nya `true`. Jika dicentang, workflow memakai node `UC_MiniMaxH3Cache` dari API saat ini. Jika tidak dicentang, node Cache dihapus dari workflow in-memory sebelum dikirim ke ComfyUI; template API di disk tetap tidak berubah.
+
+Saat Cache dinonaktifkan, koneksi wajib tetap melewati LoRA 2:
+
+```text
+UNETLoader → LoRA 2 → LoRA 1 → BasicScheduler/BasicGuider
+```
+
+LoRA 1 tidak boleh dihubungkan langsung ke `UNETLoader`, karena hal tersebut akan membypass LoRA 2.
+
 Validasi field H3 Cache: `Steps` integer `20`-`50`, `Reuse Threshold` `0.00`-`0.50`, `Start Percent` dan `End Percent` `0.00`-`1.00` dengan tepat dua desimal, serta `Max Steps` integer `1`-`3`. Semua field wajib diisi. Nilai default mengikuti API workflow MiniMax H3 dan konfigurasi ini ikut disalin oleh tombol `Edit Variasi`.
 
 Aturan durasi:
@@ -1382,6 +1406,9 @@ Node workflow utama:
 - T2V:
   - durasi: node `133`, input `value`
   - H3 Cache: Steps node `124`; parameter cache node `137`
+  - Cache aktif: `127 → 137 → 136 → 135`
+- Cache nonaktif: `127 → 136 → 135`
+- node Steps tetap dioverwrite dari konfigurasi tab walaupun Cache nonaktif
   - resolusi: node `115` (`ResolutionSelector`)
   - FPS workflow tetap `24` pada node `130`; expression frame pada node `132` menggunakan FPS `24`
 - LoRA: node `135`
@@ -1389,13 +1416,22 @@ Node workflow utama:
 - I2V:
   - durasi: node `135`, input `value`
   - H3 Cache: Steps node `126`; parameter cache node `138`
+  - Cache aktif: `129 → 138 → 137 → 136`
+- Cache nonaktif: `129 → 137 → 136`
+- node Steps tetap dioverwrite dari konfigurasi tab walaupun Cache nonaktif
   - resolusi: node `115` (`ResolutionSelector`)
   - FPS workflow tetap `24` pada node `132`; expression frame pada node `134` menggunakan FPS `24`
 - gambar awal: node `114`
 - LoRA: node `136`
 - LoRA kedua: node `137`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
 
-Untuk scene `minimax-h3_s2v` dan `minimax-h3_r2v`, H3 Cache memakai Steps node `124` dan parameter cache node `162`.
+Untuk scene `minimax-h3_s2v` dan `minimax-h3_r2v`, H3 Cache memakai Steps node `124` dan parameter cache node `162`:
+
+- Cache aktif: `127 → 162 → 156 → 157` pada template R2V saat ini;
+- Cache nonaktif: `127 → 157 → 156`;
+- node Steps tetap dioverwrite dari konfigurasi tab walaupun Cache nonaktif;
+- node `162` dihapus dari workflow in-memory saat checkbox tidak dicentang;
+- S2V menggunakan adapter R2V yang sama.
 
 Prompt MiniMax H3 mengikuti:
 

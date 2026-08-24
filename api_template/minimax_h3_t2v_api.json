@@ -90,7 +90,7 @@
       "steps": 20,
       "denoise": 1,
       "model": [
-        "137",
+        "135",
         0
       ]
     },
@@ -130,7 +130,7 @@
   "126": {
     "inputs": {
       "model": [
-        "137",
+        "135",
         0
       ],
       "conditioning": [
@@ -166,7 +166,7 @@
   },
   "129": {
     "inputs": {
-      "noise_seed": 193599967805889
+      "noise_seed": 31525278915843
     },
     "class_type": "RandomNoise",
     "_meta": {
@@ -261,7 +261,7 @@
       "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
       "strength_model": 0,
       "model": [
-        "127",
+        "137",
         0
       ]
     },
@@ -279,7 +279,7 @@
       "device": "auto",
       "verbose": true,
       "model": [
-        "135",
+        "127",
         0
       ]
     },

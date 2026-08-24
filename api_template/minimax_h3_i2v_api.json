@@ -99,7 +99,7 @@
       "steps": 20,
       "denoise": 1,
       "model": [
-        "138",
+        "136",
         0
       ]
     },
@@ -139,7 +139,7 @@
   "128": {
     "inputs": {
       "model": [
-        "138",
+        "136",
         0
       ],
       "conditioning": [
@@ -274,7 +274,7 @@
       "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
       "strength_model": 0,
       "model": [
-        "129",
+        "138",
         0
       ]
     },
@@ -292,7 +292,7 @@
       "device": "auto",
       "verbose": true,
       "model": [
-        "136",
+        "129",
         0
       ]
     },

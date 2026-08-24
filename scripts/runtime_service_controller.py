@@ -89,6 +89,13 @@ class RuntimeServiceController:
     def status(self) -> dict:
         return self._request("GET", "/v1/runtime/status")
 
+    def logs(self, service: str) -> dict:
+        """Return the latest service log lines from the runtime controller."""
+        service = str(service or "").strip().lower()
+        if service not in {"llama", "comfyui"}:
+            raise RuntimeServiceError(f"Service log tidak valid: {service}")
+        return self._request("GET", f"/v1/runtime/logs/{service}")
+
     def _health(self, service: str) -> bool:
         entry = self.config.get("services", {}).get(service, {})
         health_url = str(entry.get("health_url", "")).strip()

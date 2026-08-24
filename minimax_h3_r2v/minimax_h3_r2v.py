@@ -86,6 +86,7 @@ DEFAULT_PROMPT = {
     "lora_strength": 0,
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
+    "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
 
@@ -124,6 +125,7 @@ DEFAULT_R2V_PROMPT = {
     "lora_strength": 0,
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
+    "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
 
@@ -368,7 +370,14 @@ def _h3_cache_values(prompt: dict) -> dict:
 
 def _apply_h3_cache(workflow: dict, prompt: dict) -> None:
     values = _h3_cache_values(prompt)
+    # Steps adalah parameter sampler terpisah dari node H3 Cache dan selalu
+    # diterapkan, termasuk saat node cache dinonaktifkan.
     _set_input(workflow, "124", "steps", values["steps"])
+    if not bool(prompt.get("h3_cache_enabled", True)):
+        workflow.pop("162", None)
+        _set_input(workflow, "157", "model", ["127", 0])
+        _set_input(workflow, "156", "model", ["157", 0])
+        return
     _set_input(workflow, "162", "reuse_threshold", values["reuse_threshold"])
     _set_input(workflow, "162", "start_percent", values["start_percent"])
     _set_input(workflow, "162", "end_percent", values["end_percent"])

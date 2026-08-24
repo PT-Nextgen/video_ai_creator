@@ -1617,6 +1617,102 @@ class RuntimeTaskWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class RuntimeLogDialog(QDialog):
+    """Non-modal viewer for the last runtime-controller log lines."""
+
+    def __init__(self, service: str, parent=None):
+        super().__init__(parent)
+        self.service = str(service or "").strip().lower()
+        self.setWindowTitle(f"Log {self.service.capitalize()}")
+        self.setModal(False)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(5000)
+        self._refresh_timer.timeout.connect(self.refresh)
+        self._refresh_thread = None
+        self._refresh_worker = None
+
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.resize(int(available.width() * 2 / 3), int(available.height() * 2 / 3))
+            self.move(
+                available.x() + (available.width() - self.width()) // 2,
+                available.y() + (available.height() - self.height()) // 2,
+            )
+        else:
+            self.resize(1000, 700)
+
+        layout = QVBoxLayout(self)
+        self.info_label = QLabel("Refresh otomatis setiap 5 detik")
+        layout.addWidget(self.info_label)
+        self.log_output = QPlainTextEdit(self)
+        self.log_output.setReadOnly(True)
+        self.log_output.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.log_output.setPlaceholderText("Memuat log...")
+        layout.addWidget(self.log_output)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_timer.start()
+        self.refresh()
+
+    def closeEvent(self, event):
+        self._refresh_timer.stop()
+        super().closeEvent(event)
+
+    def refresh(self):
+        if self._refresh_thread is not None and self._refresh_thread.isRunning():
+            return
+        self.info_label.setText("Mengambil log... · refresh otomatis setiap 5 detik")
+        thread = QThread(self)
+        worker = RuntimeTaskWorker(
+            lambda: RuntimeServiceController.from_config().logs(self.service)
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_logs_loaded)
+        worker.failed.connect(self._on_logs_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._refresh_finished)
+        self._refresh_thread = thread
+        self._refresh_worker = worker
+        thread.start()
+
+    def _refresh_finished(self):
+        self._refresh_thread = None
+        self._refresh_worker = None
+
+    def _on_logs_loaded(self, payload):
+        lines = payload.get("lines", []) if isinstance(payload, dict) else []
+        if not isinstance(lines, list):
+            lines = []
+        self._set_log_text_preserving_scroll("\n".join(str(line) for line in lines))
+        count = payload.get("count", len(lines)) if isinstance(payload, dict) else len(lines)
+        refreshed_at = datetime.datetime.now().strftime("%H:%M:%S")
+        self.info_label.setText(
+            f"{len(lines)} dari {count} baris terakhir · terakhir diperbarui {refreshed_at} · refresh setiap 5 detik"
+        )
+
+    def _on_logs_failed(self, error: str):
+        refreshed_at = datetime.datetime.now().strftime("%H:%M:%S")
+        self.info_label.setText(
+            f"Gagal mengambil log pada {refreshed_at} · percobaan ulang setiap 5 detik"
+        )
+        self._set_log_text_preserving_scroll(f"Gagal mengambil log {self.service}:\n{error}")
+
+    def _set_log_text_preserving_scroll(self, text: str):
+        scrollbar = self.log_output.verticalScrollBar()
+        previous_value = scrollbar.value()
+        horizontal_scrollbar = self.log_output.horizontalScrollBar()
+        previous_horizontal_value = horizontal_scrollbar.value()
+        self.log_output.setPlainText(text)
+        scrollbar.setValue(min(previous_value, scrollbar.maximum()))
+        horizontal_scrollbar.setValue(min(previous_horizontal_value, horizontal_scrollbar.maximum()))
+
+
 class PromptGenerationWorker(QObject):
     progress = Signal(str)
     finished = Signal(dict)
@@ -2617,7 +2713,8 @@ class SceneEditorWindow(QMainWindow):
     )
 
     def _create_h3_cache_inputs(self, defaults: dict) -> dict:
-        widgets = {}
+        widgets = {"enabled": QCheckBox("Pakai H3 Cache")}
+        widgets["enabled"].setChecked(bool(defaults.get("enabled", True)))
         for key, _label, kind, minimum, maximum in self.H3_CACHE_FIELDS:
             widget = QLineEdit()
             if kind == "int":
@@ -2633,6 +2730,7 @@ class SceneEditorWindow(QMainWindow):
     def _h3_cache_group(self, fields: dict) -> QGroupBox:
         group = QGroupBox("H3 Cache")
         layout = QFormLayout(group)
+        layout.addRow("", fields["enabled"])
         for key, label, _kind, _minimum, _maximum in self.H3_CACHE_FIELDS:
             layout.addRow(label, fields[key])
         return group
@@ -2657,6 +2755,7 @@ class SceneEditorWindow(QMainWindow):
         return values
 
     def _load_h3_cache_fields(self, fields: dict, prompt: dict, defaults: dict):
+        fields["enabled"].setChecked(bool(prompt.get("h3_cache_enabled", True)) if isinstance(prompt, dict) else True)
         source = prompt.get("h3_cache") if isinstance(prompt, dict) else None
         source = source if isinstance(source, dict) else defaults
         for key, _label, kind, _minimum, _maximum in self.H3_CACHE_FIELDS:
@@ -2726,6 +2825,8 @@ class SceneEditorWindow(QMainWindow):
         self.runtime_action_group_widget = None
         self.runtime_switch_buttons = []
         self.runtime_status_button = None
+        self.runtime_log_buttons = []
+        self.runtime_log_dialogs = {}
 
         self.scene_title_input = QLineEdit()
         self.scene_description_input = QTextEdit()
@@ -4229,7 +4330,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_t2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
@@ -4244,7 +4345,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_i2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 I2V",
         )
@@ -4259,7 +4360,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=s2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 S2V",
         )
@@ -4274,7 +4375,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=r2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 R2V",
         )
@@ -5130,8 +5231,36 @@ class SceneEditorWindow(QMainWindow):
         status_button.clicked.connect(self.check_runtime_status)
         layout.addWidget(status_button)
         self.runtime_status_button = status_button
+
+        comfyui_log_button = QToolButton(frame)
+        comfyui_log_button.setText("LC")
+        comfyui_log_button.setToolTip("Tampilkan log ComfyUI dan refresh setiap 5 detik.")
+        comfyui_log_button.setStatusTip(comfyui_log_button.toolTip())
+        comfyui_log_button.clicked.connect(lambda: self.show_runtime_log("comfyui"))
+        layout.addWidget(comfyui_log_button)
+
+        llama_log_button = QToolButton(frame)
+        llama_log_button.setText("LL")
+        llama_log_button.setToolTip("Tampilkan log Llama dan refresh setiap 5 detik.")
+        llama_log_button.setStatusTip(llama_log_button.toolTip())
+        llama_log_button.clicked.connect(lambda: self.show_runtime_log("llama"))
+        layout.addWidget(llama_log_button)
+        self.runtime_log_buttons = [comfyui_log_button, llama_log_button]
+
         self._apply_runtime_status_colors(None)
         return frame
+
+    def show_runtime_log(self, service: str):
+        service = str(service or "").strip().lower()
+        if service not in {"llama", "comfyui"}:
+            return
+        dialog = self.runtime_log_dialogs.get(service)
+        if dialog is None:
+            dialog = RuntimeLogDialog(service, self)
+            self.runtime_log_dialogs[service] = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def manual_runtime_switch(self, target: str):
         target = str(target or "").strip().lower()
@@ -6247,6 +6376,11 @@ class SceneEditorWindow(QMainWindow):
             "lora_name_2": t2v_lora_name_2,
             "lora_strength_2": t2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
+            "h3_cache_enabled": (
+                self.minimax_h3_t2v_h3_cache_inputs["enabled"].isChecked()
+                if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
+                else True
+            ),
             "h3_cache": (
                 self._read_h3_cache_fields(self.minimax_h3_t2v_h3_cache_inputs, "MiniMax H3 T2V")
                 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
@@ -6266,6 +6400,11 @@ class SceneEditorWindow(QMainWindow):
             "lora_name_2": i2v_lora_name_2,
             "lora_strength_2": i2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
+            "h3_cache_enabled": (
+                self.minimax_h3_i2v_h3_cache_inputs["enabled"].isChecked()
+                if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE}
+                else True
+            ),
             "h3_cache": (
                 self._read_h3_cache_fields(self.minimax_h3_i2v_h3_cache_inputs, "MiniMax H3 I2V")
                 if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE}
@@ -6497,6 +6636,7 @@ class SceneEditorWindow(QMainWindow):
                 "lora_strength": s2v_lora_strength,
                 "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
                 "lora_strength_2": s2v_lora_strength_2,
+                "h3_cache_enabled": self.minimax_h3_s2v_h3_cache_inputs["enabled"].isChecked(),
                 "h3_cache": self._read_h3_cache_fields(self.minimax_h3_s2v_h3_cache_inputs, "MiniMax H3 S2V"),
             }
         web_prompt = {
@@ -7199,6 +7339,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_strength": r2v_lora_strength,
             "lora_name_2": self.minimax_h3_r2v_lora_name_2_input.currentText().strip(),
             "lora_strength_2": r2v_lora_strength_2,
+            "h3_cache_enabled": self.minimax_h3_r2v_h3_cache_inputs["enabled"].isChecked(),
             "h3_cache": (
                 self._read_h3_cache_fields(self.minimax_h3_r2v_h3_cache_inputs, "MiniMax H3 R2V")
                 if self.scene_type_combo.currentText().strip() == MINIMAX_H3_R2V_SCENE_TYPE

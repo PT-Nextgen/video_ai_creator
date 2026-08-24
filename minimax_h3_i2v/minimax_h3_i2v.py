@@ -67,6 +67,7 @@ DEFAULT_PROMPT = {
     "height": 640,
     "fps": 24,
     "remove_sound": False,
+    "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
 
@@ -100,7 +101,13 @@ def _h3_cache_values(prompt: dict) -> dict:
 
 def _apply_h3_cache(workflow: dict, prompt: dict) -> None:
     values = _h3_cache_values(prompt)
+    # Steps adalah parameter sampler terpisah dari node H3 Cache dan selalu
+    # diterapkan, termasuk saat node cache dinonaktifkan.
     _set_input(workflow, "126", "steps", values["steps"])
+    if not bool(prompt.get("h3_cache_enabled", True)):
+        workflow.pop("138", None)
+        _set_input(workflow, "137", "model", ["129", 0])
+        return
     _set_input(workflow, "138", "reuse_threshold", values["reuse_threshold"])
     _set_input(workflow, "138", "start_percent", values["start_percent"])
     _set_input(workflow, "138", "end_percent", values["end_percent"])
