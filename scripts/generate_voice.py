@@ -1,5 +1,6 @@
 import argparse
 import audioop
+import glob
 import os
 import sys
 import time
@@ -33,6 +34,121 @@ logger = get_logger(__name__)
 
 POLL_INTERVAL = 3.0
 POLL_TIMEOUT = TTS_CALL_TIMEOUT_SECONDS
+
+MINIMAX_H3_S2V_SCENE_TYPE = "minimax-h3_s2v"
+MINIMAX_H3_FPS = 24
+MINIMAX_H3_ALIGNMENT = 17
+MINIMAX_H3_SAMPLE_RATE = 24000
+
+
+def _is_minimax_h3_s2v_scene(scene_dir: str) -> bool:
+    try:
+        meta = load_json(os.path.join(scene_dir, "scene_meta.json"))
+    except Exception:
+        return False
+    return str(meta.get("scene_type", "")).strip() == MINIMAX_H3_S2V_SCENE_TYPE
+
+
+def _pad_minimax_h3_s2v_audio(audio_path: str) -> bool:
+    """Pad or trim a MiniMax S2V WAV to an alignment-safe 24 FPS duration."""
+    try:
+        with wave.open(audio_path, "rb") as source:
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            sample_rate = source.getframerate()
+            sample_count = source.getnframes()
+            pcm = source.readframes(sample_count)
+    except Exception as exc:
+        write_log(f"Gagal membaca WAV MiniMax S2V `{audio_path}`: {exc}", level="error")
+        return False
+
+    if sample_rate != MINIMAX_H3_SAMPLE_RATE:
+        message = (
+            f"[VOICE_WARNING_DIALOG] Audio MiniMax S2V bukan 24 kHz: "
+            f"{audio_path} memiliki {sample_rate} Hz. Padding tidak diterapkan."
+        )
+        print(message, flush=True)
+        write_log(message, level="warning")
+        return False
+
+    base_video_frames = max(5, int(round(sample_count * MINIMAX_H3_FPS / sample_rate)))
+    alignment_padding_frames = (5 - (base_video_frames % MINIMAX_H3_ALIGNMENT)) % MINIMAX_H3_ALIGNMENT
+    target_video_frames = base_video_frames + alignment_padding_frames
+    max_video_frames = 15 * MINIMAX_H3_FPS
+    trimmed_video_frames = 0
+    if target_video_frames > max_video_frames:
+        # Do not let the alignment padding push S2V beyond MiniMax's 15 s
+        # limit. Choose the previous alignment-safe frame count instead.
+        previous_safe_frames = base_video_frames - (
+            (base_video_frames - 5) % MINIMAX_H3_ALIGNMENT
+        )
+        # 345 is the largest alignment-safe count not exceeding 15 s.
+        max_alignment_safe_frames = max_video_frames - (
+            (max_video_frames - 5) % MINIMAX_H3_ALIGNMENT
+        )
+        target_video_frames = max(5, min(previous_safe_frames, max_alignment_safe_frames))
+        trimmed_video_frames = max(0, base_video_frames - target_video_frames)
+    target_sample_count = target_video_frames * sample_rate // MINIMAX_H3_FPS
+    silence_samples = max(0, target_sample_count - sample_count)
+    bytes_per_sample_frame = channels * sample_width
+    if target_sample_count < sample_count:
+        adjusted_pcm = pcm[:target_sample_count * bytes_per_sample_frame]
+    else:
+        adjusted_pcm = pcm + (b"\x00" * silence_samples * bytes_per_sample_frame)
+
+    if target_sample_count == sample_count:
+        write_log(
+            f"MiniMax S2V audio sudah alignment-safe: {audio_path} "
+            f"(samples={sample_count}, video_frames={base_video_frames}, padding=0)"
+        )
+        return True
+
+    temp_path = f"{audio_path}.__minimax_pad_tmp.wav"
+    try:
+        with wave.open(temp_path, "wb") as output:
+            output.setnchannels(channels)
+            output.setsampwidth(sample_width)
+            output.setframerate(sample_rate)
+            output.writeframes(adjusted_pcm)
+        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+            raise RuntimeError(f"file temporary tidak valid: {temp_path}")
+        os.replace(temp_path, audio_path)
+        if trimmed_video_frames:
+            write_log(
+                f"Trimmed MiniMax S2V audio to stay within 15 seconds: {audio_path} "
+                f"(removed_video_frames={trimmed_video_frames}, "
+                f"total_video_frames={target_video_frames}, "
+                f"duration={target_video_frames / MINIMAX_H3_FPS:.6f}s)"
+            )
+        else:
+            write_log(
+                f"Added MiniMax S2V trailing silence: {audio_path} "
+                f"(added_samples={silence_samples}, added_video_frames={alignment_padding_frames}, "
+                f"total_video_frames={target_video_frames}, duration={target_video_frames / MINIMAX_H3_FPS:.6f}s)"
+            )
+        return True
+    except Exception as exc:
+        write_log(f"Gagal menyesuaikan audio MiniMax S2V `{audio_path}`: {exc}", level="error")
+        return False
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+def _prepare_minimax_h3_s2v_scene_audio(scene_dir: str, audio_path: str | None = None) -> bool:
+    if not _is_minimax_h3_s2v_scene(scene_dir):
+        return True
+    if not audio_path:
+        candidates = glob.glob(os.path.join(scene_dir, "speech_*.wav"))
+        candidates = [path for path in candidates if os.path.isfile(path)]
+        if not candidates:
+            write_log(f"Audio MiniMax S2V tidak ditemukan untuk {scene_dir}.", level="error")
+            return False
+        audio_path = max(candidates, key=os.path.getmtime)
+    return _pad_minimax_h3_s2v_audio(audio_path)
 
 
 def _estimate_ratio_boundaries(total_frames: int, text_lengths: list[int]) -> list[int]:
@@ -452,7 +568,10 @@ def _generate_and_split_gemini_scene_group(project_dir: str, voice_key: str, sce
 
     if len(scene_items) == 1:
         item = scene_items[0]
-        return process_gemini_tts_scene(item["scene_dir"], logger=logger_obj, write_log=write_log)
+        ok = process_gemini_tts_scene(item["scene_dir"], logger=logger_obj, write_log=write_log)
+        if not ok:
+            return False
+        return _prepare_minimax_h3_s2v_scene_audio(item["scene_dir"])
 
     voice_name = GEMINI_VOICE_NAME_BY_CHARACTER.get(voice_key, "Kore")
     combined_parts = []
@@ -527,6 +646,8 @@ def _generate_and_split_gemini_scene_group(project_dir: str, voice_key: str, sce
         return False
 
     for item, out_path in zip(scene_items, out_paths):
+        if not _prepare_minimax_h3_s2v_scene_audio(item["scene_dir"], out_path):
+            return False
         write_log(f"Gemini konsisten voice `{voice_key}`: voice scene {item['scene']} tersimpan di {out_path}")
     write_log(f"Gemini konsisten voice `{voice_key}`: audio gabungan tersimpan di {tmp_wav}")
     return True
@@ -642,6 +763,8 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
                 had_error = True
         else:
             ok = process_gemini_tts_scene(scene_dir, logger=logger, write_log=write_log)
+            if ok:
+                ok = _prepare_minimax_h3_s2v_scene_audio(scene_dir)
             if not ok:
                 write_log(f"Gagal membuat voice Gemini TTS untuk {scene}.")
                 had_error = True

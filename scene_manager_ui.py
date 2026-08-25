@@ -8982,11 +8982,20 @@ class SceneEditorWindow(QMainWindow):
 
     def on_process_stdout(self):
         if self.process:
-            self.append_log(bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace"))
+            self._append_process_output(bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace"))
 
     def on_process_stderr(self):
         if self.process:
-            self.append_log(bytes(self.process.readAllStandardError()).decode("utf-8", errors="replace"))
+            self._append_process_output(bytes(self.process.readAllStandardError()).decode("utf-8", errors="replace"))
+
+    def _append_process_output(self, text: str):
+        self.append_log(text)
+        for line in str(text or "").splitlines():
+            marker = "[VOICE_WARNING_DIALOG]"
+            if marker not in line:
+                continue
+            warning_text = line.split(marker, 1)[1].strip()
+            QMessageBox.warning(self, "Peringatan Audio MiniMax S2V", warning_text)
 
     def on_process_finished(self, exit_code, exit_status):
         self.append_log(f"\nProses selesai dengan kode keluar {exit_code}")

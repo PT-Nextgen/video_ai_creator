@@ -333,6 +333,15 @@ Catatan trimming video:
 - seluruh scene MiniMax (`minimax-h3_i2v`, `minimax-h3_t2v_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`) membuang frame padding setelah output ComfyUI diunduh
 - trimming MiniMax mempertahankan frame dasar `round(durasi * 24)` dan membuang frame alignment tambahan sebelum proses audio, ekstraksi frame, atau concat
 - pada `minimax-h3_t2v_i2v`, trimming dilakukan terpisah untuk output stage T2V dan stage I2V
+- khusus `minimax-h3_s2v` dengan provider Gemini, setelah WAV TTS dibuat:
+  - sample rate harus `24 kHz`; jika bukan, proses menampilkan warning dan padding tidak diterapkan
+  - durasi WAV dikonversi ke frame video dengan `round(sample_count * 24 / 24000)`
+  - target alignment MiniMax mengikuti `frame_count % 17 == 5` pada 24 FPS
+  - jika target alignment berikutnya masih berada di bawah atau sama dengan batas `15 detik`, silence ditambahkan di bagian akhir WAV
+  - jika penambahan silence akan melewati `15 detik`, WAV dipotong ke target alignment-safe sebelumnya
+  - target alignment-safe terbesar yang tidak melewati `15 detik` adalah `345 frame = 14.375 detik`; `360 frame = 15 detik` bukan alignment-safe
+  - WAV yang sudah alignment-safe tidak diubah lagi pada pemrosesan berikutnya (operasi bersifat idempoten)
+- dengan audio yang sudah alignment-safe, output S2V diharapkan langsung memiliki jumlah frame target dan trimming padding setelah download menjadi no-op
 - scene type lain tidak dipotong otomatis mengikuti speech
 
 ## Audio Scene dan Final Compose
