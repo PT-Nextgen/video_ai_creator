@@ -225,7 +225,7 @@ Kebutuhan prompt per `scene_type`:
   - FPS MiniMax H3 ditetapkan `24`
 - `minimax-h3_s2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_s2v_prompt.json`, minimal satu gambar di root folder scene, dan minimal satu file audio speech berawalan `speech_`
-  - durasi voice dikirim sebagai float ke workflow; setelah video diunduh, frame padding MiniMax dipotong sebelum proses finalisasi audio
+  - durasi voice dikirim sebagai float ke workflow; output video dipertahankan utuh setelah diunduh
   - durasi audio speech tidak boleh lebih dari 15 detik; jika melebihi batas, scene diblokir
   - FPS MiniMax H3 ditetapkan `24`
   - workflow memakai `minimax_h3_r2v_api.json` secara in-memory dan menghapus referensi Picture 2, Picture 3, Video 1, Audio 2, dan Audio 3
@@ -330,9 +330,7 @@ Catatan voice dan caption:
 
 Catatan trimming video:
 - `wan22_s2v` dipotong mengikuti durasi speech dengan tambahan maksimal empat frame
-- seluruh scene MiniMax (`minimax-h3_i2v`, `minimax-h3_t2v_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`) membuang frame padding setelah output ComfyUI diunduh
-- trimming MiniMax mempertahankan frame dasar `round(durasi * 24)` dan membuang frame alignment tambahan sebelum proses audio, ekstraksi frame, atau concat
-- pada `minimax-h3_t2v_i2v`, trimming dilakukan terpisah untuk output stage T2V dan stage I2V
+- seluruh output scene MiniMax (`minimax-h3_i2v`, `minimax-h3_t2v_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`) dipertahankan utuh setelah download; frame alignment `17n+5` adalah bagian dari hasil generasi, bukan padding pascaproses yang dibuang
 - khusus `minimax-h3_s2v` dengan provider Gemini, setelah WAV TTS dibuat:
   - sample rate harus `24 kHz`; jika bukan, proses menampilkan warning dan padding tidak diterapkan
   - durasi WAV dikonversi ke frame video dengan `round(sample_count * 24 / 24000)`
@@ -341,7 +339,7 @@ Catatan trimming video:
   - jika penambahan silence akan melewati `15 detik`, WAV dipotong ke target alignment-safe sebelumnya
   - target alignment-safe terbesar yang tidak melewati `15 detik` adalah `345 frame = 14.375 detik`; `360 frame = 15 detik` bukan alignment-safe
   - WAV yang sudah alignment-safe tidak diubah lagi pada pemrosesan berikutnya (operasi bersifat idempoten)
-- dengan audio yang sudah alignment-safe, output S2V diharapkan langsung memiliki jumlah frame target dan trimming padding setelah download menjadi no-op
+- dengan audio yang sudah alignment-safe, durasi audio mengikuti frame alignment output S2V dan video tidak perlu dipotong setelah download
 - scene type lain tidak dipotong otomatis mengikuti speech
 
 ## Audio Scene dan Final Compose
@@ -1406,7 +1404,7 @@ Kontrol audio per stage:
 
 - tab `MINIMAX-H3_T2V` memiliki checkbox `Hapus Sound` untuk output T2V;
 - tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound` untuk output I2V;
-- setelah file video selesai diunduh, frame padding stage dipotong terlebih dahulu;
+- setelah file video selesai diunduh, seluruh frame hasil generasi dipertahankan;
 - jika `Hapus Sound` dicentang, audio output stage kemudian dihapus sebelum ekstraksi frame, concat T2V-I2V, penyimpanan master audio, atau proses audio scene berikutnya;
 - jika hanya satu stage yang dibisukan, concat memasukkan audio silence pada stage tersebut sehingga audio stage lain tetap berada pada timeline yang benar.
 
@@ -1456,9 +1454,9 @@ Scene type: `minimax-h3_i2v`
 - tab berurutan: `Meta`, `Gambar Awal`, `Image Edit`, `MINIMAX-H3_I2V`, `Agentic`, `Aset`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
-- setelah output ComfyUI diunduh, frame padding MiniMax dipotong terlebih dahulu;
+- setelah output ComfyUI diunduh, seluruh frame hasil generasi MiniMax dipertahankan;
 - secara default audio hasil ComfyUI dipertahankan di video root/variasi dan baru dicampur dengan speech serta sound effect saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
-- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus setelah trimming frame dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari video yang sudah tidak memiliki audio
+- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus setelah video selesai diunduh dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari video yang sudah tidak memiliki audio
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA pertama dan kedua dibaca dari `lora_name`/`lora_strength` serta `lora_name_2`/`lora_strength_2` pada file prompt dan folder `MINIMAX-H3`
@@ -1597,7 +1595,7 @@ Durasi:
 - durasi dibaca dari file audio speech yang dipilih memakai `ffprobe`;
 - audio dengan durasi lebih dari `15` detik membuat scene tidak dapat dijalankan;
 - durasi audio dimasukkan langsung ke node `132` (`PrimitiveFloat`), yang menjadi sumber panjang frame node `131`;
-- setelah output video diunduh, frame padding hasil perhitungan node `131` dipotong; frame dasar `round(durasi audio * 24)` dipertahankan.
+- setelah output video diunduh, seluruh frame hasil generasi dipertahankan; penyesuaian durasi dilakukan pada WAV sebelum workflow dikirim.
 - FPS workflow ditetapkan `24` pada node `130` dan expression frame node `131`.
 Ukuran mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan scene MiniMax H3 lainnya. Prompt memakai mode `Ref2VA` dengan enam section skill MINIMAX: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`.
 
@@ -1704,7 +1702,7 @@ Semua mapping memakai `multiple=32`. Karena itu, output aktual node `ResolutionS
 
 Mapping ini berlaku untuk `minimax-h3_t2v_i2v`, `minimax-h3_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`. Nilai `width` dan `height` tetap disimpan di file prompt scene; workflow JSON meneruskannya melalui node `115` (`ResolutionSelector`) sebagai kombinasi `aspect_ratio`, `megapixels`, dan `multiple`.
 
-Pada workflow MiniMax, expression jumlah frame selalu menggunakan FPS `24`. Formula frame tetap mengikuti kelipatan/aturan frame MiniMax, sehingga durasi aktual dapat memiliki padding frame kecil.
+Pada workflow MiniMax, expression jumlah frame selalu menggunakan FPS `24`. Formula frame mengikuti grid valid `frame_count % 17 == 5`, sehingga durasi aktual dapat sedikit lebih panjang dari durasi input. Seluruh frame tersebut merupakan bagian dari output generasi dan tidak dipotong oleh aplikasi.
 
 Timeout runtime:
 

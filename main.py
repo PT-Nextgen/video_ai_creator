@@ -290,56 +290,6 @@ def _remove_video_audio(video_path: str) -> str:
         raise FileNotFoundError(video_path)
     if not ffprobe_has_audio(video_path):
         write_log(f"No embedded audio to remove from {video_path}")
-    return video_path
-
-
-def _trim_minimax_padding_frames(video_path: str, duration_seconds: float, fps: int = 24) -> str:
-    """Remove MiniMax's temporal alignment frames from a downloaded video.
-
-    MiniMax requires the latent length to be aligned to a 17-frame cadence.
-    The workflow therefore generates ``base_frames + padding`` frames.  Keep
-    only the requested duration's base frame count, while preserving any
-    embedded audio until the caller's normal audio-removal step.
-    """
-    video_path = str(video_path)
-    if not os.path.isfile(video_path):
-        raise FileNotFoundError(video_path)
-    try:
-        base_frames = max(5, int(round(float(duration_seconds) * int(fps))))
-    except (TypeError, ValueError):
-        raise ValueError(f"Invalid MiniMax duration: {duration_seconds}")
-    padding_frames = (5 - (base_frames % 17)) % 17
-    if padding_frames <= 0:
-        write_log(
-            f"MiniMax frame trim skipped: {video_path} already aligned "
-            f"(frames={base_frames}, padding=0)"
-        )
-        return video_path
-
-    root, extension = os.path.splitext(video_path)
-    temp_path = f"{root}.__minimax_trim_tmp__{extension or '.mp4'}"
-    try:
-        run_ffmpeg(
-            f'ffmpeg -y -i "{video_path}" -map 0:v:0 -map 0:a? '
-            f'-vf "trim=end_frame={base_frames},setpts=PTS-STARTPTS" '
-            f'-c:v libx264 -preset fast -pix_fmt yuv420p -c:a copy '
-            f'-movflags +faststart "{temp_path}"'
-        )
-        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
-            raise RuntimeError(f"MiniMax frame trim output missing or empty: {temp_path}")
-        os.replace(temp_path, video_path)
-        write_log(
-            f"Trimmed MiniMax padding frames: {video_path} "
-            f"(kept={base_frames}, removed={padding_frames}, fps={fps})"
-        )
-        return video_path
-    finally:
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-
     root, extension = os.path.splitext(video_path)
     temp_path = f"{root}.__remove_sound_tmp__{extension or '.mp4'}"
     try:
@@ -893,12 +843,6 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             write_log(f"Failed to download MiniMax H3 T2V video {video_filename}: {e}")
             return False
 
-        try:
-            _trim_minimax_padding_frames(t2v_video_out_path, t2v_duration, fps=24)
-        except Exception as e:
-            write_log(f"Failed to trim MiniMax H3 T2V padding frames for {scene_dir}: {e}")
-            return False
-
         if bool(t2v_prompt.get("remove_sound", False)):
             try:
                 _remove_video_audio(t2v_video_out_path)
@@ -992,12 +936,6 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 return False
         except Exception as e:
             write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
-            return False
-
-        try:
-            _trim_minimax_padding_frames(i2v_video_out_path, i2v_duration, fps=24)
-        except Exception as e:
-            write_log(f"Failed to trim MiniMax H3 I2V padding frames for {scene_dir}: {e}")
             return False
 
         if bool(i2v_prompt.get("remove_sound", False)):
@@ -1130,12 +1068,6 @@ def process_scene(scene_dir, server, project_generate_caption=True):
                 return False
         except Exception as e:
             write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
-            return False
-
-        try:
-            _trim_minimax_padding_frames(video_out_path, scene_duration, fps=24)
-        except Exception as e:
-            write_log(f"Failed to trim MiniMax H3 I2V padding frames for {scene_dir}: {e}")
             return False
 
         if bool(i2v_prompt.get("remove_sound", False)):
@@ -1504,11 +1436,6 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
             write_log(f"Downloaded file missing or empty: {video_out_path}")
             return False
-        try:
-            _trim_minimax_padding_frames(video_out_path, duration, fps=24)
-        except Exception as e:
-            write_log(f"Failed to trim MiniMax H3 R2V padding frames for {scene_dir}: {e}")
-            return False
         return _finalize_scene_success(
             video_out_path,
             is_s2v=True,
@@ -1598,11 +1525,6 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             return False
         if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
             write_log(f"Downloaded file missing or empty: {video_out_path}")
-            return False
-        try:
-            _trim_minimax_padding_frames(video_out_path, audio_duration, fps=24)
-        except Exception as e:
-            write_log(f"Failed to trim MiniMax H3 S2V padding frames for {scene_dir}: {e}")
             return False
         return _finalize_scene_success(
             video_out_path,
