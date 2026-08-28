@@ -1502,8 +1502,9 @@ class SceneTemplateDialog(QDialog):
         self.type_combo.addItems([
             "wan22_i2v",
             WAN22_T2V_SCENE_TYPE,
-        MINIMAX_H3_T2V_I2V_SCENE_TYPE,
-        MINIMAX_H3_R2V_SCENE_TYPE,
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
             MINIMAX_H3_S2V_SCENE_TYPE,
             WAN22_T2V_BATCH_SCENE_TYPE,
             "wan22_s2v",
