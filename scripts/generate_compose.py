@@ -451,24 +451,37 @@ def retime_video_only_to_duration(src_path, dst_path, target_duration):
 
 
 def build_song_audio_from_scenes(scene_dirs, out_path):
-    """Decode and concatenate speech chunks as one continuous audio master."""
+    """Decode and concatenate one speech audio source per S2V/R2V scene."""
     chunk_paths = []
     for scene_dir in scene_dirs:
-        candidates = [
+        chunk_candidates = [
             os.path.join(scene_dir, name)
             for name in os.listdir(scene_dir)
             if name.lower().startswith('speech_chunk_')
             and name.lower().endswith(AUDIO_EXTS)
         ]
-        candidates.sort()
-        if candidates:
-            chunk_paths.append(candidates[0])
+        # Current Gemini/MiniMax S2V projects may use speech_gemini_tts_*.wav
+        # instead of the older speech_chunk_* naming convention. Prefer the
+        # explicit chunk name, then fall back to the newest speech_* file.
+        chunk_candidates.sort()
+        if chunk_candidates:
+            chunk_paths.append(chunk_candidates[0])
+            continue
+        speech_candidates = [
+            os.path.join(scene_dir, name)
+            for name in os.listdir(scene_dir)
+            if name.lower().startswith('speech_')
+            and name.lower().endswith(AUDIO_EXTS)
+        ]
+        speech_candidates.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+        if speech_candidates:
+            chunk_paths.append(speech_candidates[0])
 
     if not chunk_paths:
-        raise RuntimeError('Compose Lagu membutuhkan speech_chunk audio pada setiap scene.')
+        raise RuntimeError('Compose Lagu membutuhkan audio speech pada setiap scene.')
     if len(chunk_paths) != len(scene_dirs):
         raise RuntimeError(
-            f'Compose Lagu menemukan {len(chunk_paths)} speech chunk untuk '
+            f'Compose Lagu menemukan {len(chunk_paths)} audio speech untuk '
             f'{len(scene_dirs)} scene.'
         )
 

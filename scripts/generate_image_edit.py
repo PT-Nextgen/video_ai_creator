@@ -134,8 +134,6 @@ def process_scene(
             gemini_model_id=gemini_model_id,
         )
         write_log(f"Gemini image edit selesai: {output_path}")
-        if not comfyui_api.run_vram_cleaner(server):
-            raise RuntimeError("Gagal menjalankan VRAM cleaner setelah image edit.")
         return output_path
 
     upload_info = comfyui_api.upload_file(server, source_path, file_type="image")
@@ -157,8 +155,6 @@ def process_scene(
         raise RuntimeError(f"Output image tidak ditemukan (prompt_id={prompt_id})")
     output_path = _download_comfy_image(server, image_out, scene_dir)
     write_log(f"Flux2 image edit selesai: {output_path}")
-    if not comfyui_api.run_vram_cleaner(server):
-        raise RuntimeError("Gagal menjalankan VRAM cleaner setelah image edit.")
     return output_path
 
 

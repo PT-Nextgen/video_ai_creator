@@ -487,7 +487,7 @@ WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
 MINIMAX_H3_DURATION_OPTIONS = [1, 5, 10, 15, 20, 25, 30]
 MINIMAX_H3_I2V_DURATION_OPTIONS = [1, 5, 10, 15]
 MINIMAX_H3_DURATION_MIN = 1.0
-MINIMAX_H3_DURATION_DECIMALS = 1
+MINIMAX_H3_DURATION_DECIMALS = 4
 MINIMAX_H3_DEFAULT_FPS = 24
 PROMPT_APPEND_OPERATIONS = {
     "wan22_t2v_positive": {
@@ -1076,7 +1076,7 @@ def create_scene_in_project(
         raise ValueError("Durasi harus berupa angka.") from exc
     if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_R2V_SCENE_TYPE}:
         if raw_duration != round(raw_duration, MINIMAX_H3_DURATION_DECIMALS):
-            raise ValueError("Durasi MiniMax maksimal memiliki 1 angka desimal.")
+            raise ValueError("Durasi MiniMax maksimal memiliki 4 angka desimal.")
         duration = round(raw_duration, MINIMAX_H3_DURATION_DECIMALS)
     else:
         duration = int(raw_duration)
@@ -1085,21 +1085,21 @@ def create_scene_in_project(
         and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
     ):
         raise ValueError(
-            "Durasi untuk scene minimax-h3_t2v_i2v harus antara 1.0 dan 30.0 detik dengan maksimal 1 angka desimal."
+            "Durasi untuk scene minimax-h3_t2v_i2v harus antara 1.0 dan 30.0 detik dengan maksimal 4 angka desimal."
         )
     if scene_type == MINIMAX_H3_I2V_SCENE_TYPE and not (
         MINIMAX_H3_DURATION_MIN <= duration <= 15.0
         and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
     ):
         raise ValueError(
-            "Durasi untuk scene minimax-h3_i2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+            "Durasi untuk scene minimax-h3_i2v harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal."
         )
     if scene_type == MINIMAX_H3_R2V_SCENE_TYPE and not (
         MINIMAX_H3_DURATION_MIN <= duration <= 15.0
         and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
     ):
         raise ValueError(
-            "Durasi untuk scene minimax-h3_r2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+            "Durasi untuk scene minimax-h3_r2v harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal."
         )
     if scene_type == WAN22_T2V_SCENE_TYPE and duration not in WAN22_T2V_DURATION_OPTIONS:
         raise ValueError("Durasi untuk scene wan22_t2v_i2v hanya boleh 5, 10, atau 15 detik.")
@@ -1309,9 +1309,9 @@ def validate_scene_data(
             duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
             duration_value = 0
-        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 30.0 and duration_value == round(duration_value, 1)):
+        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 30.0 and duration_value == round(duration_value, MINIMAX_H3_DURATION_DECIMALS)):
             issues.append(
-                "Durasi scene minimax-h3_t2v_i2v harus antara 1.0 dan 30.0 detik dengan maksimal 1 angka desimal."
+                "Durasi scene minimax-h3_t2v_i2v harus antara 1.0 dan 30.0 detik dengan maksimal 4 angka desimal."
             )
         if not _prompt_text_for_validation(minimax_h3_t2v_prompt.get("positive_prompt")):
             issues.append("Prompt positif MiniMax H3 T2V wajib diisi.")
@@ -1322,9 +1322,9 @@ def validate_scene_data(
             duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
             duration_value = 0
-        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 15.0 and duration_value == round(duration_value, 1)):
+        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 15.0 and duration_value == round(duration_value, MINIMAX_H3_DURATION_DECIMALS)):
             issues.append(
-                "Durasi scene minimax-h3_i2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+                "Durasi scene minimax-h3_i2v harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal."
             )
         if not _prompt_text_for_validation(minimax_h3_i2v_prompt.get("positive_prompt")):
             issues.append("Prompt positif MiniMax H3 I2V wajib diisi.")
@@ -1335,9 +1335,9 @@ def validate_scene_data(
             duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
             duration_value = 0
-        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 15.0 and duration_value == round(duration_value, 1)):
+        if not (MINIMAX_H3_DURATION_MIN <= duration_value <= 15.0 and duration_value == round(duration_value, MINIMAX_H3_DURATION_DECIMALS)):
             issues.append(
-                "Durasi scene minimax-h3_r2v harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal."
+                "Durasi scene minimax-h3_r2v harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal."
             )
         r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
         r2v_id_new = r2v_entry.get("id_new") if isinstance(r2v_entry, dict) else None
@@ -1516,7 +1516,7 @@ class SceneTemplateDialog(QDialog):
         self.duration_combo = QComboBox()
         populate_duration_combo(self.duration_combo, self.type_combo.currentText(), selected_value=10)
         self.duration_text_input = QLineEdit("10.0")
-        self.duration_text_input.setValidator(QDoubleValidator(1.0, 30.0, 1, self.duration_text_input))
+        self.duration_text_input.setValidator(QDoubleValidator(1.0, 30.0, MINIMAX_H3_DURATION_DECIMALS, self.duration_text_input))
         self.duration_text_input.setPlaceholderText("contoh: 15.5")
         self.duration_text_input.setFixedHeight(self.duration_combo.sizeHint().height())
         self.duration_editor_stack = QStackedWidget()
@@ -1564,9 +1564,9 @@ class SceneTemplateDialog(QDialog):
             MINIMAX_H3_R2V_SCENE_TYPE,
         }:
             try:
-                duration = round(float(self.duration_text_input.text().strip() or "10.0"), 1)
+                duration = round(float(self.duration_text_input.text().strip() or "10.0"), MINIMAX_H3_DURATION_DECIMALS)
             except ValueError as exc:
-                raise ValueError("Durasi harus berupa angka dengan maksimal 1 angka desimal.") from exc
+                raise ValueError("Durasi harus berupa angka dengan maksimal 4 angka desimal.") from exc
         else:
             duration = int(self.duration_combo.currentData() or 10)
         return {
@@ -1910,7 +1910,7 @@ class ComposeMusicDialog(QDialog):
         self.compose_song_input.setToolTip(
             "Gunakan audio S2V tanpa audio ganda; 4 frame ekstra hanya dipotong untuk WAN22 S2V."
             if compose_song_enabled
-            else "Compose Lagu hanya tersedia jika semua scene bertipe wan22_s2v atau minimax-h3_s2v."
+            else "Compose Lagu hanya tersedia jika semua scene bertipe WAN22/MiniMax S2V atau MiniMax R2V."
         )
 
         layout = QFormLayout(self)
@@ -2794,6 +2794,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_t2v_tab = None
         self.minimax_h3_i2v_tab = None
         self.minimax_h3_r2v_tab = None
+        self.minimax_h3_s2v_h3_cache_group = None
         self.s2v_tab = None
         self.web_tab = None
         self.web_search_tab = None
@@ -3629,7 +3630,8 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_negative_label = QLabel("Prompt Negatif")
         s2v_layout.addWidget(self.s2v_negative_label, 6, 0)
         s2v_layout.addWidget(self.s2v_negative_input, 6, 1, 1, 3)
-        s2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_s2v_h3_cache_inputs), 7, 0, 1, 4)
+        self.minimax_h3_s2v_h3_cache_group = self._h3_cache_group(self.minimax_h3_s2v_h3_cache_inputs)
+        s2v_layout.addWidget(self.minimax_h3_s2v_h3_cache_group, 7, 0, 1, 4)
         tabs.addTab(self.s2v_tab, "WAN22 S2V")
 
         self.web_tab = QWidget()
@@ -3720,6 +3722,8 @@ class SceneEditorWindow(QMainWindow):
         is_minimax_h3_r2v = scene_type == MINIMAX_H3_R2V_SCENE_TYPE
         is_t2v_batch = scene_type == WAN22_T2V_BATCH_SCENE_TYPE
         is_s2v = scene_type in {"wan22_s2v", MINIMAX_H3_S2V_SCENE_TYPE}
+        if self.minimax_h3_s2v_h3_cache_group is not None:
+            self.minimax_h3_s2v_h3_cache_group.setVisible(is_minimax_h3_s2v)
         visible_map = {
             self.meta_tab: True,
             self.z_tab: scene_type not in {"web_scroll"} and not is_wan22_t2v and not is_t2v_batch and not is_minimax_h3,
@@ -5969,7 +5973,7 @@ class SceneEditorWindow(QMainWindow):
             duration_value = str(meta.get("duration_seconds", ""))
             if self._uses_decimal_duration_input():
                 try:
-                    self.duration_decimal_input.setText(f"{float(duration_value or 10.0):.1f}")
+                    self.duration_decimal_input.setText(str(duration_value or 10.0))
                 except (TypeError, ValueError):
                     self.duration_decimal_input.setText("10.0")
             else:
@@ -8829,9 +8833,14 @@ class SceneEditorWindow(QMainWindow):
                 key=lambda p: p.name.lower(),
             )
         scene_dirs = self.list_scene_dirs_current()
+        compose_song_scene_types = {
+            "wan22_s2v",
+            MINIMAX_H3_S2V_SCENE_TYPE,
+            MINIMAX_H3_R2V_SCENE_TYPE,
+        }
         all_scenes_are_s2v = bool(scene_dirs) and all(
             str(load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META).get("scene_type", "")).strip()
-            in {"wan22_s2v", MINIMAX_H3_S2V_SCENE_TYPE}
+            in compose_song_scene_types
             for scene_dir in scene_dirs
         )
         dialog = ComposeMusicDialog(music_files, all_scenes_are_s2v, self)

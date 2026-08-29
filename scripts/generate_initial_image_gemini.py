@@ -48,8 +48,6 @@ def process_scene(scene_dir: str, server: str):
     try:
         out = generate_scene_image(scene_dir, z_prompt)
         write_log(f"Generated Gemini initial image: {out}")
-        if not comfyui_api.run_vram_cleaner(server):
-            return False
         return True
     except Exception as e:
         write_log(f"Gagal generate Gemini image untuk {scene_dir}: {e}", level="error")

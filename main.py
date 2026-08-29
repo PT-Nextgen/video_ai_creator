@@ -97,6 +97,7 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
 POLL_INTERVAL = COMFYUI_POLL_INTERVAL_SECONDS
 I2V_FPS = 16
 WEB_SCROLL_FPS = 16
+MINIMAX_H3_DURATION_DECIMALS = 4
 DEFAULT_WEB_SCROLL_PROMPT = {
     "url": "",
     "width": 368,
@@ -747,7 +748,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if not (1.0 <= scene_duration <= 30.0 and scene_duration == round(scene_duration, 1)):
+        if not (1.0 <= scene_duration <= 30.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
             write_log(
                 "minimax-h3_t2v_i2v scene duration must be between 1.0 and 30.0 seconds with at most 1 decimal: "
                 f"{scene_duration}"
@@ -987,7 +988,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if not (1.0 <= scene_duration <= 15.0 and scene_duration == round(scene_duration, 1)):
+        if not (1.0 <= scene_duration <= 15.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
             write_log(
                 "minimax-h3_i2v scene duration must be between 1.0 and 15.0 seconds with at most 1 decimal: "
                 f"{scene_duration}"
@@ -1375,8 +1376,8 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             if not image_names and not audio_names and not video_name:
                 raise ValueError('minimal satu reference image, audio, atau video wajib dipilih')
             duration = float(scene_meta.get('duration_seconds', 0))
-            if not (1.0 <= duration <= 15.0 and duration == round(duration, 1)):
-                raise ValueError('durasi R2V harus antara 1.0 dan 15.0 detik dengan maksimal 1 angka desimal')
+            if not (1.0 <= duration <= 15.0 and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)):
+                raise ValueError('durasi R2V harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal')
             image_paths = [os.path.join(scene_dir, name) for name in image_names]
             audio_paths = [os.path.join(scene_dir, name) for name in audio_names]
             video_path = os.path.join(scene_dir, video_name) if video_name else None
