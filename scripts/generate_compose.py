@@ -450,8 +450,8 @@ def retime_video_only_to_duration(src_path, dst_path, target_duration):
     )
 
 
-def build_song_audio_from_scenes(scene_dirs, out_path):
-    """Decode and concatenate one speech audio source per S2V/R2V scene."""
+def build_song_audio_from_scenes(scene_dirs, out_path, prefix_silence_duration=0.0):
+    """Build one continuous speech timeline, optionally prefixed with silence."""
     chunk_paths = []
     for scene_dir in scene_dirs:
         chunk_candidates = [
@@ -485,15 +485,40 @@ def build_song_audio_from_scenes(scene_dirs, out_path):
             f'{len(scene_dirs)} scene.'
         )
 
-    inputs = ' '.join(f'-i "{path}"' for path in chunk_paths)
-    streams = ''.join(
-        f'[{index}:a:0]aresample=44100:async=0:first_pts=0, '
-        f'asetpts=PTS-STARTPTS[a{index}];'
-        for index in range(len(chunk_paths))
-    )
-    concat_inputs = ''.join(f'[a{index}]' for index in range(len(chunk_paths)))
+    try:
+        prefix_silence_duration = max(0.0, float(prefix_silence_duration))
+    except (TypeError, ValueError):
+        prefix_silence_duration = 0.0
+
+    input_parts = []
+    streams = []
+    concat_labels = []
+    input_index = 0
+    if prefix_silence_duration > 0.001:
+        input_parts.append(
+            f'-f lavfi -t {prefix_silence_duration:.6f} '
+            '-i anullsrc=channel_layout=stereo:sample_rate=44100'
+        )
+        streams.append(
+            f'[{input_index}:a:0]aresample=44100:async=0:first_pts=0, '
+            f'asetpts=PTS-STARTPTS[a{input_index}];'
+        )
+        concat_labels.append(f'[a{input_index}]')
+        input_index += 1
+
+    input_parts.extend(f'-i "{path}"' for path in chunk_paths)
+    for chunk_index in range(len(chunk_paths)):
+        streams.append(
+            f'[{input_index}:a:0]aresample=44100:async=0:first_pts=0, '
+            f'asetpts=PTS-STARTPTS[a{input_index}];'
+        )
+        concat_labels.append(f'[a{input_index}]')
+        input_index += 1
+
+    inputs = ' '.join(input_parts)
+    concat_inputs = ''.join(concat_labels)
     filter_complex = (
-        f'{streams}{concat_inputs}concat=n={len(chunk_paths)}:v=0:a=1,'
+        f'{"".join(streams)}{concat_inputs}concat=n={len(concat_labels)}:v=0:a=1,'
         'aresample=44100:async=0:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[a]'
     )
     run(
@@ -1141,9 +1166,22 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
             # its original speech chunk before the video-only concat, so a
             # video frame can never insert silence at a scene boundary.
             song_audio = os.path.join(td, 'song_audio_master.wav')
-            chunk_paths = build_song_audio_from_scenes(song_scene_dirs, song_audio)
+            cover_duration = ffprobe_duration(norm_paths[0]) if cover_clip and norm_paths else 0.0
+            scene_norm_paths = norm_paths
+            if cover_clip and norm_paths:
+                # The cover is a real first timeline segment. Its matching
+                # audio is silence, so scene 1 remains aligned to its own
+                # speech chunk and no final scene is dropped by zip().
+                scene_norm_paths = norm_paths[1:]
+            chunk_paths = build_song_audio_from_scenes(
+                song_scene_dirs,
+                song_audio,
+                prefix_silence_duration=cover_duration,
+            )
             song_video_paths = []
-            for index, (video_path, chunk_path) in enumerate(zip(norm_paths, chunk_paths)):
+            if cover_clip and norm_paths:
+                song_video_paths.append(norm_paths[0])
+            for index, (video_path, chunk_path) in enumerate(zip(scene_norm_paths, chunk_paths)):
                 retimed_path = os.path.join(td, f'song_video_{index:03d}.mp4')
                 retime_video_only_to_duration(
                     video_path,
