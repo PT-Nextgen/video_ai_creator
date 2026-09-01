@@ -2,9 +2,14 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import unicodedata
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -21,6 +26,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 DEFAULT_MODEL_SIZE = "base"
 TAG_PATTERN = re.compile(r"\[[^\]]+\]")
+ARABIC_UNICODE_NAME = "ARABIC"
 
 
 def list_scene_dirs():
@@ -136,6 +142,29 @@ def normalize_caption_text(text: str) -> str:
     return text.strip()
 
 
+def subtitle_text_direction(text: str) -> str:
+    """Wrap Arabic/Hebrew subtitle text in an explicit RTL embedding.
+
+    SRT stores Unicode text in logical order, but subtitle renderers can make
+    different decisions when a line contains Arabic, diacritics, punctuation,
+    or numbers. The embedding is invisible and keeps the stored text intact
+    while forcing the renderer to lay out the line as RTL.
+    """
+    normalized = normalize_caption_text(text)
+    if not normalized:
+        return normalized
+    if any(ARABIC_UNICODE_NAME in unicodedata.name(char, "") for char in normalized):
+        # RLM anchors the line when punctuation/numbers or a neutral glyph
+        # appears at either edge; RLE/PDF keeps the whole caption in one RTL
+        # embedding without changing the logical Arabic text.
+        return f"\u200f\u202b{normalized}\u202c\u200f"
+    return normalized
+
+
+def contains_arabic_text(text: str) -> bool:
+    return any(ARABIC_UNICODE_NAME in unicodedata.name(char, "") for char in str(text or ""))
+
+
 def strip_audio_tags(text: str) -> str:
     return normalize_caption_text(TAG_PATTERN.sub("", text))
 
@@ -209,6 +238,7 @@ def write_srt(entries, output_path: Path):
         text = normalize_caption_text(raw_text)
         if not text:
             continue
+        text = subtitle_text_direction(text)
         start = max(0.0, float(start_seconds))
         end = max(start + 0.05, float(end_seconds))
         lines.append(
@@ -254,6 +284,134 @@ def burn_subtitles(video_path: Path, srt_path: Path, output_path: Path):
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "ffmpeg burn subtitles failed")
+
+
+def _arabic_font(size: int):
+    for font_path in (
+        Path(r"C:\Windows\Fonts\tahoma.ttf"),
+        Path(r"C:\Windows\Fonts\arial.ttf"),
+        Path(r"C:\Windows\Fonts\segoeui.ttf"),
+    ):
+        if font_path.exists():
+            return ImageFont.truetype(str(font_path), size)
+    return ImageFont.load_default()
+
+
+def _arabic_caption_overlay(text: str, width: int, height: int, output_path: Path):
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    font_size = max(12, round(width * 0.045))
+    margin = max(12, round(width * 0.06))
+    while font_size > 10:
+        font = _arabic_font(font_size)
+        bbox = draw.textbbox(
+            (0, 0),
+            text,
+            font=font,
+            direction="rtl",
+            language="ar",
+            stroke_width=max(1, round(font_size * 0.12)),
+        )
+        if bbox[2] - bbox[0] <= width - (margin * 2):
+            break
+        font_size -= 1
+    stroke_width = max(1, round(font_size * 0.12))
+    draw.text(
+        (width // 2, height - max(24, round(height * 0.09))),
+        text,
+        font=font,
+        fill=(255, 255, 255, 255),
+        stroke_width=stroke_width,
+        stroke_fill=(0, 0, 0, 255),
+        anchor="mm",
+        direction="rtl",
+        language="ar",
+    )
+    image.save(output_path, format="PNG")
+
+
+def _overlay_arabic_caption_entries(video_path: Path, entries, output_path: Path):
+    """Overlay only the supplied Arabic entries after Pillow RTL shaping."""
+    probe_cmd = [
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(video_path),
+    ]
+    probe = subprocess.run(probe_cmd, capture_output=True, text=True, check=False)
+    if probe.returncode != 0:
+        raise RuntimeError(probe.stderr.strip() or "ffprobe video dimensions failed")
+    try:
+        width, height = [int(value) for value in probe.stdout.strip().split("x", 1)]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Dimensi video tidak valid: {probe.stdout.strip()}") from exc
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="caption_rtl_", dir=str(output_path.parent)))
+    try:
+        overlay_files = []
+        for index, start, end, raw_text in entries:
+            text = normalize_caption_text(raw_text)
+            if not text:
+                continue
+            overlay_path = temp_dir / f"overlay_{index:04d}.png"
+            _arabic_caption_overlay(text, width, height, overlay_path)
+            overlay_files.append((overlay_path, float(start), float(end)))
+        if not overlay_files:
+            raise RuntimeError("Caption Arab tidak menghasilkan overlay.")
+
+        cmd = ["ffmpeg", "-y", "-i", str(video_path)]
+        for overlay_path, _, _ in overlay_files:
+            cmd.extend(["-loop", "1", "-i", str(overlay_path)])
+        filters = []
+        current = "0:v"
+        for overlay_index, (_, start, end) in enumerate(overlay_files, start=1):
+            next_label = f"v{overlay_index}"
+            filters.append(
+                f"[{current}][{overlay_index}:v]overlay=0:0:enable='between(t,{start:.6f},{end:.6f})'[{next_label}]"
+            )
+            current = next_label
+        cmd.extend([
+            "-filter_complex", ";".join(filters),
+            "-map", f"[{current}]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "copy", "-shortest", str(output_path),
+        ])
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "ffmpeg Arabic caption overlay failed")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def burn_arabic_subtitles(video_path: Path, entries, output_path: Path):
+    """Burn a batch containing only Arabic captions."""
+    _overlay_arabic_caption_entries(video_path, entries, output_path)
+
+
+def burn_mixed_subtitles(video_path: Path, entries, output_path: Path):
+    """Render Arabic entries with Pillow and non-Arabic entries with SRT."""
+    arabic_entries = []
+    non_arabic_entries = []
+    for entry in entries:
+        if contains_arabic_text(entry[3]):
+            arabic_entries.append(entry)
+        else:
+            non_arabic_entries.append(entry)
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="caption_mixed_", dir=str(output_path.parent)))
+    try:
+        base_video = video_path
+        if non_arabic_entries:
+            non_arabic_srt = temp_dir / "non_arabic.srt"
+            write_srt(non_arabic_entries, non_arabic_srt)
+            base_video = temp_dir / "non_arabic_captioned.mp4"
+            burn_subtitles(video_path, non_arabic_srt, base_video)
+        if arabic_entries:
+            _overlay_arabic_caption_entries(base_video, arabic_entries, output_path)
+        elif base_video != video_path:
+            shutil.copyfile(base_video, output_path)
+        else:
+            raise RuntimeError("Caption campuran tidak menghasilkan output.")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def transcribe_audio(audio_path: Path, model_size: str):
@@ -326,7 +484,13 @@ def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = 
             output_path = video_path.with_name(f"{video_path.stem}.__caption_tmp__.mp4")
         else:
             output_path = video_path.with_name(f"{video_path.stem}_captioned.mp4")
-        burn_subtitles(video_path, srt_path, output_path)
+        arabic_entries = [entry for entry in caption_entries if contains_arabic_text(entry[3])]
+        if arabic_entries and len(arabic_entries) == len(caption_entries):
+            burn_arabic_subtitles(video_path, caption_entries, output_path)
+        elif arabic_entries:
+            burn_mixed_subtitles(video_path, caption_entries, output_path)
+        else:
+            burn_subtitles(video_path, srt_path, output_path)
         if not output_path.exists() or output_path.stat().st_size <= 0:
             write_log(f"Video caption hasil burn kosong atau gagal dibuat: {output_path}", level="error")
             return False

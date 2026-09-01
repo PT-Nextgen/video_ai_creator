@@ -1264,7 +1264,18 @@ Fungsi:
 Perilaku:
 - caption berjalan otomatis setelah video scene selesai dibuat jika `project_settings.caption.generate_caption=true`
 - sumber teks caption selalu dari `voice_text`
-- file `.caption.srt` disimpan di samping video yang dicaption
+- `faster-whisper` hanya membantu menentukan waktu caption; isi teks tidak diambil dari hasil transkripsi
+- file `.caption.srt` hanya dipakai sebagai file sementara dan dihapus setelah proses selesai
+
+### Caption bahasa Arab
+
+- setiap entry caption diperiksa berdasarkan karakter Unicode Arab
+- teks Arab dipertahankan dalam urutan logis persis seperti sumbernya; aplikasi tidak membalik karakter atau urutan kata secara manual
+- entry Arab dirender menggunakan Pillow dengan Arabic shaping dan arah `rtl`, kemudian ditempel sebagai overlay ke video
+- entry non-Arab tetap memakai jalur subtitle SRT/libass yang sudah ada
+- jika satu video memiliki entry Arab dan non-Arab, pemilihan renderer dilakukan per-entry; renderer khusus Arab tidak diterapkan ke teks non-Arab
+- teks campuran Arab dengan tanda baca atau angka tetap diberi anchor RTL agar urutan bacanya stabil
+- scene yang sudah memiliki video caption lama harus diproses ulang agar perubahan renderer Arab diterapkan
 
 Catatan:
 - `faster-whisper` akan mengunduh model saat pertama kali dipakai

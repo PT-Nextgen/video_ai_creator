@@ -116,6 +116,7 @@ SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
 UPSCALE_VIDEO_SCRIPT = ROOT / "scripts" / "upscale_video.py"
+GAN_UPSCALE_SCENES_SCRIPT = ROOT / "scripts" / "upscale_scenes_gan.py"
 COVER_IMAGE_SCRIPT = ROOT / "scripts" / "generate_cover_image.py"
 AGENTIC_SCRIPT = ROOT / "agentic" / "agentic_cli.py"
 BACKUP_SCRIPT = ROOT / "backup_production.py"
@@ -138,7 +139,7 @@ DEFAULT_SCENE_META = {
     "scene_title": "", "scene_description": "", "duration_seconds": 10, "voice_text": "",
     "voice_character": DEFAULT_SCENE_VOICE_KEY,
     "sound_prompt": "", "sound_volume": "",
-    "scene_type": "wan22_i2v",
+    "scene_type": "wan22_i2v", "upscale": False,
 }
 DEFAULT_WEB_SCROLL_PROMPT = {
     "url": "",
@@ -2870,6 +2871,8 @@ class SceneEditorWindow(QMainWindow):
         self.sound_prompt_input.setFixedHeight(80)
         self.sound_prompt_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.sound_volume_input = QLineEdit()
+        self.scene_upscale_input = QCheckBox("Upscale")
+        self.scene_upscale_input.setChecked(False)
         self.z_positive_input = QTextEdit()
         self.z_model_input = QComboBox()
         for model_key, label in IMAGE_MODEL_OPTIONS:
@@ -3044,6 +3047,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_s2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_s2v_lora_strength_input = QLineEdit()
         self.minimax_h3_s2v_lora_strength_2_input = QLineEdit()
+        self.minimax_h3_s2v_replace_speech_input = QCheckBox("Ganti Speech")
+        self.minimax_h3_s2v_replace_speech_input.setChecked(False)
         self.minimax_h3_s2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.s2v_generate_positive_button = QToolButton()
         self.s2v_generate_positive_button.setText("Buat Prompt")
@@ -3280,6 +3285,8 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_r2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
+            self.minimax_h3_s2v_replace_speech_input.checkStateChanged,
+            self.scene_upscale_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
             self.web_size_input.currentTextChanged, self.web_duration_input.valueChanged, self.web_speed_input.valueChanged,
             self.image_pan_size_input.currentTextChanged,
@@ -3414,6 +3421,7 @@ class SceneEditorWindow(QMainWindow):
             ("Pilihan Suara Scene", self.scene_voice_character_input),
             ("Teks Suara", self.voice_text_input), ("Prompt Suara Latar", self.sound_prompt_input),
             ("Volume Suara Latar", self.sound_volume_input),
+            ("", self.scene_upscale_input),
         ]:
             meta_layout.addRow(label, widget)
         tabs.addTab(self.meta_tab, "Meta")
@@ -3623,6 +3631,7 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_cfg_label = QLabel("CFG")
         s2v_layout.addWidget(self.s2v_cfg_label, 3, 0)
         s2v_layout.addWidget(self.s2v_cfg_input, 3, 1)
+        s2v_layout.addWidget(self.minimax_h3_s2v_replace_speech_input, 3, 2)
         s2v_layout.addWidget(self.copy_minimax_h3_s2v_variations_button, 3, 3, Qt.AlignLeft)
         s2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
         s2v_layout.addWidget(self.s2v_positive_input, 4, 1, 1, 3)
@@ -3901,6 +3910,7 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_s2v_lora_name_2_input,
             self.minimax_h3_s2v_lora_strength_2_label,
             self.minimax_h3_s2v_lora_strength_2_input,
+            self.minimax_h3_s2v_replace_speech_input,
             self.copy_minimax_h3_s2v_variations_button,
         ):
             widget.setVisible(is_minimax_h3_s2v)
@@ -3951,13 +3961,13 @@ class SceneEditorWindow(QMainWindow):
         self.runtime_action_group_widget = self.build_runtime_action_group()
         self.toolbar.addWidget(self.project_action_group_widget)
         self.toolbar.addWidget(self.scene_action_group_widget)
-        self.toolbar.addWidget(self.edit_prompt_action_group_widget)
         self.toolbar.addWidget(self.variation_action_group_widget)
         self.toolbar.addWidget(self.run_action_group_widget)
         self.toolbar.addWidget(self.audio_action_group_widget)
-        self.toolbar.addWidget(self.backup_action_group_widget)
         self.toolbar.addWidget(self.compose_action_group_widget)
         self.toolbar.addWidget(self.runtime_action_group_widget)
+        self.toolbar.addWidget(self.edit_prompt_action_group_widget)
+        self.toolbar.addWidget(self.backup_action_group_widget)
         self._apply_scene_view_mode()
 
     def build_project_action_group(self):
@@ -4068,7 +4078,7 @@ class SceneEditorWindow(QMainWindow):
         title.setStyleSheet("font-weight: 600; color: #9a3412;")
         layout.addWidget(title)
 
-        self.variation_view_input.setMinimumWidth(80)
+        self.variation_view_input.setFixedWidth(108)
         self.variation_view_input.addItem("Root Scene", "")
         self.variation_view_input.setEnabled(False)
         self.variation_view_input.setToolTip("Pilih root scene atau salah satu folder variasi untuk dilihat.")
@@ -4365,7 +4375,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=s2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "replace_speech", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 S2V",
         )
@@ -5202,6 +5212,13 @@ class SceneEditorWindow(QMainWindow):
             button.clicked.connect(handler)
             layout.addWidget(button)
 
+        upscale_button = QToolButton(frame)
+        upscale_button.setText("2x")
+        upscale_button.setToolTip("Upscale video output dalam setiap scene 2x")
+        upscale_button.setStatusTip(upscale_button.toolTip())
+        upscale_button.clicked.connect(self.upscale_marked_scene_videos)
+        layout.addWidget(upscale_button)
+
         add_button("Gabungkan video dan audio untuk semua adegan.", QStyle.SP_DialogYesButton, self.compose_all_scenes)
         return frame
 
@@ -5987,6 +6004,7 @@ class SceneEditorWindow(QMainWindow):
             self.voice_text_input.setPlainText(str(meta.get("voice_text", "")))
             self.sound_prompt_input.setPlainText(str(meta.get("sound_prompt", "")))
             self.sound_volume_input.setText(str(meta.get("sound_volume", "")))
+            self.scene_upscale_input.setChecked(bool(meta.get("upscale", False)))
             z_width = int(z_prompt.get("width", DEFAULT_Z_IMAGE_PROMPT["width"]))
             z_height = int(z_prompt.get("height", DEFAULT_Z_IMAGE_PROMPT["height"]))
             model_key = get_z_image_model_key(z_prompt)
@@ -6192,6 +6210,9 @@ class SceneEditorWindow(QMainWindow):
                         break
                 self.s2v_size_input.setCurrentIndex(max(index, 0))
             self.s2v_cfg_input.setValue(float(s2v_prompt.get("cfg", DEFAULT_WAN22_S2V_PROMPT["cfg"])))
+            self.minimax_h3_s2v_replace_speech_input.setChecked(
+                bool(s2v_prompt.get("replace_speech", False))
+            )
             self._load_h3_cache_fields(
                 self.minimax_h3_s2v_h3_cache_inputs,
                 s2v_prompt,
@@ -6550,6 +6571,7 @@ class SceneEditorWindow(QMainWindow):
             "sound_prompt": self.sound_prompt_input.toPlainText().strip(),
             "sound_volume": self.sound_volume_input.text().strip(),
             "scene_type": self.scene_type_combo.currentText().strip(),
+            "upscale": bool(self.scene_upscale_input.isChecked()),
         }
         z_prompt = {
             "image_model": str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO),
@@ -6641,6 +6663,7 @@ class SceneEditorWindow(QMainWindow):
                 "lora_strength": s2v_lora_strength,
                 "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
                 "lora_strength_2": s2v_lora_strength_2,
+                "replace_speech": self.minimax_h3_s2v_replace_speech_input.isChecked(),
                 "h3_cache_enabled": self.minimax_h3_s2v_h3_cache_inputs["enabled"].isChecked(),
                 "h3_cache": self._read_h3_cache_fields(self.minimax_h3_s2v_h3_cache_inputs, "MiniMax H3 S2V"),
             }
@@ -8861,6 +8884,34 @@ class SceneEditorWindow(QMainWindow):
             args,
             "Menggabungkan video dan audio untuk semua adegan",
             watch_dirs=[*self.list_scene_dirs_current(), self.project_dir() / "combined" if self.project_dir() else API_PRODUCTION / "combined", MUSIC_DIR],
+        )
+
+    def upscale_marked_scene_videos(self):
+        if not self.ensure_project_selected():
+            return
+        if self.is_viewing_variation():
+            QMessageBox.information(
+                self,
+                "Mode Lihat Variasi",
+                "Upscale semua scene hanya bisa dijalankan saat melihat Root Scene.",
+            )
+            return
+        scene_dirs = self.list_scene_dirs_current()
+        if not scene_dirs:
+            QMessageBox.information(self, "Belum Ada Scene", "Project belum memiliki scene.")
+            return
+        if not self.confirm_run_action(
+            "Upscale Scene 2x",
+            "Upscale video output 2x untuk semua root scene yang mencentang Upscale?",
+        ):
+            return
+        if self.current_scene_dir and not self.save_current_scene(silent=True, reload_list=False):
+            return
+        self.start_process(
+            GAN_UPSCALE_SCENES_SCRIPT,
+            ["--server", self.comfyui_server_address(), "--project", self.current_project_name],
+            f"Upscale GAN 2x untuk project {self.current_project_name}",
+            watch_dirs=scene_dirs,
         )
 
     def upscale_latest_scene_video(self):

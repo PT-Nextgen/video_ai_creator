@@ -59,7 +59,7 @@ DEFAULT_S2V_ID_PROMPT = {
     "subject_definitions": "<Picture 1> adalah bingkai awal dan referensi visual untuk seluruh video. <Subject 1> adalah wanita dalam <Picture 1>. <Audio 1> adalah rekaman ucapan yang harus digunakan secara utuh untuk suara <Subject 1> (S1).",
     "summary": "[keyframe completion + audio reuse] Buat avatar berbicara sederhana dari <Picture 1>, dengan <Subject 1> mengucapkan audio dari <Audio 1> secara sinkron.",
     "retention_analysis": "<Picture 1> (bingkai awal dan komposisi): fully_preserved - pertahankan tampilan, pose, pencahayaan, latar belakang, dan framing. <Subject 1> (sepanjang video): fully_preserved - pertahankan identitas, wajah, pakaian, dan posisi tubuh. <Audio 1>: fully_copy - gunakan rekaman ucapan lengkap tanpa mengubah isi atau waktunya.",
-    "detailed_description": "[Shot 1] Video dimulai tepat dari <Picture 1>. Kamera terkunci dan seluruh komposisi tetap diam. <Subject 1> (S1) tetap pada pose yang sama dan hanya menggerakkan bibir serta mulut seperlunya agar sinkron secara alami dengan ucapan dari <Audio 1>. Setelah seluruh ucapan dalam <Audio 1> selesai, <Subject 1> (S1) berhenti menggerakkan bibir dan tetap diam sampai video berakhir. Jangan tambahkan gerakan kepala, tubuh, tangan, kamera, latar belakang, atau objek lain.",
+    "detailed_description": "[Shot 1] Video dimulai tepat dari <Picture 1>. Kamera terkunci dan berada pada jarak yang sama dari <Subject 1> (S1) sepanjang durasi video, dan seluruh komposisi tetap diam. <Subject 1> (S1) tetap pada pose yang sama dan hanya menggerakkan bibir serta mulut seperlunya agar sinkron secara alami dengan ucapan dari <Audio 1>. Setelah seluruh ucapan dalam <Audio 1> selesai, <Subject 1> (S1) berhenti menggerakkan bibir dan tetap diam sampai video berakhir. Jangan tambahkan gerakan kepala, tubuh, tangan, kamera, latar belakang, atau objek lain.",
     "overall_soundscape": "Gunakan hanya rekaman suara asli dari <Audio 1>, tersinkron dengan gerakan bibir <Subject 1> (S1). Setelah <Audio 1> selesai, pertahankan keheningan sampai video berakhir. Jangan tambahkan ambience atau efek suara.",
     "non_diegetic_music": "N/A",
 }
@@ -68,7 +68,7 @@ DEFAULT_S2V_EN_PROMPT = {
     "subject_definitions": "<Picture 1> is the initial frame and visual reference for the entire video. <Subject 1> is the woman in <Picture 1>. <Audio 1> is the complete speech recording that must be used for <Subject 1> (S1).",
     "summary": "[keyframe completion + audio reuse] Create a simple talking avatar from <Picture 1>, with <Subject 1> speaking the audio from <Audio 1> in sync.",
     "retention_analysis": "<Picture 1> (initial frame and composition): fully_preserved - preserve the appearance, pose, lighting, background, and framing. <Subject 1> (throughout the video): fully_preserved - preserve her identity, face, clothing, and body position. <Audio 1>: fully_copy - use the complete speech recording without changing its content or timing.",
-    "detailed_description": "[Shot 1] The video begins exactly from <Picture 1>. The camera is locked and the entire composition remains still. <Subject 1> (S1) stays in the same pose and moves only her lips and mouth as needed to synchronize naturally with the speech from <Audio 1>. After all speech in <Audio 1> has finished, <Subject 1> (S1) stops moving her lips and remains completely still until the video ends. Do not add head, body, hand, camera, background, or object movement.",
+    "detailed_description": "[Shot 1] The video begins exactly from <Picture 1>. The camera is locked and remains at the same distance from <Subject 1> (S1) throughout the duration of the video, and the entire composition remains still. <Subject 1> (S1) stays in the same pose and moves only her lips and mouth as needed to synchronize naturally with the speech from <Audio 1>. After all speech in <Audio 1> has finished, <Subject 1> (S1) stops moving her lips and remains completely still until the video ends. Do not add head, body, hand, camera, background, or object movement.",
     "overall_soundscape": "Use only the original voice recording from <Audio 1>, synchronized with the lip movement of <Subject 1> (S1). After <Audio 1> finishes, maintain silence until the video ends. Do not add ambience or sound effects.",
     "non_diegetic_music": "N/A",
 }
@@ -86,6 +86,7 @@ DEFAULT_PROMPT = {
     "lora_strength": 0,
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
+    "replace_speech": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }

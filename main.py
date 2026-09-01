@@ -466,6 +466,48 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         imgs = sorted(list({os.path.abspath(i): i for i in imgs}.values()))
         return imgs
 
+    def _replace_video_audio(video_path: str, speech_path: str) -> str:
+        """Replace all embedded audio with the selected scene speech audio."""
+        video_path = str(video_path)
+        speech_path = str(speech_path)
+        if not os.path.isfile(video_path):
+            raise FileNotFoundError(video_path)
+        if not os.path.isfile(speech_path):
+            raise FileNotFoundError(speech_path)
+
+        video_duration = ffprobe_duration(video_path)
+        speech_duration = ffprobe_duration(speech_path)
+        if video_duration <= 0 or speech_duration <= 0:
+            raise ValueError(
+                f"Durasi media tidak valid: video={video_duration:.3f}s, speech={speech_duration:.3f}s"
+            )
+        if abs(video_duration - speech_duration) > 0.25:
+            write_log(
+                f"[MiniMax][S2V] Peringatan durasi saat ganti speech: "
+                f"video={video_duration:.3f}s, speech={speech_duration:.3f}s"
+            )
+
+        root, extension = os.path.splitext(video_path)
+        temp_path = f"{root}.__replace_speech_tmp__{extension or '.mp4'}"
+        try:
+            run_ffmpeg(
+                f'ffmpeg -y -i "{video_path}" -i "{speech_path}" '
+                f'-map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 192k '
+                f'-movflags +faststart "{temp_path}"'
+            )
+            if not os.path.isfile(temp_path) or os.path.getsize(temp_path) == 0:
+                raise RuntimeError(f"File hasil mux kosong: {temp_path}")
+            if not ffprobe_has_audio(temp_path):
+                raise RuntimeError(f"Audio tidak ditemukan pada hasil mux: {temp_path}")
+            os.replace(temp_path, video_path)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+        return video_path
+
     def _find_latest_root_image(sd):
         patterns = ['*.png', '*.jpg', '*.jpeg', '*.webp']
         imgs = []
@@ -1527,6 +1569,17 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
             write_log(f"Downloaded file missing or empty: {video_out_path}")
             return False
+        if bool(s2v_prompt.get("replace_speech", False)):
+            try:
+                write_log(
+                    f"[MiniMax][S2V] Ganti Speech aktif; mengganti audio bawaan "
+                    f"dengan {speech_path}"
+                )
+                _replace_video_audio(video_out_path, speech_path)
+                write_log(f"[MiniMax][S2V] Ganti Speech berhasil: {video_out_path}")
+            except Exception as e:
+                write_log(f"[MiniMax][S2V] Ganti Speech gagal untuk {scene_dir}: {e}")
+                return False
         return _finalize_scene_success(
             video_out_path,
             is_s2v=True,
