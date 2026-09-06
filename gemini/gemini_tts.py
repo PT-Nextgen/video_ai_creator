@@ -22,6 +22,8 @@ GEMINI_VOICE_NAME_BY_CHARACTER = {
     "nilasari": "Kore",
     "dany_saputra": "Charon",
     "dakocan": "Puck",
+    "arkana": "Fenrir",
+    "arkana_arab": "Fenrir",
     "candy": "Leda",
     "lily": "Leda",
     "lily_ngaji": "Leda",

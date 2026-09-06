@@ -5883,7 +5883,11 @@ class SceneEditorWindow(QMainWindow):
                 minimax_h3_t2v_prompt,
                 minimax_h3_i2v_prompt,
             )
-            label = scene_dir.name if not issues else f"{scene_dir.name} ({len(issues)} masalah)"
+            scene_number = scene_dir.name.removeprefix("scene_")
+            scene_title = str(meta.get("scene_title", "")).strip() or scene_dir.name
+            label = f"{scene_number}. {scene_title}"
+            if issues:
+                label += f" ({len(issues)} masalah)"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, str(scene_dir))
             item.setToolTip("\n".join(issues) if issues else "Siap")

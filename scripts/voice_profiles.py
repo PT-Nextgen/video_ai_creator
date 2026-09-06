@@ -18,6 +18,8 @@ SCENE_VOICE_OPTIONS = [
     ("Nilasari (media sosial)", "nilasari"),
     ("Dany Saputra (narasi)", "dany_saputra"),
     ("Dakocan (media sosial)", "dakocan"),
+    ("Arkana (ustad religius)", "arkana"),
+    ("Arkana - Arab (tilawah)", "arkana_arab"),
     ("Candy (anak perempuan bersemangat)", "candy"),
     ("Lily (anak perempuan kalem)", "lily"),
     ("Lily - Ngaji", "lily_ngaji"),
@@ -49,6 +51,18 @@ VOICE_CHARACTER_MAP = {
         "profile_file": "Dakocan.txt",
         "elevenlabs_voice_id": "plgKUYgnlZ1DCNh54DwJ",
         "gemini_profile_text": "An Indonesian young adult male voice with casual tone. Applicable for podcast, casual voice over and storytelling.",
+    },
+    "arkana": {
+        "display_name": "Arkana",
+        "profile_file": "Arkana.txt",
+        "elevenlabs_voice_id": "plgKUYgnlZ1DCNh54DwJ",
+        "gemini_profile_text": "Clearly youthful 20-year-old Indonesian male voice with a noticeably high male register, light bright timbre, youthful energy, and clear forward resonance. Sound like an approachable young ustad, not an older man: lively, fresh, expressive, conversational, and naturally confident. Speak fast and fluidly with energetic pacing, crisp consonants, short natural pauses, and a melodic, persuasive, narrative delivery. Keep the voice masculine, youthful, warm, respectful, and emotionally engaging without sounding childish, heavy, deep, slow, solemn, or feminine. Do not sing.",
+    },
+    "arkana_arab": {
+        "display_name": "Arkana - Arab",
+        "profile_file": "Arkana Arab.txt",
+        "elevenlabs_voice_id": "plgKUYgnlZ1DCNh54DwJ",
+        "gemini_profile_text": "Clearly youthful 20-year-old Indonesian male voice with a noticeably high, bright, clear, and warm male register. Preserve Arkana's youthful, melodic, masculine timbre while reciting Arabic Quran verses and duas as a respectful, beautiful, gentle murattal. Use accurate Arabic makhraj, tajwid, harakah, shaddah, sukun, hamzah, tanwin, grammatical endings, short vowels, long vowels, natural madd, and waqaf. Keep the recitation flowing and slightly fast with short natural pauses between ayahs, never like ordinary spoken narration. Recite exactly the Arabic text provided without adding, removing, translating, paraphrasing, repeating, guessing, or silently correcting words. No instruments, background music, harmony, chorus, echo, or sound effects.",
     },
     "candy": {
         "display_name": "Candy",

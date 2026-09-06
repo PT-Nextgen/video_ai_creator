@@ -315,8 +315,8 @@ Catatan voice dan caption:
   - dipakai sebagai sumber TTS
   - dipakai juga sebagai sumber caption
 - `voice_character`
-  - dipilih per scene dari 8 karakter suara:
-    - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `candy`, `lily`, `finn`, `kevin`
+  - dipilih per scene dari karakter suara:
+    - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `arkana`, `arkana_arab`, `candy`, `lily`, `lily_ngaji`, `lily_arab`, `finn`, `kevin`
 - prompt lain seperti `sound_prompt`, `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
 - konfigurasi provider voice bersifat global per project di `project_settings.json.voice`:
   - `voice_provider=gemini` -> model runtime fixed `gemini-3.1-flash-tts-preview` (language `id-ID`)
@@ -1134,9 +1134,9 @@ Fungsi:
 - jika provider `gemini`:
   - memakai Gemini API native TTS
   - model fixed `gemini-3.1-flash-tts-preview`
-  - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Candy/Lily/Finn/Kevin)
+  - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Arkana/Arkana Arab/Candy/Lily/Finn/Kevin)
   - profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
-    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Candy.txt`, `Lily.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
+    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Arkana.txt`, `Arkana Arab.txt`, `Candy.txt`, `Lily.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
   - format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
   - `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
   - jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
