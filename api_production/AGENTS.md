@@ -31,7 +31,7 @@ Opsi yang umum dipakai:
 Contoh project dengan konfigurasi lengkap:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.8-27b-uc-q4_k_m --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
 ```
 
 ## 2. Membuat Scene

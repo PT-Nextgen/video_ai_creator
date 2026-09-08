@@ -21,7 +21,7 @@ DEFAULT_PROJECT_SETTINGS = {
     },
     "prompt_generation": {
         "provider": "llama.cpp",
-        "model": "qwen3.6-35b-a3b-uc-q4_k_m",
+        "model": "qwen3.8-27b-uc-q4_k_m",
         "host": "nextgenserver",
         "port": 8080,
     },

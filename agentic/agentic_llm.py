@@ -27,6 +27,7 @@ LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
 LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
+LOCAL_AGENTIC_REASONING_EFFORT = "xhigh"
 
 
 # ---------------------------------------------------------------------------
@@ -103,75 +104,48 @@ def call_llama_cpp_text(
     timeout: int = LOCAL_LLM_TIMEOUT_SECONDS,
     response_format: str | dict | None = None,
 ) -> str:
-    """Call llama.cpp text API with OpenAI-compatible fallback endpoints."""
+    """Call llama.cpp through its OpenAI-compatible chat completions endpoint."""
     ensure_llama(reason="agentic LLM generation")
     host = str(host or "").strip() or "nextgenserver"
     base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
     server_base_url = f"{base_url.rstrip('/')}:{int(port)}"
-    attempts = [
-        (
-            f"{server_base_url}/v1/chat/completions",
-            {
-                "model": str(model_name or "").strip(),
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                **(
-                    {"response_format": {"type": "json_object"}}
-                    if response_format
-                    else {}
-                ),
-            },
-            _extract_best_openai_compatible_text,
+    url = f"{server_base_url}/v1/chat/completions"
+    payload = {
+        "model": str(model_name or "").strip(),
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "reasoning_effort": LOCAL_AGENTIC_REASONING_EFFORT,
+        **(
+            {"response_format": {"type": "json_object"}}
+            if response_format
+            else {}
         ),
-        (
-            f"{server_base_url}/completion",
-            {
-                "prompt": prompt,
-            },
-            _extract_best_llama_cpp_completion_text,
-        ),
-        (
-            f"{server_base_url}/api/generate",
-            {
-                "model": str(model_name or "").strip(),
-                "prompt": prompt,
-                "stream": False,
-                **({"format": response_format} if response_format else {}),
-            },
-            _extract_best_ollama_text,
-        ),
-    ]
+    }
     start_time = time.perf_counter()
-    errors: list[str] = []
     prefer_json = bool(response_format)
-    for url, payload, extractor in attempts:
-        try:
-            resp = requests.post(url, json=payload, timeout=timeout)
-        except requests.RequestException as exc:
-            errors.append(f"{url} -> {exc}")
-            continue
+    try:
+        resp = requests.post(url, json=payload, timeout=timeout)
         if resp.status_code >= 400:
-            errors.append(f"{url} -> HTTP {resp.status_code}: {resp.text[:240]}")
-            continue
+            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:400]}")
         result = resp.json()
-        text = extractor(result, prefer_json=prefer_json)
+        text = _extract_best_openai_compatible_text(result, prefer_json=prefer_json)
         if not text:
-            errors.append(f"{url} -> response tanpa teks")
-            continue
+            raise RuntimeError("response tanpa teks")
+    except (requests.RequestException, ValueError, RuntimeError) as exc:
         elapsed = time.perf_counter() - start_time
         write_log(
-            f"[{LOCAL_PROMPT_PROVIDER}] text generation sukses | model={model_name} | host={host} | "
-            f"port={port} | elapsed={elapsed:.3f}s | endpoint={url}"
+            f"[{LOCAL_PROMPT_PROVIDER}] text generation gagal | model={model_name} | host={host} | port={port} | "
+            f"elapsed={elapsed:.3f}s | endpoint={url} | reasoning_effort={LOCAL_AGENTIC_REASONING_EFFORT} | error={exc}",
+            level="error",
         )
-        return _clean_text(text)
+        raise RuntimeError(f"llama.cpp error: {url} -> {exc}") from exc
 
     elapsed = time.perf_counter() - start_time
     write_log(
-        f"[{LOCAL_PROMPT_PROVIDER}] text generation gagal | model={model_name} | host={host} | port={port} | "
-        f"elapsed={elapsed:.3f}s | error={' || '.join(errors[:3])}",
-        level="error",
+        f"[{LOCAL_PROMPT_PROVIDER}] text generation sukses | model={model_name} | host={host} | "
+        f"port={port} | elapsed={elapsed:.3f}s | endpoint={url} | reasoning_effort={LOCAL_AGENTIC_REASONING_EFFORT}"
     )
-    raise RuntimeError(f"llama.cpp error: {' || '.join(errors[:3])}")
+    return _clean_text(text)
 
 
 def _extract_text_from_gemini_response(response_json: dict) -> str:
@@ -216,36 +190,6 @@ def _extract_json_text_candidate(text: str) -> str:
     return ""
 
 
-def _extract_best_ollama_text(result: dict, prefer_json: bool = False) -> str:
-    candidates: list[str] = []
-
-    def add_candidate(value):
-        if not isinstance(value, str):
-            return
-        text = _clean_text(value)
-        if text and text not in candidates:
-            candidates.append(text)
-
-    add_candidate(result.get("response", ""))
-    message = result.get("message")
-    if isinstance(message, dict):
-        add_candidate(message.get("content", ""))
-    add_candidate(result.get("thinking", ""))
-
-    response_text = _clean_text(result.get("response", ""))
-    thinking_text = _clean_text(result.get("thinking", ""))
-    if response_text and thinking_text:
-        add_candidate(f"{response_text}\n{thinking_text}")
-        add_candidate(f"{thinking_text}\n{response_text}")
-
-    if prefer_json:
-        for candidate in candidates:
-            json_candidate = _extract_json_text_candidate(candidate)
-            if json_candidate:
-                return json_candidate
-    return candidates[0] if candidates else ""
-
-
 def _extract_best_openai_compatible_text(result: dict, prefer_json: bool = False) -> str:
     candidates: list[str] = []
 
@@ -275,22 +219,6 @@ def _extract_best_openai_compatible_text(result: dict, prefer_json: bool = False
         if isinstance(delta, dict):
             add_candidate(delta.get("content", ""))
 
-    if prefer_json:
-        for candidate in candidates:
-            json_candidate = _extract_json_text_candidate(candidate)
-            if json_candidate:
-                return json_candidate
-    return candidates[0] if candidates else ""
-
-
-def _extract_best_llama_cpp_completion_text(result: dict, prefer_json: bool = False) -> str:
-    candidates: list[str] = []
-    for key in ("content", "completion", "response"):
-        value = result.get(key)
-        if isinstance(value, str):
-            text = _clean_text(value)
-            if text and text not in candidates:
-                candidates.append(text)
     if prefer_json:
         for candidate in candidates:
             json_candidate = _extract_json_text_candidate(candidate)
@@ -1260,7 +1188,7 @@ def build_agentic_prompt(
             "KHUSUS file minimax_h3_*_prompt.json: LLM hanya boleh mengisi "
             "positive_prompt.en sebagai object JSON nested berbahasa Inggris. "
             "Jangan mengembalikan positive_prompt.id_new atau positive_prompt.id_old. "
-            "Pipeline akan menerjemahkan setiap field teks en menjadi id_new, mempertahankan "
+            "Pipeline akan mengirim satu JSON MiniMax utuh untuk menerjemahkan field teks yang diizinkan menjadi id_new, mempertahankan "
             "key/array/angka/timing/reference, lalu menyalin id_new ke id_old.\n"
         )
         lines.append(
@@ -1657,7 +1585,7 @@ def _normalize_minimax_agentic_output(
             translator = get_prompt_translator(project_dir=Path(scene_dir).parent)
             id_new = translator.translate_ref2va_prompt_to_indonesian(en)
         except Exception as exc:
-            return None, [f"{filename}: gagal menerjemahkan en per field ke id_new: {exc}"]
+            return None, [f"{filename}: gagal menerjemahkan JSON en ke id_new: {exc}"]
     else:
         mode = "I2VA" if filename.endswith("i2v_prompt.json") else "T2VA"
         probe = {"id_old": copy.deepcopy(en), "id_new": copy.deepcopy(en), "en": copy.deepcopy(en)}
@@ -1668,11 +1596,11 @@ def _normalize_minimax_agentic_output(
             translator = get_prompt_translator(project_dir=Path(scene_dir).parent)
             id_new = translator.translate_structured_prompt_to_indonesian(en, mode=mode)
         except Exception as exc:
-            return None, [f"{filename}: gagal menerjemahkan en per field ke id_new: {exc}"]
+            return None, [f"{filename}: gagal menerjemahkan JSON en ke id_new: {exc}"]
 
     write_log(
         f"[MiniMax][Agentic] {filename}: generate `en` selesai; "
-        "translate per-field `en` -> `id_new` selesai; `id_old` disinkronkan dari `id_new`."
+        "translate JSON `en` -> `id_new` selesai; `id_old` disinkronkan dari `id_new`."
     )
     result = copy.deepcopy(input_payload)
     original_entry = input_payload.get("positive_prompt")

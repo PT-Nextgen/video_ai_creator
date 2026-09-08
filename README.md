@@ -65,9 +65,11 @@ Catatan format prompt:
 - `id_new` adalah JSON Bahasa Indonesia yang ditampilkan dan diedit di UI
 - prompt generation dan translate memakai konfigurasi yang sama di `project_settings.json.prompt_generation`
 - provider `gemini` memakai default model API tanpa setting `temperature`
-- provider `llama.cpp` memakai endpoint OpenAI-compatible bila tersedia
-- runtime akan mencoba `v1/chat/completions` untuk text generation dan `v1/models` untuk daftar model
-- jika endpoint modern tidak tersedia, runtime akan fallback ke endpoint legacy yang kompatibel
+- provider `llama.cpp` hanya memakai endpoint OpenAI-compatible `/v1/chat/completions`
+- runtime memakai `v1/chat/completions` untuk text generation dan `v1/models` untuk daftar model
+- runtime tidak melakukan fallback ke endpoint legacy `/completion` atau `/api/generate`
+- request translate llama.cpp memakai `reasoning_effort=low`
+- request `Buat Prompt` dan `Generate Variasi` llama.cpp memakai `reasoning_effort=xhigh`
 - tombol `Buat Prompt` tidak melakukan `Save Scene` terlebih dahulu; input dan konteks diambil langsung dari nilai yang sedang tampil di UI
 - khusus MiniMax H3, `Save` hanya memvalidasi JSON `id_new` dan menyamakan `id_old` dengan `id_new`; `Save` tidak memanggil LLM untuk menerjemahkan prompt
 - saat scene MiniMax dijalankan, runtime menerjemahkan `id_new` ke `en` hanya jika `id_old != id_new` atau `en` kosong, lalu menyimpan hasil sinkronisasi tersebut
@@ -77,7 +79,7 @@ Catatan format prompt:
 
 Aturan khusus MiniMax H3 untuk tombol `Buat Prompt` dan Agentic:
 - LLM hanya diminta menghasilkan `positive_prompt.en` dalam bentuk object JSON nested; LLM tidak diminta membuat `id_new` atau `id_old`
-- setelah respons `en` lolos validasi, aplikasi menerjemahkan field teks satu per satu ke Bahasa Indonesia untuk membentuk `id_new`
+- setelah respons `en` lolos validasi, aplikasi mengirim satu JSON MiniMax utuh ke LLM untuk menerjemahkan field teks yang diizinkan, lalu membentuk `id_new`
 - `id_old` kemudian dibuat sebagai deep-copy dari `id_new`, sehingga keduanya selalu identik setelah generate atau normalisasi Agentic
 - field angka, array timeline, identifier, dan token referensi tidak diterjemahkan atau diubah
 - token dalam tanda `<...>` wajib dipertahankan persis, termasuk `<Picture 1>`, `<Subject 1>`, `<Video 1>`, `<Audio 1>`, dan token kontrol lain yang ditentukan skill
@@ -96,7 +98,7 @@ Schema prompt MiniMax H3 T2VA/I2VA:
 Schema prompt MiniMax H3 S2V/Ref2VA:
 - `positive_prompt.en` adalah object dengan tepat enam field: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, dan `non_diegetic_music`
 - scene S2V hanya menggunakan `<Picture 1>` dan `<Audio 1>`; referensi Picture 2/3, Video 1, dan Audio 2/3 tidak boleh muncul
-- keenam field tersebut diterjemahkan satu per satu ke `id_new`; hasil prompt Inggris yang dikirim ke workflow diserialisasi dari `positive_prompt.en`
+- keenam field tersebut dikirim sebagai satu JSON utuh untuk diterjemahkan ke `id_new`; hasil prompt Inggris yang dikirim ke workflow diserialisasi dari `positive_prompt.en`
 
 Field utama:
 - `scene_meta.json`
@@ -450,7 +452,7 @@ Pilihan `scene_type`:
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project
-.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.6:35b-a3b-uc-q4_K_M --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.8-27b-uc-q4_k_m --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_i2v --title "Intro Magnet" --scene-description "Anak menemukan magnet di meja belajar." --voice-text "Halo teman-teman! Hari ini kita belajar magnet, benda seru yang bisa menarik klip kertas dan benda logam kecil di sekitar kita!" --duration 10
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v_i2v --title "Intro Gerak" --scene-description "Pembuka dua tahap T2V lalu I2V." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat, lalu dilanjutkan ke gerakan yang lebih panjang." --duration 15
@@ -569,7 +571,7 @@ Fungsi utama:
     - jika model tersimpan di JSON tersedia, dropdown akan langsung memilihnya
     - jika model tidak tersedia, dropdown dibiarkan kosong dan harus dipilih ulang
     - provider `Gemini` memakai default API tanpa setting `temperature`
-    - provider `llama.cpp` mencoba endpoint `v1/models` lebih dulu lalu fallback ke endpoint legacy bila perlu
+    - provider `llama.cpp` memakai endpoint `v1/models` untuk daftar model dan `/v1/chat/completions` untuk text generation
   - `llama.cpp Host / Port`
     - berdampingan di satu baris
     - default: `nextgenserver:8080`
@@ -667,7 +669,7 @@ Perilaku UI:
 - `Execute Agentic` menjalankan setiap folder variasi yang belum punya file `status.done`, tanpa bergantung pada nilai `Jumlah Variasi`
 - untuk `wan22_t2v_batch`, agentic memakai panduan khusus `SCENE-WAN22-T2V-BATCH.md`
 - Agentic MiniMax H3 untuk `minimax-h3_i2v`, `minimax-h3_t2v_i2v`, dan `minimax-h3_s2v` meminta LLM mengisi hanya `positive_prompt.en` sesuai schema scene
-- setelah Agentic berhasil, aplikasi menerjemahkan `en` per field, membuat `id_new`, lalu menyalin `id_new` ke `id_old`
+- setelah Agentic berhasil, aplikasi mengirim satu JSON MiniMax utuh untuk translasi, membuat `id_new`, lalu menyalin `id_new` ke `id_old`
 - pada S2V/Ref2VA, Agentic hanya boleh menggunakan enam field Ref2VA dan referensi `<Picture 1>` serta `<Audio 1>`
 - schema respons Agentic S2V menetapkan keenam field Ref2VA tersebut secara eksplisit sebagai string wajib; field teknis tetap dipulihkan dari root scene dan kegagalan 3 attempt mengikuti aturan tanpa folder `variasiN`
 - output agentic untuk scene ini mencakup `wan22_t2v_prompt.json` dan `wan22_t2v_batch_extra_prompts.json`
@@ -808,7 +810,7 @@ Perilaku UI:
 - tombol `Upscale Video` pada group `Scene` membuka dialog kecil untuk memilih `1.5x` atau `2x`
 - hasil tombol `Upscale Video` disimpan sebagai file video baru di root scene aktif tanpa mengekspor frame PNG
 - tab `Gambar Awal`, `Prompt Tambahan`, `WAN22_I2V`, `WAN22_T2V`, dan `WAN22 S2V` mempunyai tombol `Buat Prompt` dengan alur bilingual string sesuai tipe prompt masing-masing
-- tombol `Buat Prompt` pada semua tab MiniMax T2V/I2V memakai referensi scene MiniMax yang sesuai dan hanya meminta LLM membuat object JSON `en`; pipeline kemudian menerjemahkan field teks per-field menjadi `id_new` dan menyalin `id_new` ke `id_old`
+- tombol `Buat Prompt` pada semua tab MiniMax T2V/I2V memakai referensi scene MiniMax yang sesuai dan hanya meminta LLM membuat object JSON `en`; pipeline kemudian menerjemahkan satu JSON utuh menjadi `id_new` dan menyalin `id_new` ke `id_old`
 - setelah Buat Prompt MiniMax berhasil, JSON `id_new` langsung dimuat ke UI tanpa menunggu reload scene dan tanpa Save Scene pendahuluan
 - tab `Gambar Awal` dan `Prompt Tambahan` juga punya tombol `Image Gen Prompt` untuk menyalin template prompt ke clipboard
 - untuk `wan22_t2v_batch`, tab `Prompt Tambahan` menyediakan 3 grup `Prompt Positif` / `Prompt Negatif` dan tombol `Buat Prompt` di setiap grup
@@ -846,7 +848,7 @@ Agentic dipakai untuk membuat dan menjalankan variasi per scene dalam dua tahap:
      - untuk prompt non-MiniMax, kontrak bilingual `id_old`, `id_new`, dan `en` tetap berlaku
      - khusus `minimax_h3_t2v_prompt.json` dan `minimax_h3_i2v_prompt.json`, schema respons LLM hanya memuat `positive_prompt.en` sebagai object JSON nested berbahasa Inggris
      - LLM Agentic MiniMax tidak diminta dan tidak diizinkan menghasilkan `positive_prompt.id_new` atau `positive_prompt.id_old`
-     - pipeline memvalidasi `en` sebagai T2VA/I2VA, menerjemahkan setiap field teks natural-language satu per satu menjadi object Indonesia `id_new`, lalu membuat `id_old` sebagai deep-copy `id_new`
+     - pipeline memvalidasi `en` sebagai T2VA/I2VA, menerjemahkan satu JSON utuh dengan hanya field teks natural-language yang diizinkan menjadi object Indonesia `id_new`, lalu membuat `id_old` sebagai deep-copy `id_new`
      - key, array, angka, timing, `shot_id`, `mode`, dan object `reference` disalin tanpa diterjemahkan
      - hasil file variasi MiniMax yang disimpan tetap lengkap dengan `positive_prompt.id_old`, `positive_prompt.id_new`, dan `positive_prompt.en`
      - I2VA wajib memiliki reference `<Picture 1>` pada `0.00` dari `[Shot 1]`; T2VA tidak boleh memiliki `reference`
@@ -1636,9 +1638,9 @@ Aturan bahasa dan sinkronisasi:
 - `id_new` berisi object Indonesia yang ditampilkan dan dapat diedit di UI
 - `id_old` selalu deep-copy dari `id_new` setelah generate/translate/save berhasil
 - Buat Prompt MiniMax meminta LLM menghasilkan object `en` saja, bukan `id_new` dan `id_old`
-- pipeline menerjemahkan hanya field teks natural-language di `en` satu per satu menjadi `id_new`; nilai angka dan struktur dikopikan secara lokal
+- pada Buat Prompt dan Agentic, pipeline mengirim satu JSON utuh ke LLM; hanya field teks natural-language yang diizinkan yang diterjemahkan menjadi `id_new`, sedangkan nilai angka, key, struktur, identifier, token, dan field teknis dipulihkan secara lokal
 - jika `id_new == id_old`, Save tidak melakukan translasi
-- jika `id_new != id_old`, Save menerjemahkan field teks `id_new` satu per satu ke Inggris untuk memperbarui `en`, kemudian menyalin `id_new` ke `id_old`
+- jika `id_new != id_old`, Save mengirim satu JSON MiniMax utuh untuk menerjemahkan field teks `id_new` ke Inggris, mempertahankan field teknis, kemudian menyalin `id_new` ke `id_old`
 
 Struktur satu item `shots`:
 
@@ -1692,7 +1694,7 @@ non_diegetic_music: ...
 
 Baris reference hanya ada untuk I2VA. T2VA langsung dimulai dari `integrated_multimodal_description`.
 
-Token yang wajib dipertahankan persis selama translasi per-field:
+Token yang wajib dipertahankan persis selama translasi JSON MiniMax:
 
 - semua substring dalam `<...>`, termasuk `<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>` dan nomor aktualnya
 - token kontrol `<d>`, `</d>`, `<scenetrans>`, dan `<cutoff>`

@@ -158,7 +158,7 @@ Jangan mengembalikan `ok: true` bila proses lama masih hidup.
 5. Nyalakan Llama.
 6. Tunggu PID Llama tersedia.
 7. Poll `GET http://<llama-host>:8080/v1/models` sampai HTTP `200` dan JSON valid.
-8. Pastikan model `qwen3.6-35b-a3b-uc-q4_k_m` terlihat pada response model jika model tersebut dikonfigurasi sebagai default.
+8. Pastikan model `qwen3.8-27b-uc-q4_k_m` terlihat pada response model jika model tersebut dikonfigurasi sebagai default.
 9. Baru ubah state menjadi `active: llama`.
 10. Lepaskan lock dan response `200`.
 
@@ -243,4 +243,4 @@ Implementasi server dianggap selesai bila semua skenario berikut lulus:
 6. Proses target crash saat startup: status menjadi error/degraded dan recovery dijalankan.
 7. API key salah: response `401` tanpa membocorkan detail rahasia.
 8. Request switch ke target yang sudah aktif: idempotent dan tidak restart.
-9. Model default yang terlihat pada Llama adalah `qwen3.6-35b-a3b-uc-q4_k_m`.
+9. Model default yang terlihat pada Llama adalah `qwen3.8-27b-uc-q4_k_m`.

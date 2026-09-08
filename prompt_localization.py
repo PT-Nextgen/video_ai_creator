@@ -103,6 +103,8 @@ LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
 LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
+LOCAL_TRANSLATE_REASONING_EFFORT = "low"
+LOCAL_PROMPT_REASONING_EFFORT = "xhigh"
 
 
 def format_llm_runtime_log(
@@ -463,99 +465,84 @@ class PromptTranslator:
         port = self.prompt_generation_port
         base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
         server_base_url = f"{base_url.rstrip('/')}:{port}"
+        is_translation_phase = str(phase or "").strip().lower().startswith("translate")
         chat_payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt_text}],
             "stream": False,
+            "reasoning_effort": (
+                LOCAL_TRANSLATE_REASONING_EFFORT
+                if is_translation_phase
+                else LOCAL_PROMPT_REASONING_EFFORT
+            ),
         }
-        if phase in {"generate_prompt_multilang", "translate_minimax_structured_id_new"}:
+        if phase in {"generate_prompt_multilang", "translate_minimax_json"}:
             chat_payload["response_format"] = {"type": "json_object"}
-        attempts = [
-            (
-                f"{server_base_url}/v1/chat/completions",
-                chat_payload,
-                _extract_best_openai_compatible_text,
-            ),
-            (
-                f"{server_base_url}/completion",
-                {
-                    "prompt": prompt_text,
-                },
-                _extract_best_llama_cpp_completion_text,
-            ),
-            (
-                f"{server_base_url}/api/generate",
-                {
-                    "model": model_name,
-                    "prompt": prompt_text,
-                    "stream": False,
-                },
-                _extract_best_ollama_text,
-            ),
-        ]
+        url = f"{server_base_url}/v1/chat/completions"
         start_time = time.perf_counter()
-        errors: list[str] = []
+        response = None
         try:
-            prefer_json = phase in {"generate_prompt_multilang", "translate_minimax_structured_id_new"}
-            for url, payload, extractor in attempts:
-                try:
-                    response = requests.post(url, json=payload, timeout=timeout)
-                except requests.RequestException as exc:
-                    errors.append(f"{url} -> {exc}")
-                    continue
-                if response.status_code >= 400:
-                    errors.append(f"{url} -> HTTP {response.status_code}: {response.text[:240]}")
-                    continue
-                response_payload = response.json()
-                generated_text = extractor(response_payload, prefer_json=prefer_json)
-                if not generated_text:
-                    errors.append(f"{url} -> response tanpa teks")
-                    continue
-                elapsed_seconds = time.perf_counter() - start_time
-                tok_per_sec = _extract_tok_per_sec_from_payload(response_payload)
-                self.last_call_metrics = {
-                    "provider": LOCAL_PROMPT_PROVIDER,
-                    "model": model_name,
-                    "elapsed_seconds": elapsed_seconds,
-                    "tok_per_sec": tok_per_sec,
-                    "ok": True,
-                    "status_code": response.status_code,
-                }
-                LOGGER.info(
-                    format_llm_runtime_log(
-                        LOCAL_PROMPT_PROVIDER,
-                        phase,
-                        model_name,
-                        elapsed_seconds,
-                        tok_per_sec,
-                        extra_parts=[f"host={host}", f"port={port}", f"endpoint={url}"],
-                    )
+            response = requests.post(url, json=chat_payload, timeout=timeout)
+            if response.status_code >= 400:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text[:400]}")
+            response_payload = response.json()
+            prefer_json = phase in {"generate_prompt_multilang", "translate_minimax_json"}
+            generated_text = _extract_best_openai_compatible_text(
+                response_payload,
+                prefer_json=prefer_json,
+            )
+            if not generated_text:
+                raise RuntimeError("response tanpa teks")
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            elapsed_seconds = time.perf_counter() - start_time
+            error_text = f"{url} -> {exc}"
+            self.last_call_metrics = {
+                "provider": LOCAL_PROMPT_PROVIDER,
+                "model": model_name,
+                "elapsed_seconds": elapsed_seconds,
+                "tok_per_sec": None,
+                "ok": False,
+                "status_code": getattr(response, "status_code", None),
+                "error": error_text,
+            }
+            LOGGER.error(
+                format_llm_runtime_log(
+                    LOCAL_PROMPT_PROVIDER,
+                    phase,
+                    model_name,
+                    elapsed_seconds,
+                    None,
+                    status="gagal",
+                    extra_parts=[f"host={host}", f"port={port}", f"endpoint={url}", f"error={exc}"],
                 )
-                return generated_text
-        except requests.RequestException as exc:
-            errors.append(str(exc))
+            )
+            raise RuntimeError(f"llama.cpp error: {error_text}") from exc
         elapsed_seconds = time.perf_counter() - start_time
+        tok_per_sec = _extract_tok_per_sec_from_payload(response_payload)
         self.last_call_metrics = {
             "provider": LOCAL_PROMPT_PROVIDER,
             "model": model_name,
             "elapsed_seconds": elapsed_seconds,
-            "tok_per_sec": None,
-            "ok": False,
-            "status_code": None,
-            "error": "; ".join(errors),
+            "tok_per_sec": tok_per_sec,
+            "ok": True,
+            "status_code": response.status_code,
         }
-        LOGGER.error(
+        LOGGER.info(
             format_llm_runtime_log(
                 LOCAL_PROMPT_PROVIDER,
                 phase,
                 model_name,
                 elapsed_seconds,
-                None,
-                status="gagal",
-                extra_parts=[f"host={host}", f"port={port}", f"errors={' || '.join(errors[:3])}"],
+                tok_per_sec,
+                extra_parts=[
+                    f"host={host}",
+                    f"port={port}",
+                    f"endpoint={url}",
+                    f"reasoning_effort={chat_payload['reasoning_effort']}",
+                ],
             )
         )
-        raise RuntimeError(f"llama.cpp error: {' || '.join(errors[:3])}")
+        return generated_text
 
     def translate_to_english(self, text: str, context: str = "") -> str:
         text = _clean_text(text)
@@ -775,7 +762,7 @@ class PromptTranslator:
         return parsed
 
     def _translate_minimax_prompt_fields_to_indonesian(self, value: dict, mode: str) -> dict:
-        """Translate only natural-language leaf fields; preserve JSON structure locally."""
+        """Translate one complete T2VA/I2VA JSON in a single LLM call."""
         translatable_keys = {
             "visual",
             "action",
@@ -785,92 +772,123 @@ class PromptTranslator:
             "overall_soundscape",
             "non_diegetic_music",
         }
-        fixed_keys = {"shot_id", "picture", "source", "instruction", "mode"}
-
-        def translate_node(node, key: str = "", path: str = ""):
-            if isinstance(node, dict):
-                return {
-                    child_key: translate_node(
-                        child_value,
-                        child_key,
-                        f"{path}.{child_key}" if path else child_key,
-                    )
-                    for child_key, child_value in node.items()
-                }
-            if isinstance(node, list):
-                return [
-                    translate_node(item, key, f"{path}[{index}]")
-                    for index, item in enumerate(node)
-                ]
-            if not isinstance(node, str) or key in fixed_keys or key not in translatable_keys:
-                return copy.deepcopy(node)
-            if not node.strip() or node.strip().upper() == "N/A":
-                LOGGER.info(
-                    "[prompt translation] MiniMax H3 %s field=%s direction=en_to_id status=skipped",
-                    mode,
-                    path or key,
-                )
-                return node
-            LOGGER.info(
-                "[prompt translation] MiniMax H3 %s field=%s direction=en_to_id status=start",
-                mode,
-                path or key,
-            )
-            context = (
-                f"MiniMax H3 {mode} field translation. Translate this single field value into natural Indonesian. "
-                "Return only the translated text; do not add JSON, labels, or explanation. "
-                "Preserve names, dialogue, visible text, and technical identifiers as appropriate. "
-                "NEVER translate, rewrite, remove, reformat, or renumber any substring enclosed in angle "
-                "brackets <...>. Preserve it character-for-character, including reference labels such as "
-                "<Subject N>, <Subject 1>, <Picture N>, <Picture 1>, <Video N>, <Video 1>, <Audio N>, "
-                "and <Audio 1>, plus control tokens <d>, </d>, <scenetrans>, and <cutoff>. "
-                "Also preserve shot identifiers such as [Shot N], [Shot 1], speaker identifiers such as "
-                "(S1), (S2), and (S1,S2), and mode identifiers T2VA, I2VA, FL2VA, L2VA, and Ref2VA exactly."
-            )
-            translated = self.translate_to_indonesian(node, context=context) or node
-            LOGGER.info(
-                "[prompt translation] MiniMax H3 %s field=%s direction=en_to_id status=success",
-                mode,
-                path or key,
-            )
-            return translated
-
-        translated = translate_node(value)
-        if not isinstance(translated, dict):
-            raise RuntimeError("Hasil translasi field MiniMax tidak berupa object JSON.")
-        return translated
+        instruction = (
+            f"Translate this complete MiniMax H3 {mode} JSON from English into natural Indonesian. "
+            "Return JSON only, with exactly the same keys, arrays, object structure, and array lengths. "
+            "Translate only the natural-language string values under these fields: "
+            "visual, action, camera, dialogue, diegetic_sound, overall_soundscape, and non_diegetic_music. "
+            "Do not translate or modify JSON keys, mode, shot_id, start, end, reference, picture, source, "
+            "instruction, numeric values, booleans, nulls, or any other structural/technical value. "
+            "Preserve character-for-character every token enclosed in angle brackets, including <Subject N>, "
+            "<Picture N>, <Video N>, <Audio N>, <d>, </d>, <scenetrans>, and <cutoff>. "
+            "Also preserve [Shot N], speaker identifiers such as (S1), (S2), and (S1,S2), and mode identifiers "
+            "T2VA, I2VA, FL2VA, L2VA, and Ref2VA. Do not add, remove, reorder, or rename fields."
+        )
+        translated = self._translate_minimax_json_once(value, instruction)
+        return self._merge_minimax_translation(
+            value,
+            translated,
+            translatable_keys=translatable_keys,
+        )
 
     def _translate_ref2va_fields_to_indonesian(self, value: dict) -> dict:
         errors = validate_ref2va_prompt(value)
         if errors:
             raise ValueError("Prompt Ref2VA tidak valid: " + "; ".join(errors[:3]))
-        translated = {}
-        for key in REF2VA_SECTION_KEYS:
-            text = value[key]
-            if not text.strip() or text.strip().upper() == "N/A":
-                LOGGER.info(
-                    "[prompt translation] MiniMax H3 Ref2VA field=%s direction=en_to_id status=skipped",
-                    key,
-                )
-                translated[key] = text
-                continue
-            LOGGER.info(
-                "[prompt translation] MiniMax H3 Ref2VA field=%s direction=en_to_id status=start",
-                key,
+        instruction = (
+            "Translate this complete MiniMax H3 Ref2VA JSON from English into natural Indonesian. "
+            "Return JSON only, with exactly these six keys and no others: "
+            + ", ".join(REF2VA_SECTION_KEYS)
+            + ". Translate the string value of every one of those six fields. "
+            "Do not translate or modify JSON keys, reference identifiers, speaker IDs, shot identifiers, "
+            "or any technical token inside the text. Preserve character-for-character every substring enclosed "
+            "in angle brackets, including <Subject N>, <Picture N>, <Video N>, <Audio N>, <d>, </d>, "
+            "<scenetrans>, and <cutoff>, as well as [Shot N], (S1), (S2), and (S1,S2). "
+            "Do not add, remove, reorder, or rename fields."
+        )
+        translated = self._translate_minimax_json_once(value, instruction)
+        return self._merge_minimax_translation(
+            value,
+            translated,
+            translatable_keys=set(REF2VA_SECTION_KEYS),
+            require_exact_keys=True,
+        )
+
+    def _translate_minimax_json_once(self, value: dict, instruction: str) -> dict:
+        """Translate one MiniMax JSON object with exactly one LLM request."""
+        source_json = json.dumps(value, ensure_ascii=False, indent=2)
+        phase = "translate_minimax_json"
+        if self.translate_provider == "gemini":
+            response_text = self._gemini._call_text_model(
+                self.translate_model_name,
+                instruction,
+                source_json,
+                timeout=LLM_CALL_TIMEOUT_SECONDS,
+                phase=phase,
             )
-            protected, replacements = protect_ref2va_tokens(text)
-            translated_text = self.translate_to_indonesian(
-                protected,
-                context=("MiniMax H3 Ref2VA field translation. Translate only this field to Indonesian. "
-                         "Do not change, translate, or remove technical placeholders such as "
-                         "__REF2VA_TOKEN_001__. Return only the translated field text.")
-            ) or protected
-            translated[key] = restore_ref2va_tokens(translated_text, replacements)
-            LOGGER.info(
-                "[prompt translation] MiniMax H3 Ref2VA field=%s direction=en_to_id status=success",
-                key,
+            self.last_call_metrics = self._gemini.last_call_metrics
+        else:
+            response_text = self._call_local_text_model(
+                self.translate_model_name,
+                instruction + "\n\nINPUT JSON:\n" + source_json,
+                timeout=LOCAL_LLM_TIMEOUT_SECONDS,
+                phase=phase,
             )
+        translated = _parse_json_object_response(response_text)
+        if not isinstance(translated, dict):
+            raise RuntimeError("Hasil translasi MiniMax tidak berupa object JSON.")
+        if set(translated.keys()) == {"positive_prompt"} and isinstance(translated.get("positive_prompt"), dict):
+            translated = translated["positive_prompt"]
         return translated
+
+    def _merge_minimax_translation(
+        self,
+        source,
+        translated,
+        translatable_keys: set[str],
+        path: tuple[str, ...] = (),
+        require_exact_keys: bool = False,
+    ):
+        """Use translated text only where allowed; restore all technical data locally."""
+        if isinstance(source, dict):
+            if not isinstance(translated, dict):
+                raise RuntimeError(f"Hasil translasi MiniMax bukan object pada {'.'.join(path) or 'root'}.")
+            if require_exact_keys and set(source.keys()) != set(translated.keys()):
+                raise RuntimeError("Hasil translasi Ref2VA mengubah struktur atau field JSON.")
+            if set(source.keys()) != set(translated.keys()):
+                raise RuntimeError(f"Hasil translasi MiniMax mengubah key pada {'.'.join(path) or 'root'}.")
+            return {
+                key: self._merge_minimax_translation(
+                    source[key],
+                    translated[key],
+                    translatable_keys,
+                    path + (str(key),),
+                    require_exact_keys=require_exact_keys,
+                )
+                for key in source
+            }
+        if isinstance(source, list):
+            if not isinstance(translated, list) or len(source) != len(translated):
+                raise RuntimeError(f"Hasil translasi MiniMax mengubah array pada {'.'.join(path) or 'root'}.")
+            return [
+                self._merge_minimax_translation(
+                    source_item,
+                    translated_item,
+                    translatable_keys,
+                    path + (f"[{index}]",),
+                    require_exact_keys=require_exact_keys,
+                )
+                for index, (source_item, translated_item) in enumerate(zip(source, translated))
+            ]
+        if isinstance(source, str) and path and path[-1] in translatable_keys:
+            if not isinstance(translated, str):
+                raise RuntimeError(f"Field translasi MiniMax bukan string pada {'.'.join(path)}.")
+            source_tokens = re.findall(r"<[^<>]+>|\[Shot\s+\d+\]|\(S\d+(?:,S\d+)*\)", source)
+            translated_tokens = re.findall(r"<[^<>]+>|\[Shot\s+\d+\]|\(S\d+(?:,S\d+)*\)", translated)
+            if source_tokens != translated_tokens:
+                raise RuntimeError(f"Token teknis berubah pada field translasi MiniMax {'.'.join(path)}.")
+            return translated
+        return copy.deepcopy(source)
 
     def translate_ref2va_prompt_to_indonesian(self, en: dict) -> dict:
         return self._translate_ref2va_fields_to_indonesian(en)
@@ -879,25 +897,24 @@ class PromptTranslator:
         errors = validate_ref2va_prompt(id_new)
         if errors:
             raise ValueError("Prompt Ref2VA tidak valid: " + "; ".join(errors[:3]))
-        result = {}
-        for key in REF2VA_SECTION_KEYS:
-            text = id_new[key]
-            if not text.strip() or text.strip().upper() == "N/A":
-                result[key] = text
-                continue
-            dialogue_protected, dialogue_replacements = _protect_minimax_dialogue_blocks(text)
-            protected, replacements = protect_ref2va_tokens(dialogue_protected)
-            translated_text = self.translate_to_english(
-                protected,
-                context=(
-                    "MiniMax H3 English field translation. Translate the surrounding prompt text only. "
-                    "Do not translate, rewrite, remove, or alter any __MINIMAX_DIALOGUE_NNN__ placeholder; "
-                    "each placeholder contains an original <d>...</d> dialogue block and must remain unchanged."
-                ),
-            ) or protected
-            translated_text = restore_ref2va_tokens(translated_text, replacements)
-            result[key] = _restore_minimax_dialogue_blocks(translated_text, dialogue_replacements)
-        return result
+        instruction = (
+            "Translate this complete MiniMax H3 Ref2VA JSON from Indonesian into natural English. "
+            "Return JSON only, with exactly these six keys and no others: "
+            + ", ".join(REF2VA_SECTION_KEYS)
+            + ". Translate the string value of every one of those six fields. "
+            "Do not translate or modify JSON keys, reference identifiers, speaker IDs, shot identifiers, "
+            "or any technical token inside the text. Preserve character-for-character every substring enclosed "
+            "in angle brackets, including <Subject N>, <Picture N>, <Video N>, <Audio N>, <d>, </d>, "
+            "<scenetrans>, and <cutoff>, as well as [Shot N], (S1), (S2), and (S1,S2). "
+            "Do not add, remove, reorder, or rename fields."
+        )
+        translated = self._translate_minimax_json_once(id_new, instruction)
+        return self._merge_minimax_translation(
+            id_new,
+            translated,
+            translatable_keys=set(REF2VA_SECTION_KEYS),
+            require_exact_keys=True,
+        )
 
     def translate_structured_prompt_to_indonesian(self, en: dict, mode: str = "T2VA") -> dict:
         """Translate MiniMax English leaf fields while preserving its JSON structure."""
@@ -910,35 +927,35 @@ class PromptTranslator:
         return self._translate_minimax_prompt_fields_to_indonesian(en, mode)
 
     def translate_structured_prompt_to_english(self, id_new: dict, mode: str = "T2VA") -> dict:
-        """Translate edited Indonesian MiniMax leaf fields back to English."""
+        """Translate one complete edited Indonesian MiniMax JSON into English."""
         if not isinstance(id_new, dict):
             raise ValueError("id_new MiniMax harus berupa object JSON.")
+        probe = {"positive_prompt": {"id_old": id_new, "id_new": id_new, "en": id_new}}
+        _, input_errors = parse_structured_response(probe, expected_mode=mode)
+        if input_errors:
+            raise ValueError("Prompt id_new MiniMax tidak valid: " + "; ".join(input_errors[:3]))
         translatable_keys = {
             "visual", "action", "camera", "dialogue", "diegetic_sound",
             "overall_soundscape", "non_diegetic_music",
         }
-        fixed_keys = {"shot_id", "picture", "source", "instruction", "mode"}
-
-        def translate_node(node, key: str = ""):
-            if isinstance(node, dict):
-                return {child_key: translate_node(child_value, child_key) for child_key, child_value in node.items()}
-            if isinstance(node, list):
-                return [translate_node(item, key) for item in node]
-            if not isinstance(node, str) or key in fixed_keys or key not in translatable_keys:
-                return copy.deepcopy(node)
-            if not node.strip() or node.strip().upper() == "N/A":
-                return node
-            context = (
-                f"MiniMax H3 {mode} field translation. Translate this single field value into natural English. "
-                "Return only the translated text; do not add JSON, labels, or explanation. "
-                "Do not translate, rewrite, remove, or alter any __MINIMAX_DIALOGUE_NNN__ placeholder; "
-                "each placeholder contains an original <d>...</d> dialogue block and must remain unchanged."
-            )
-            dialogue_protected, dialogue_replacements = _protect_minimax_dialogue_blocks(node)
-            translated = self.translate_to_english(dialogue_protected, context=context) or dialogue_protected
-            return _restore_minimax_dialogue_blocks(translated, dialogue_replacements)
-
-        en = translate_node(id_new)
+        instruction = (
+            f"Translate this complete MiniMax H3 {mode} JSON from Indonesian into natural English. "
+            "Return JSON only, with exactly the same keys, arrays, object structure, and array lengths. "
+            "Translate only the natural-language string values under these fields: "
+            "visual, action, camera, dialogue, diegetic_sound, overall_soundscape, and non_diegetic_music. "
+            "Do not translate or modify JSON keys, mode, shot_id, start, end, reference, picture, source, "
+            "instruction, numeric values, booleans, nulls, or any other structural/technical value. "
+            "Preserve character-for-character every token enclosed in angle brackets, including <Subject N>, "
+            "<Picture N>, <Video N>, <Audio N>, <d>, </d>, <scenetrans>, and <cutoff>. "
+            "Also preserve [Shot N], speaker identifiers such as (S1), (S2), and (S1,S2), and mode identifiers "
+            "T2VA, I2VA, FL2VA, L2VA, and Ref2VA. Do not add, remove, reorder, or rename fields."
+        )
+        translated = self._translate_minimax_json_once(id_new, instruction)
+        en = self._merge_minimax_translation(
+            id_new,
+            translated,
+            translatable_keys=translatable_keys,
+        )
         probe = {"positive_prompt": {"id_old": en, "id_new": en, "en": en}}
         _, errors = parse_structured_response(probe, expected_mode=mode)
         if errors:
@@ -1036,36 +1053,6 @@ def _extract_json_text_candidate(text: str) -> str:
     return ""
 
 
-def _extract_best_ollama_text(payload: dict, prefer_json: bool = False) -> str:
-    candidates: list[str] = []
-
-    def add_candidate(value):
-        if not isinstance(value, str):
-            return
-        cleaned = _clean_text(value)
-        if cleaned and cleaned not in candidates:
-            candidates.append(cleaned)
-
-    add_candidate(payload.get("response", ""))
-    message = payload.get("message")
-    if isinstance(message, dict):
-        add_candidate(message.get("content", ""))
-    add_candidate(payload.get("thinking", ""))
-
-    response_text = _clean_text(payload.get("response", ""))
-    thinking_text = _clean_text(payload.get("thinking", ""))
-    if response_text and thinking_text:
-        add_candidate(f"{response_text}\n{thinking_text}")
-        add_candidate(f"{thinking_text}\n{response_text}")
-
-    if prefer_json:
-        for candidate in candidates:
-            json_candidate = _extract_json_text_candidate(candidate)
-            if json_candidate:
-                return json_candidate
-    return candidates[0] if candidates else ""
-
-
 def _compose_prompt_request_text(prompt_text: str, context: str = "") -> str:
     prompt_text = _clean_text(prompt_text)
     context = _clean_text(context)
@@ -1138,22 +1125,6 @@ def _extract_best_openai_compatible_text(payload: dict, prefer_json: bool = Fals
         if isinstance(delta, dict):
             add_candidate(delta.get("content", ""))
 
-    if prefer_json:
-        for candidate in candidates:
-            json_candidate = _extract_json_text_candidate(candidate)
-            if json_candidate:
-                return json_candidate
-    return candidates[0] if candidates else ""
-
-
-def _extract_best_llama_cpp_completion_text(payload: dict, prefer_json: bool = False) -> str:
-    candidates: list[str] = []
-    for key in ("content", "completion", "response"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            cleaned = _clean_text(value)
-            if cleaned and cleaned not in candidates:
-                candidates.append(cleaned)
     if prefer_json:
         for candidate in candidates:
             json_candidate = _extract_json_text_candidate(candidate)
