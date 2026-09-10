@@ -1292,17 +1292,19 @@ Perilaku:
 - caption timing dihitung per-scene, tetapi burn dilakukan sekali ke `combined/combined_all.mp4` setelah final compose jika `project_settings.caption.generate_caption=true`
 - sumber teks caption selalu dari `voice_text`
 - `faster-whisper` hanya membantu menentukan waktu caption; isi teks tidak diambil dari hasil transkripsi
-- file `.caption.srt` hanya dipakai sebagai file sementara dan dihapus setelah proses selesai
+- alur burn caption final tidak membuat file `.caption.srt` dan tidak lagi memakai jalur SRT/libass
 - timing caption tetap dihitung berdasarkan audio dan voice text masing-masing scene, lalu diberi offset sesuai posisi scene pada timeline final
 - pada `compose-song`, timing caption mengikuti chunk audio yang menjadi master timeline
 - ukuran font caption memakai tinggi video final setelah upscale:
-  - `font_size = ceil(final_height / 640 * 12)`
-  - tinggi `640` menghasilkan font `12`
-  - tinggi `368` menghasilkan font `7`
-  - tinggi `848` menghasilkan font `16`
-  - tinggi `1280` menghasilkan font `24`
+  - `font_size = ceil(final_height / 640 * 24)`
+  - tinggi `640` menghasilkan font `24`
+  - tinggi `368` menghasilkan font `14`
+  - tinggi `848` menghasilkan font `32`
+  - tinggi `1280` menghasilkan font `48`
 - caption Arab dan non-Arab memakai font `Arial`, ukuran font, outline, dan margin bawah yang sama secara proporsional
-- caption Arab tetap dirender dengan Pillow untuk mempertahankan shaping RTL; caption non-Arab dirender melalui FFmpeg/libass
+- posisi caption dinaikkan sekitar `10%` dari tinggi video final agar tidak terlalu dekat dengan tepi bawah
+- caption Arab dan non-Arab dirender dengan Pillow yang sama; Arabic memakai shaping RTL, sedangkan teks non-Arab memakai arah normal
+- overlay Pillow dioptimalkan dengan band transparan bawah dan satu layer video, bukan satu PNG Full HD untuk setiap caption
 - burn caption dilakukan setelah background music dan upscale final agar posisi dan ukuran mengikuti dimensi aktual `combined_all.mp4`
 
 ### Caption bahasa Arab
@@ -1310,8 +1312,8 @@ Perilaku:
 - setiap entry caption diperiksa berdasarkan karakter Unicode Arab
 - teks Arab dipertahankan dalam urutan logis persis seperti sumbernya; aplikasi tidak membalik karakter atau urutan kata secara manual
 - entry Arab dirender menggunakan Pillow dengan Arabic shaping dan arah `rtl`, kemudian ditempel sebagai overlay ke video
-- entry non-Arab tetap memakai jalur subtitle SRT/libass yang sudah ada
-- jika satu video memiliki entry Arab dan non-Arab, pemilihan renderer dilakukan per-entry; renderer khusus Arab tidak diterapkan ke teks non-Arab
+- entry non-Arab dirender menggunakan Pillow yang sama dengan entry Arab
+- jika satu video memiliki entry Arab dan non-Arab, semua entry masuk ke satu layer overlay yang sama
 - teks campuran Arab dengan tanda baca atau angka tetap diberi anchor RTL agar urutan bacanya stabil
 - scene yang sudah memiliki video caption lama harus diproses ulang agar perubahan renderer Arab diterapkan
 

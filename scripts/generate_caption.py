@@ -29,8 +29,9 @@ DEFAULT_MODEL_SIZE = "base"
 TAG_PATTERN = re.compile(r"\[[^\]]+\]")
 ARABIC_UNICODE_NAME = "ARABIC"
 CAPTION_BASE_HEIGHT = 640
-CAPTION_BASE_FONT_SIZE = 12
+CAPTION_BASE_FONT_SIZE = 24
 CAPTION_FONT_NAME = "Arial"
+CAPTION_VERTICAL_OFFSET_RATIO = 0.10
 
 
 def list_scene_dirs():
@@ -133,12 +134,23 @@ def ffprobe_size(path: Path) -> tuple[int, int]:
 
 
 def caption_font_size(height: int | float) -> int:
-    """Scale the caption from 12 px at a 640 px video height."""
+    """Scale the caption from 24 px at a 640 px video height."""
     try:
         numeric_height = float(height)
     except (TypeError, ValueError):
         numeric_height = CAPTION_BASE_HEIGHT
     return max(1, math.ceil(numeric_height / CAPTION_BASE_HEIGHT * CAPTION_BASE_FONT_SIZE))
+
+
+def caption_bottom_margin(height: int | float) -> int:
+    """Keep the caption above the bottom edge by its base margin plus 10%."""
+    try:
+        numeric_height = float(height)
+    except (TypeError, ValueError):
+        numeric_height = CAPTION_BASE_HEIGHT
+    base_margin = math.ceil(numeric_height / CAPTION_BASE_HEIGHT * 20)
+    vertical_offset = math.ceil(numeric_height * CAPTION_VERTICAL_OFFSET_RATIO)
+    return max(1, base_margin + vertical_offset)
 
 
 def extract_audio_from_video(video_path: Path, output_path: Path):
@@ -161,36 +173,9 @@ def extract_audio_from_video(video_path: Path, output_path: Path):
         raise RuntimeError(result.stderr.strip() or "ffmpeg audio extract failed")
 
 
-def format_srt_time(seconds: float) -> str:
-    total_ms = max(0, int(round(seconds * 1000)))
-    hours, rem = divmod(total_ms, 3600000)
-    minutes, rem = divmod(rem, 60000)
-    secs, millis = divmod(rem, 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-
-
 def normalize_caption_text(text: str) -> str:
     text = " ".join(str(text).replace("\n", " ").split())
     return text.strip()
-
-
-def subtitle_text_direction(text: str) -> str:
-    """Wrap Arabic/Hebrew subtitle text in an explicit RTL embedding.
-
-    SRT stores Unicode text in logical order, but subtitle renderers can make
-    different decisions when a line contains Arabic, diacritics, punctuation,
-    or numbers. The embedding is invisible and keeps the stored text intact
-    while forcing the renderer to lay out the line as RTL.
-    """
-    normalized = normalize_caption_text(text)
-    if not normalized:
-        return normalized
-    if any(ARABIC_UNICODE_NAME in unicodedata.name(char, "") for char in normalized):
-        # RLM anchors the line when punctuation/numbers or a neutral glyph
-        # appears at either edge; RLE/PDF keeps the whole caption in one RTL
-        # embedding without changing the logical Arabic text.
-        return f"\u200f\u202b{normalized}\u202c\u200f"
-    return normalized
 
 
 def contains_arabic_text(text: str) -> bool:
@@ -262,64 +247,6 @@ def build_caption_entries(transcript_segments, voice_text: str, total_duration: 
         end = max(start + 0.5, end)
         normalized_entries.append((index, start, min(end, speech_end if index == len(entries) else end), text))
     return normalized_entries
-
-
-def write_srt(entries, output_path: Path):
-    lines = []
-    for idx, start_seconds, end_seconds, raw_text in entries:
-        text = normalize_caption_text(raw_text)
-        if not text:
-            continue
-        text = subtitle_text_direction(text)
-        start = max(0.0, float(start_seconds))
-        end = max(start + 0.05, float(end_seconds))
-        lines.append(
-            f"{idx}\n{format_srt_time(start)} --> {format_srt_time(end)}\n{text}\n"
-        )
-    if not lines:
-        raise RuntimeError("Transkripsi tidak menghasilkan caption yang dapat ditulis.")
-    output_path.write_text("\n".join(lines), encoding="utf-8")
-
-
-def subtitle_filter_path(path: Path) -> str:
-    # ffmpeg subtitles filter on Windows needs escaped drive colon and forward slashes.
-    value = str(path.resolve()).replace("\\", "/")
-    value = value.replace(":", "\\:")
-    value = value.replace("'", "\\'")
-    return value
-
-
-def burn_subtitles(video_path: Path, srt_path: Path, output_path: Path):
-    _, height = ffprobe_size(video_path)
-    font_size = caption_font_size(height)
-    outline_size = max(1, math.ceil(font_size * 0.12))
-    margin_v = max(1, math.ceil(height / CAPTION_BASE_HEIGHT * 20))
-    force_style = (
-        f"FontName={CAPTION_FONT_NAME},FontSize={font_size},PrimaryColour=&H00FFFFFF,"
-        f"OutlineColour=&H00000000,BorderStyle=1,Outline={outline_size},Shadow=0,"
-        f"MarginV={margin_v},Alignment=2,Spacing=-0.5"
-    )
-    vf = f"subtitles='{subtitle_filter_path(srt_path)}':force_style='{force_style}'"
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-vf",
-        vf,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "18",
-        "-c:a",
-        "copy",
-        str(output_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "ffmpeg burn subtitles failed")
 
 
 def _caption_font(size: int):
@@ -416,7 +343,7 @@ def _caption_draw_spec(draw, text: str, width: int, height: int):
     )
     draw_kwargs = _text_measure_kwargs(direction, language)
     spacing = max(1, math.ceil(font_size * 0.15))
-    bottom_margin = max(1, math.ceil(height / CAPTION_BASE_HEIGHT * 20))
+    bottom_margin = caption_bottom_margin(height)
     return wrapped_text, draw_kwargs, font, stroke_width, spacing, bottom_margin
 
 
@@ -567,26 +494,6 @@ def _overlay_caption_entries(video_path: Path, entries, output_path: Path):
             raise RuntimeError(result.stderr.strip() or "ffmpeg caption overlay failed")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def _arabic_caption_overlay(text: str, width: int, height: int, output_path: Path):
-    """Compatibility wrapper for callers that still use the old Arabic helper."""
-    _caption_overlay(text, width, height, output_path)
-
-
-def _overlay_arabic_caption_entries(video_path: Path, entries, output_path: Path):
-    """Compatibility wrapper; the unified renderer also shapes Arabic with Pillow."""
-    _overlay_caption_entries(video_path, entries, output_path)
-
-
-def burn_arabic_subtitles(video_path: Path, entries, output_path: Path):
-    """Burn a batch containing only Arabic captions."""
-    _overlay_caption_entries(video_path, entries, output_path)
-
-
-def burn_mixed_subtitles(video_path: Path, entries, output_path: Path):
-    """Burn mixed Arabic/non-Arabic captions with the same Pillow renderer."""
-    _overlay_caption_entries(video_path, entries, output_path)
 
 
 def transcribe_audio(audio_path: Path, model_size: str):
