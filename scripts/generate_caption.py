@@ -378,6 +378,26 @@ def _caption_overlay(text: str, width: int, height: int, output_path: Path):
     """Render one caption with Pillow so Arabic and non-Arabic use identical pixels."""
     image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
+    wrapped_text, draw_kwargs, font, stroke_width, spacing, bottom_margin = _caption_draw_spec(
+        draw, text, width, height
+    )
+    draw.multiline_text(
+        (width // 2, height - bottom_margin),
+        wrapped_text,
+        font=font,
+        fill=(255, 255, 255, 255),
+        stroke_width=stroke_width,
+        stroke_fill=(0, 0, 0, 255),
+        anchor="mm",
+        align="center",
+        spacing=spacing,
+        **draw_kwargs,
+    )
+    image.save(output_path, format="PNG")
+
+
+def _caption_draw_spec(draw, text: str, width: int, height: int):
+    """Return the exact Pillow layout parameters used by full and cropped overlays."""
     text = normalize_caption_text(text)
     is_arabic = contains_arabic_text(text)
     direction = "rtl" if is_arabic else None
@@ -395,8 +415,55 @@ def _caption_overlay(text: str, width: int, height: int, output_path: Path):
         language=language,
     )
     draw_kwargs = _text_measure_kwargs(direction, language)
+    spacing = max(1, math.ceil(font_size * 0.15))
+    bottom_margin = max(1, math.ceil(height / CAPTION_BASE_HEIGHT * 20))
+    return wrapped_text, draw_kwargs, font, stroke_width, spacing, bottom_margin
+
+
+def _caption_band_height(entries, width: int, height: int) -> int:
+    """Find the smallest transparent band that can contain all caption text."""
+    probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    required_height = 1
+    for _, _, _, raw_text in entries:
+        text = normalize_caption_text(raw_text)
+        if not text:
+            continue
+        wrapped_text, draw_kwargs, font, stroke_width, spacing, bottom_margin = _caption_draw_spec(
+            draw, text, width, height
+        )
+        bbox = draw.multiline_textbbox(
+            (width // 2, 0),
+            wrapped_text,
+            font=font,
+            stroke_width=stroke_width,
+            anchor="mm",
+            align="center",
+            spacing=spacing,
+            **draw_kwargs,
+        )
+        # The cropped band is positioned at y=video_height-band_height.  Using
+        # the same anchor and bottom margin keeps the text at the same absolute
+        # coordinates as the previous full-frame Pillow overlay.
+        required_height = max(required_height, math.ceil(bottom_margin - bbox[1] + 2))
+    return min(height, max(required_height, 4))
+
+
+def _caption_band_overlay(
+    text: str,
+    width: int,
+    video_height: int,
+    band_height: int,
+    output_path: Path,
+):
+    """Render one caption into a narrow transparent band instead of Full HD."""
+    image = Image.new("RGBA", (width, band_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    wrapped_text, draw_kwargs, font, stroke_width, spacing, bottom_margin = _caption_draw_spec(
+        draw, text, width, video_height
+    )
     draw.multiline_text(
-        (width // 2, height - max(1, math.ceil(height / CAPTION_BASE_HEIGHT * 20))),
+        (width // 2, band_height - bottom_margin),
         wrapped_text,
         font=font,
         fill=(255, 255, 255, 255),
@@ -404,44 +471,96 @@ def _caption_overlay(text: str, width: int, height: int, output_path: Path):
         stroke_fill=(0, 0, 0, 255),
         anchor="mm",
         align="center",
-        spacing=max(1, math.ceil(font_size * 0.15)),
+        spacing=spacing,
         **draw_kwargs,
     )
     image.save(output_path, format="PNG")
 
 
+def _concat_file_path(path: Path) -> str:
+    """Escape one Windows path for an FFmpeg concat demuxer list."""
+    return str(path.resolve()).replace("\\", "/").replace("'", "'\\''")
+
+
 def _overlay_caption_entries(video_path: Path, entries, output_path: Path):
-    """Overlay all captions with one Pillow renderer and the final video dimensions."""
+    """Overlay all captions through one narrow Pillow subtitle layer.
+
+    Each caption is rendered at the same pixel size as before, but only the
+    bottom caption band is stored.  FFmpeg then receives one alpha video input
+    and performs one overlay instead of one Full HD looped input per caption.
+    """
     width, height = ffprobe_size(video_path)
+    duration = ffprobe_duration(video_path)
+    if duration <= 0:
+        raise RuntimeError("Durasi video caption tidak valid.")
+    normalized_entries = []
+    for index, start, end, raw_text in entries:
+        text = normalize_caption_text(raw_text)
+        start = max(0.0, min(float(start), duration))
+        end = max(start, min(float(end), duration))
+        if text and end > start:
+            normalized_entries.append((int(index), start, end, text))
+    if not normalized_entries:
+        raise RuntimeError("Caption tidak menghasilkan overlay.")
+    normalized_entries.sort(key=lambda item: (item[1], item[2], item[0]))
+
     temp_dir = Path(tempfile.mkdtemp(prefix="caption_overlay_", dir=str(output_path.parent)))
     try:
-        overlay_files = []
-        for index, start, end, raw_text in entries:
-            text = normalize_caption_text(raw_text)
-            if not text:
-                continue
-            overlay_path = temp_dir / f"overlay_{index:04d}.png"
-            _caption_overlay(text, width, height, overlay_path)
-            overlay_files.append((overlay_path, float(start), float(end)))
-        if not overlay_files:
-            raise RuntimeError("Caption tidak menghasilkan overlay.")
+        band_height = _caption_band_height(normalized_entries, width, height)
+        blank_path = temp_dir / "blank.png"
+        Image.new("RGBA", (width, band_height), (0, 0, 0, 0)).save(blank_path, format="PNG")
 
-        cmd = ["ffmpeg", "-y", "-i", str(video_path)]
-        for overlay_path, _, _ in overlay_files:
-            cmd.extend(["-loop", "1", "-i", str(overlay_path)])
-        filters = []
-        current = "0:v"
-        for overlay_index, (_, start, end) in enumerate(overlay_files, start=1):
-            next_label = f"v{overlay_index}"
-            filters.append(
-                f"[{current}][{overlay_index}:v]overlay=0:0:enable='between(t,{start:.6f},{end:.6f})'[{next_label}]"
-            )
-            current = next_label
+        caption_files = []
+        for file_index, (_, _, _, text) in enumerate(normalized_entries):
+            caption_path = temp_dir / f"caption_{file_index:04d}.png"
+            _caption_band_overlay(text, width, height, band_height, caption_path)
+            caption_files.append(caption_path)
+
+        # Build one timed RGBA stream.  The list contains only a blank band or
+        # one caption band at any point in time, so the final filter graph has a
+        # single overlay input regardless of the number of captions.
+        segments = []
+        cursor = 0.0
+        for caption_item, caption_path in zip(normalized_entries, caption_files):
+            _, start, end, _ = caption_item
+            if start > cursor:
+                segments.append((blank_path, start - cursor))
+            visible_start = max(start, cursor)
+            if end > visible_start:
+                segments.append((caption_path, end - visible_start))
+            cursor = max(cursor, end)
+        if cursor < duration:
+            segments.append((blank_path, duration - cursor))
+        if not segments:
+            raise RuntimeError("Caption tidak menghasilkan layer bertiming.")
+
+        concat_list = temp_dir / "caption_layer.txt"
+        concat_lines = []
+        for image_path, segment_duration in segments:
+            concat_lines.append(f"file '{_concat_file_path(image_path)}'")
+            concat_lines.append(f"duration {segment_duration:.6f}")
+        # concat demuxer applies the last duration only when the last file is
+        # repeated, otherwise its duration is guessed as one frame.
+        concat_lines.append(f"file '{_concat_file_path(segments[-1][0])}'")
+        concat_list.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+
+        layer_path = temp_dir / "caption_layer.mov"
+        layer_cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-an", "-fps_mode", "vfr", "-c:v", "qtrle", "-pix_fmt", "argb",
+            "-t", f"{duration:.6f}", str(layer_path),
+        ]
+        layer_result = subprocess.run(layer_cmd, capture_output=True, text=True, check=False)
+        if layer_result.returncode != 0:
+            raise RuntimeError(layer_result.stderr.strip() or "ffmpeg caption layer failed")
+
+        filter_complex = "[0:v][1:v]overlay=0:H-h:format=auto:eof_action=repeat[v]"
+        cmd = ["ffmpeg", "-y", "-i", str(video_path), "-i", str(layer_path)]
         cmd.extend([
-            "-filter_complex", ";".join(filters),
-            "-map", f"[{current}]", "-map", "0:a?",
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "0:a?",
             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-c:a", "copy", "-shortest", str(output_path),
+            "-c:a", "copy", "-t", f"{duration:.6f}", str(output_path),
         ])
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
