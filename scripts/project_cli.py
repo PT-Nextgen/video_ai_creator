@@ -21,6 +21,7 @@ SCENE_TYPE_CHOICES = [
     "wan22_t2v_i2v",
     "minimax-h3_t2v_i2v",
     "minimax-h3_i2v",
+    "minimax-h3_i2v-panjang",
     "minimax-h3_s2v",
     "minimax-h3_r2v",
     "wan22_t2v_batch",

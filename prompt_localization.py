@@ -59,6 +59,7 @@ RUNTIME_PROMPTS_BY_SCENE_TYPE = {
     "wan22_s2v": ("wan22_s2v_prompt.json", "z_image_prompt.json"),
     "minimax-h3_t2v_i2v": ("minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"),
     "minimax-h3_i2v": ("z_image_prompt.json", "minimax_h3_i2v_prompt.json"),
+    "minimax-h3_i2v-panjang": ("z_image_prompt.json", "minimax_h3_i2v_panjang_prompt.json"),
     "minimax-h3_s2v": ("z_image_prompt.json", "minimax_h3_s2v_prompt.json"),
     "minimax-h3_r2v": ("minimax_h3_r2v_prompt.json",),
     "i2v": ("z_image_prompt.json",),
@@ -104,7 +105,7 @@ DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
 LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
 LOCAL_TRANSLATE_REASONING_EFFORT = "low"
-LOCAL_PROMPT_REASONING_EFFORT = "xhigh"
+LOCAL_PROMPT_REASONING_EFFORT = "low"
 
 
 def format_llm_runtime_log(
@@ -154,6 +155,8 @@ GROUP_PROMPT_FIELDS = {
     "image_edit_prompt.json": ["prompt"],
     "wan22_t2v_batch_extra_prompts.json": ["positive_prompt", "negative_prompt"],
 }
+
+MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME = "minimax_h3_i2v_panjang_prompt.json"
 
 LORA_TRIGGER_WORDS_FIELD = "lora_trigger_words"
 
@@ -1491,6 +1494,51 @@ def resolve_prompt_payload_for_runtime(
         translate_provider,
         project_dir,
     )
+
+    if filename == MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME:
+        prompts = source.get("prompts")
+        if not isinstance(prompts, list) or len(prompts) != 4:
+            raise ValueError("Prompt MiniMax H3 I2V panjang harus memiliki tepat 4 prompt.")
+        translator = get_prompt_translator(translate_provider, project_dir=project_dir)
+        resolved_prompts = []
+        stored_prompts = []
+        try:
+            active_count = int(source.get("continuations", 0)) + 1
+        except (TypeError, ValueError):
+            active_count = 1
+        active_count = max(1, min(4, active_count))
+        for index, raw_entry in enumerate(prompts, start=1):
+            if not isinstance(raw_entry, dict):
+                raise ValueError(f"Prompt MiniMax H3 I2V panjang ke-{index} tidak valid.")
+            entry = copy.deepcopy(raw_entry)
+            if index > active_count:
+                stored_prompts.append(entry)
+                resolved_prompts.append(copy.deepcopy(entry))
+                continue
+            id_new = entry.get("id_new")
+            probe = {"id_old": id_new, "id_new": id_new, "en": id_new}
+            errors = validate_structured_prompt(probe, expected_mode="I2VA")
+            if errors:
+                raise ValueError(f"Prompt MiniMax H3 I2V panjang ke-{index} tidak valid: " + "; ".join(errors[:3]))
+            if entry.get("id_old") != id_new or not isinstance(entry.get("en"), dict):
+                translated_en = translator.translate_structured_prompt_to_english(id_new, mode="I2VA")
+                entry["id_old"] = copy.deepcopy(id_new)
+                entry["id_new"] = copy.deepcopy(id_new)
+                entry["en"] = translated_en
+                changed = True
+            else:
+                errors = validate_structured_prompt(entry, expected_mode="I2VA")
+                if errors:
+                    raise ValueError(f"Prompt MiniMax H3 I2V panjang en ke-{index} tidak valid: " + "; ".join(errors[:3]))
+            stored_prompts.append(entry)
+            runtime_entry = copy.deepcopy(entry)
+            runtime_entry["positive_prompt"] = runtime_entry.get("en")
+            resolved_prompts.append(runtime_entry)
+        stored["prompts"] = stored_prompts
+        resolved["prompts"] = resolved_prompts
+        if stored != source:
+            changed = True
+        return resolved, stored, changed
 
     if filename in {"minimax_h3_s2v_prompt.json", "minimax_h3_r2v_prompt.json"}:
         structured = source.get("positive_prompt")

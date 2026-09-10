@@ -27,7 +27,7 @@ LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
 DEFAULT_LOCAL_PROMPT_PORT = 8080
 LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
-LOCAL_AGENTIC_REASONING_EFFORT = "xhigh"
+LOCAL_AGENTIC_REASONING_EFFORT = "low"
 
 
 # ---------------------------------------------------------------------------

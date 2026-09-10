@@ -58,6 +58,10 @@ from minimax_h3_i2v.minimax_h3_i2v import (
     build_minimax_h3_i2v_workflow,
     send_workflow as send_minimax_h3_i2v_workflow,
 )
+from minimax_h3_i2v_panjang import (
+    DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_I2V_PANJANG_PROMPT,
+    PROMPT_FILENAME as MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME,
+)
 from minimax_h3_r2v.minimax_h3_r2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_S2V_PROMPT,
     DEFAULT_R2V_PROMPT as DEFAULT_MINIMAX_H3_R2V_PROMPT,
@@ -67,7 +71,6 @@ from minimax_h3_r2v.minimax_h3_r2v import (
     send_workflow as send_minimax_h3_s2v_workflow,
 )
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
-from scripts.generate_caption import apply_caption_to_video
 from scripts.generate_compose import (
     COMFY_AUDIO_SOURCE_DIRNAME,
     COMFY_AUDIO_SOURCE_FILENAME,
@@ -81,6 +84,7 @@ from scripts.generate_compose import (
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
 from scripts.generate_image_zoom_video import generate_image_zoom_video
+from scripts.color_match_video import color_match_video
 from prompt_localization import (
     LORA_TRIGGER_WORDS_FIELD,
     prepare_prompt_payload_for_save,
@@ -89,7 +93,6 @@ from prompt_localization import (
     resolve_prompt_payload_for_runtime,
     prepare_project_prompts_for_runtime,
 )
-from scripts.project_settings import load_project_settings
 
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
@@ -149,6 +152,7 @@ def _read_scene_json(scene_dir, filename, required=False):
         if filename in {
             'minimax_h3_t2v_prompt.json',
             'minimax_h3_i2v_prompt.json',
+            'minimax_h3_i2v_panjang_prompt.json',
             'minimax_h3_s2v_prompt.json',
             'minimax_h3_r2v_prompt.json',
         }:
@@ -337,7 +341,7 @@ def _invalidate_comfy_audio_source(scene_dir: str):
 
 
 
-def process_scene(scene_dir, server, project_generate_caption=True):
+def process_scene(scene_dir, server):
     """Process a single scene directory.
 
     Steps:
@@ -362,15 +366,6 @@ def process_scene(scene_dir, server, project_generate_caption=True):
         text = " ".join(text.splitlines()).strip()
         return text.encode("cp1252", errors="replace").decode("cp1252")
 
-    def _apply_caption_if_enabled(video_path):
-        if not bool(project_generate_caption):
-            return True
-        try:
-            return apply_caption_to_video(Path(scene_dir), Path(video_path), overwrite=True)
-        except Exception as e:
-            write_log(f"Failed to apply caption for {scene_dir}: {e}")
-            return False
-
     def _finalize_scene_success(
         video_path,
         *,
@@ -394,6 +389,7 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             'wan22_t2v_i2v',
             'wan22_t2v',
             'minimax-h3_i2v',
+            'minimax-h3_i2v-panjang',
             'minimax-h3_t2v_i2v',
         }:
             try:
@@ -415,8 +411,8 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             except Exception as e:
                 write_log(f"Failed to mark composed scene audio for {scene_dir}: {e}")
                 return False
-        if not _apply_caption_if_enabled(video_path):
-            return False
+        # Caption is intentionally deferred until project-level final compose,
+        # after all scenes are merged and the optional final upscale is done.
         if success_message:
             write_log(success_message)
         return True
@@ -1023,6 +1019,184 @@ def process_scene(scene_dir, server, project_generate_caption=True):
             preserve_comfy_audio=not final_remove_sound,
             compose_audio=True,
             success_message=f"Completed minimax-h3_t2v_i2v processing for {scene_dir}",
+        )
+
+    if scene_type == 'minimax-h3_i2v-panjang':
+        try:
+            scene_duration = float(scene_meta.get('duration_seconds', 0))
+        except Exception:
+            scene_duration = 0
+        if not (1.0 <= scene_duration <= 15.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
+            write_log(
+                "minimax-h3_i2v-panjang scene duration must be between 1.0 and 15.0 seconds with at most 1 decimal: "
+                f"{scene_duration}"
+            )
+            return False
+
+        _ensure_scene_json(
+            scene_dir,
+            MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME,
+            DEFAULT_MINIMAX_H3_I2V_PANJANG_PROMPT,
+        )
+        try:
+            chained_prompt = _read_scene_json(
+                scene_dir,
+                MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME,
+                required=True,
+            )
+            prompts = chained_prompt.get('prompts') if isinstance(chained_prompt, dict) else None
+            if not isinstance(prompts, list) or len(prompts) != 4:
+                raise ValueError('field prompts harus berisi tepat 4 prompt')
+            continuation_count = int(
+                chained_prompt.get('continuations', scene_meta.get('i2v_continuations', 0))
+            )
+        except Exception as e:
+            write_log(f"Failed to read {MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME} for {scene_dir}: {e}")
+            return False
+        if continuation_count not in {0, 1, 2, 3}:
+            write_log(f"minimax-h3_i2v-panjang continuation must be 0..3: {continuation_count}")
+            return False
+
+        img_path = _find_latest_root_image(scene_dir)
+        if not img_path:
+            write_log(f"minimax-h3_i2v-panjang scene requires at least one input image in root folder {scene_dir}")
+            return False
+        uploaded_name = _upload_to_comfy(img_path)
+        if not uploaded_name:
+            write_log(f"Failed to upload image for minimax-h3_i2v-panjang in {scene_dir}")
+            return False
+
+        remove_sound = bool(chained_prompt.get('remove_sound', False))
+        segment_paths = []
+        active_stage_count = continuation_count + 1
+        for stage_index in range(active_stage_count):
+            raw_entry = prompts[stage_index]
+            if not isinstance(raw_entry, dict):
+                write_log(f"Prompt MiniMax H3 I2V panjang ke-{stage_index + 1} tidak valid")
+                return False
+            stage_prompt = copy.deepcopy(chained_prompt)
+            stage_prompt['positive_prompt'] = {
+                'id_old': copy.deepcopy(raw_entry.get('id_old', {})),
+                'id_new': copy.deepcopy(raw_entry.get('id_new', {})),
+                'en': copy.deepcopy(raw_entry.get('en', {})),
+            }
+            try:
+                i2v_workflow = build_minimax_h3_i2v_workflow(
+                    stage_prompt,
+                    scene_meta,
+                    uploaded_name=uploaded_name,
+                    duration_override=scene_duration,
+                    fps_override=stage_prompt.get('fps', 24),
+                )
+            except Exception as e:
+                write_log(f"Failed to build MiniMax H3 I2V panjang stage {stage_index + 1}: {e}")
+                return False
+            i2v_result = send_minimax_h3_i2v_workflow(
+                i2v_workflow,
+                uploaded_name,
+                server,
+                log_file=LOG_FILE,
+                source_label=os.path.join(scene_dir, MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME),
+            )
+            if not i2v_result:
+                write_log(f"send_minimax_h3_i2v_workflow failed for panjang stage {stage_index + 1} in {scene_dir}")
+                return False
+            prompt_id = i2v_result.get('prompt_id') or i2v_result.get('id')
+            write_log(f"Posted MiniMax H3 I2V panjang stage {stage_index + 1} for {scene_dir}, prompt_id={prompt_id}")
+            video_out = None
+            if prompt_id:
+                video_out = comfyui_api.wait_for_output(
+                    server,
+                    prompt_id,
+                    output_type='video',
+                    timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
+                    interval=POLL_INTERVAL,
+                )
+            if not video_out:
+                write_log(f"No MiniMax H3 I2V video found for panjang stage {stage_index + 1} in {scene_dir}")
+                return False
+            video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
+            if not video_filename:
+                write_log(f"Cannot determine MiniMax H3 I2V filename for panjang stage {stage_index + 1}")
+                return False
+            video_url = comfyui_api.get_file_url(
+                server,
+                video_filename,
+                subfolder=video_out.get('subfolder'),
+                type_=video_out.get('type'),
+            )
+            video_out_path = os.path.join(
+                scene_dir,
+                f"minimax_h3_i2v_panjang_segment_{stage_index + 1}.mp4",
+            )
+            try:
+                comfyui_api.download_file_url(video_url, video_out_path)
+                if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
+                    raise RuntimeError('file hasil kosong atau tidak ditemukan')
+            except Exception as e:
+                write_log(f"Failed to download MiniMax H3 I2V panjang stage {stage_index + 1}: {e}")
+                return False
+            if remove_sound:
+                try:
+                    _remove_video_audio(video_out_path)
+                except Exception as e:
+                    write_log(f"Failed to remove sound from panjang stage {stage_index + 1}: {e}")
+                    return False
+            segment_paths.append(video_out_path)
+
+            if stage_index < active_stage_count - 1:
+                frame_path = os.path.join(
+                    scene_dir,
+                    f"minimax_h3_i2v_panjang_frame_{stage_index + 1}.png",
+                )
+                try:
+                    _extract_last_frame_image(video_out_path, frame_path)
+                except Exception as e:
+                    write_log(f"Failed to extract last frame after panjang stage {stage_index + 1}: {e}")
+                    return False
+                uploaded_name = _upload_to_comfy(frame_path)
+                if not uploaded_name:
+                    write_log(f"Failed to upload continuation frame after panjang stage {stage_index + 1}")
+                    return False
+
+        final_video_path = segment_paths[0]
+        if len(segment_paths) > 1:
+            final_video_path = os.path.join(scene_dir, 'minimax_h3_i2v_panjang_final.mp4')
+            try:
+                _concat_video_segments(
+                    segment_paths,
+                    final_video_path,
+                    preserve_audio=not remove_sound,
+                )
+            except Exception as e:
+                write_log(f"Failed to concat MiniMax H3 I2V panjang stages for {scene_dir}: {e}")
+                return False
+        color_match_tmp_path = os.path.join(scene_dir, '__minimax_h3_i2v_panjang_color_match_tmp__.mp4')
+        try:
+            color_match_video(Path(final_video_path), Path(color_match_tmp_path), strength=1.0)
+            os.replace(color_match_tmp_path, final_video_path)
+            write_log(
+                f"Applied color match to combined MiniMax H3 I2V panjang video: {final_video_path}"
+            )
+        except Exception as e:
+            write_log(f"Failed to color match MiniMax H3 I2V panjang video for {scene_dir}: {e}")
+            if os.path.exists(color_match_tmp_path):
+                try:
+                    os.remove(color_match_tmp_path)
+                except OSError:
+                    pass
+            return False
+        try:
+            _invalidate_comfy_audio_source(scene_dir)
+        except Exception as e:
+            write_log(f"Failed to invalidate old MiniMax H3 I2V panjang audio source for {scene_dir}: {e}")
+            return False
+        return _finalize_scene_success(
+            final_video_path,
+            is_s2v=False,
+            preserve_comfy_audio=not remove_sound,
+            compose_audio=True,
+            success_message=f"Completed minimax-h3_i2v-panjang processing for {scene_dir}",
         )
 
     if scene_type == 'minimax-h3_i2v':
@@ -1816,13 +1990,6 @@ def main():
         write_log(f"Project folder tidak ditemukan: {project_dir}")
         print(f"Project folder not found: {project_dir}")
         return 1
-    try:
-        project_settings = load_project_settings(Path(project_dir))
-    except Exception as e:
-        write_log(f"Gagal membaca project_settings.json: {e}")
-        print(f"Gagal membaca project_settings.json: {e}")
-        return 1
-    project_generate_caption = bool(project_settings.get("caption", {}).get("generate_caption", True))
     scenes = sorted([d for d in os.listdir(project_dir) if d.startswith('scene_')], key=_scene_sort_key)
 
     # If user provided specific scenes, filter available scenes
@@ -1860,7 +2027,7 @@ def main():
         for scene in scenes:
             scene_dir = os.path.join(project_dir, scene)
             print(f"Processing {scene_dir}")
-            ok = process_scene(scene_dir, args.server, project_generate_caption=project_generate_caption)
+            ok = process_scene(scene_dir, args.server)
             if not ok:
                 write_log(f"Stopping run due to failure processing {scene}")
                 print(f"Stopped due to failure in {scene}")

@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -27,6 +28,9 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 DEFAULT_MODEL_SIZE = "base"
 TAG_PATTERN = re.compile(r"\[[^\]]+\]")
 ARABIC_UNICODE_NAME = "ARABIC"
+CAPTION_BASE_HEIGHT = 640
+CAPTION_BASE_FONT_SIZE = 12
+CAPTION_FONT_NAME = "Arial"
 
 
 def list_scene_dirs():
@@ -107,6 +111,34 @@ def ffprobe_duration(path: Path) -> float:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "ffprobe failed")
     return float(result.stdout.strip())
+
+
+def ffprobe_size(path: Path) -> tuple[int, int]:
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0:s=x",
+        str(path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "ffprobe video dimensions failed")
+    try:
+        width, height = [int(value) for value in result.stdout.strip().split("x", 1)]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Dimensi video tidak valid: {result.stdout.strip()}") from exc
+    return width, height
+
+
+def caption_font_size(height: int | float) -> int:
+    """Scale the caption from 12 px at a 640 px video height."""
+    try:
+        numeric_height = float(height)
+    except (TypeError, ValueError):
+        numeric_height = CAPTION_BASE_HEIGHT
+    return max(1, math.ceil(numeric_height / CAPTION_BASE_HEIGHT * CAPTION_BASE_FONT_SIZE))
 
 
 def extract_audio_from_video(video_path: Path, output_path: Path):
@@ -258,10 +290,14 @@ def subtitle_filter_path(path: Path) -> str:
 
 
 def burn_subtitles(video_path: Path, srt_path: Path, output_path: Path):
+    _, height = ffprobe_size(video_path)
+    font_size = caption_font_size(height)
+    outline_size = max(1, math.ceil(font_size * 0.12))
+    margin_v = max(1, math.ceil(height / CAPTION_BASE_HEIGHT * 20))
     force_style = (
-        "FontName=Arial,FontSize=12,PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,"
-        "MarginV=20,Alignment=2,Spacing=-0.5"
+        f"FontName={CAPTION_FONT_NAME},FontSize={font_size},PrimaryColour=&H00FFFFFF,"
+        f"OutlineColour=&H00000000,BorderStyle=1,Outline={outline_size},Shadow=0,"
+        f"MarginV={margin_v},Alignment=2,Spacing=-0.5"
     )
     vf = f"subtitles='{subtitle_filter_path(srt_path)}':force_style='{force_style}'"
     cmd = [
@@ -286,10 +322,10 @@ def burn_subtitles(video_path: Path, srt_path: Path, output_path: Path):
         raise RuntimeError(result.stderr.strip() or "ffmpeg burn subtitles failed")
 
 
-def _arabic_font(size: int):
+def _caption_font(size: int):
     for font_path in (
-        Path(r"C:\Windows\Fonts\tahoma.ttf"),
         Path(r"C:\Windows\Fonts\arial.ttf"),
+        Path(r"C:\Windows\Fonts\tahoma.ttf"),
         Path(r"C:\Windows\Fonts\segoeui.ttf"),
     ):
         if font_path.exists():
@@ -297,33 +333,49 @@ def _arabic_font(size: int):
     return ImageFont.load_default()
 
 
-def _arabic_caption_overlay(text: str, width: int, height: int, output_path: Path):
-    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    font_size = max(12, round(width * 0.045))
-    margin = max(12, round(width * 0.06))
-    while font_size > 10:
-        font = _arabic_font(font_size)
+def _wrap_caption_text(draw, text: str, font, max_width: int) -> str:
+    words = normalize_caption_text(text).split()
+    if not words:
+        return ""
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
         bbox = draw.textbbox(
             (0, 0),
-            text,
+            candidate,
             font=font,
             direction="rtl",
             language="ar",
-            stroke_width=max(1, round(font_size * 0.12)),
         )
-        if bbox[2] - bbox[0] <= width - (margin * 2):
-            break
-        font_size -= 1
-    stroke_width = max(1, round(font_size * 0.12))
-    draw.text(
-        (width // 2, height - max(24, round(height * 0.09))),
-        text,
+        if current and bbox[2] - bbox[0] > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
+def _arabic_caption_overlay(text: str, width: int, height: int, output_path: Path):
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    font_size = caption_font_size(height)
+    margin = max(1, math.ceil(width / CAPTION_BASE_HEIGHT * 20))
+    font = _caption_font(font_size)
+    stroke_width = max(1, math.ceil(font_size * 0.12))
+    wrapped_text = _wrap_caption_text(draw, text, font, max(1, width - (margin * 2)))
+    draw.multiline_text(
+        (width // 2, height - max(1, math.ceil(height / CAPTION_BASE_HEIGHT * 20))),
+        wrapped_text,
         font=font,
         fill=(255, 255, 255, 255),
         stroke_width=stroke_width,
         stroke_fill=(0, 0, 0, 255),
         anchor="mm",
+        align="center",
+        spacing=max(1, math.ceil(font_size * 0.15)),
         direction="rtl",
         language="ar",
     )
@@ -435,6 +487,89 @@ def is_caption_enabled(scene_dir: Path, scene_meta: dict) -> bool:
     return bool(project_settings.get("caption", {}).get("generate_caption", True))
 
 
+def _caption_voice_text(scene_dir: Path, scene_meta: dict) -> str:
+    voice_selection = load_voice_selection(scene_dir)
+    return str(
+        voice_selection.get("selected_voice_text")
+        or scene_meta.get("voice_text", "")
+    ).strip()
+
+
+def build_caption_entries_for_scene(
+    scene_dir: Path,
+    video_path: Path,
+    model_size: str = DEFAULT_MODEL_SIZE,
+    audio_path: Path | None = None,
+):
+    """Build timed entries without burning them into the video.
+
+    The caller can later offset/retime these entries and burn them once onto
+    the final composed video.  ``audio_path`` is used by compose-song so the
+    timing follows the exact audio chunk placed on the final timeline.
+    """
+    scene_dir = Path(scene_dir)
+    video_path = Path(video_path)
+    scene_meta = load_scene_meta(scene_dir)
+    if not video_path.exists():
+        raise RuntimeError(f"Video untuk caption tidak ditemukan: {video_path}")
+
+    voice_text = _caption_voice_text(scene_dir, scene_meta)
+    if not strip_audio_tags(voice_text):
+        return []
+
+    selected_audio = Path(audio_path) if audio_path else None
+    if selected_audio is None or not selected_audio.exists():
+        voice_selection = load_voice_selection(scene_dir)
+        selected_filename = str(voice_selection.get("selected_filename", "")).strip()
+        selected_audio = scene_dir / selected_filename if selected_filename else None
+        selected_audio = selected_audio if selected_audio and selected_audio.exists() else None
+    speech_audio = selected_audio or find_latest_file(scene_dir, AUDIO_EXTS, prefix="speech_")
+    temp_audio = None
+    try:
+        audio_source = speech_audio
+        if audio_source is None:
+            temp_audio = scene_dir / "_caption_temp_audio.wav"
+            extract_audio_from_video(video_path, temp_audio)
+            audio_source = temp_audio
+        duration = ffprobe_duration(audio_source)
+        if duration <= 0:
+            raise RuntimeError(f"Durasi audio untuk caption tidak valid di {scene_dir}.")
+        transcript_segments = transcribe_audio(audio_source, model_size=model_size)
+        return build_caption_entries(transcript_segments, voice_text, duration)
+    finally:
+        if temp_audio and temp_audio.exists():
+            try:
+                temp_audio.unlink()
+            except OSError:
+                pass
+
+
+def burn_caption_entries(video_path: Path, entries, output_path: Path):
+    """Burn already-timed entries using the final video's dimensions."""
+    video_path = Path(video_path)
+    output_path = Path(output_path)
+    if not entries:
+        raise RuntimeError("Tidak ada entry caption untuk dibakar.")
+    srt_path = output_path.with_name(f".{output_path.stem}.caption.srt")
+    try:
+        write_srt(entries, srt_path)
+        arabic_entries = [entry for entry in entries if contains_arabic_text(entry[3])]
+        if arabic_entries and len(arabic_entries) == len(entries):
+            burn_arabic_subtitles(video_path, entries, output_path)
+        elif arabic_entries:
+            burn_mixed_subtitles(video_path, entries, output_path)
+        else:
+            burn_subtitles(video_path, srt_path, output_path)
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise RuntimeError(f"Video caption hasil burn kosong atau gagal dibuat: {output_path}")
+    finally:
+        if srt_path.exists():
+            try:
+                srt_path.unlink()
+            except OSError:
+                pass
+
+
 def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = DEFAULT_MODEL_SIZE, overwrite: bool = True):
     scene_meta = load_scene_meta(scene_dir)
     if not is_caption_enabled(scene_dir, scene_meta):
@@ -446,51 +581,17 @@ def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = 
         write_log(f"Video untuk caption tidak ditemukan: {video_path}", level="error")
         return False
 
-    voice_selection = load_voice_selection(scene_dir)
-    selected_filename = str(voice_selection.get("selected_filename", "")).strip()
-    selected_audio = scene_dir / selected_filename if selected_filename else None
-    speech_audio = selected_audio if selected_audio and selected_audio.exists() else find_latest_file(scene_dir, AUDIO_EXTS, prefix="speech_")
-    temp_audio = None
     try:
-        audio_source = speech_audio
-        if audio_source is None:
-            temp_audio = scene_dir / "_caption_temp_audio.wav"
-            extract_audio_from_video(video_path, temp_audio)
-            audio_source = temp_audio
-
-        duration = ffprobe_duration(audio_source)
-        if duration <= 0:
-            write_log(f"Durasi audio untuk caption tidak valid di {scene_dir}.", level="error")
-            return False
-
-        # voice_selection adalah sumber final setelah approval voice. Fallback ke
-        # scene_meta menjaga kompatibilitas project lama yang belum punya file ini.
-        voice_text = str(voice_selection.get("selected_voice_text") or scene_meta.get("voice_text", "")).strip()
-        if not strip_audio_tags(voice_text):
+        caption_entries = build_caption_entries_for_scene(scene_dir, video_path, model_size=model_size)
+        if not caption_entries:
             write_log(f"Tidak ada voice_text yang valid untuk caption di {scene_dir}.", level="error")
             return False
-
-        transcript_segments = transcribe_audio(audio_source, model_size=model_size)
-        caption_entries = build_caption_entries(transcript_segments, voice_text, duration)
-        srt_path = video_path.with_name(f"{video_path.stem}.caption.srt")
-        if srt_path.exists():
-            try:
-                srt_path.unlink()
-            except OSError:
-                pass
-        write_srt(caption_entries, srt_path)
 
         if overwrite:
             output_path = video_path.with_name(f"{video_path.stem}.__caption_tmp__.mp4")
         else:
             output_path = video_path.with_name(f"{video_path.stem}_captioned.mp4")
-        arabic_entries = [entry for entry in caption_entries if contains_arabic_text(entry[3])]
-        if arabic_entries and len(arabic_entries) == len(caption_entries):
-            burn_arabic_subtitles(video_path, caption_entries, output_path)
-        elif arabic_entries:
-            burn_mixed_subtitles(video_path, caption_entries, output_path)
-        else:
-            burn_subtitles(video_path, srt_path, output_path)
+        burn_caption_entries(video_path, caption_entries, output_path)
         if not output_path.exists() or output_path.stat().st_size <= 0:
             write_log(f"Video caption hasil burn kosong atau gagal dibuat: {output_path}", level="error")
             return False
@@ -510,24 +611,11 @@ def apply_caption_to_video(scene_dir: Path, video_path: Path, model_size: str = 
                 return False
         else:
             final_path = output_path
-        try:
-            if srt_path.exists():
-                srt_path.unlink()
-        except OSError:
-            pass
         write_log(f"Berhasil membuat video caption untuk {scene_dir}: {final_path}")
         return True
     except Exception as e:
         write_log(f"Gagal membuat caption untuk {scene_dir}: {e}", level="error")
         return False
-    finally:
-        if temp_audio and temp_audio.exists():
-            try:
-                temp_audio.unlink()
-            except OSError:
-                pass
-
-
 def process_scene(scene_dir: Path, model_size: str = DEFAULT_MODEL_SIZE):
     latest_video = find_latest_caption_source_video(scene_dir)
     if not latest_video:

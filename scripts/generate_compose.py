@@ -21,6 +21,11 @@ if ROOT not in sys.path:
 
 from logging_config import setup_logging, get_logger
 from prompt_localization import read_json_for_runtime, resolve_prompt_payload_for_runtime
+from scripts.generate_caption import (
+    build_caption_entries_for_scene,
+    burn_caption_entries,
+    is_caption_enabled,
+)
 from scripts.project_settings import load_project_settings
 
 setup_logging()
@@ -992,6 +997,108 @@ def export_scene_video_to_combined(scene_dir):
     return out_path
 
 
+def _scene_dir_for_combined_video(video_path):
+    """Resolve ``combined/Scene_N_...`` back to its root scene directory."""
+    basename = os.path.basename(video_path)
+    parts = basename.split('_')
+    if len(parts) < 2:
+        return None
+    try:
+        scene_number = int(parts[1])
+    except (TypeError, ValueError):
+        return None
+    scene_dir = os.path.join(API_PRODUCTION, f'scene_{scene_number}')
+    return scene_dir if os.path.isdir(scene_dir) else None
+
+
+def _scale_caption_entries(entries, offset, source_duration, target_duration):
+    if not entries:
+        return []
+    try:
+        source_duration = float(source_duration)
+        target_duration = float(target_duration)
+    except (TypeError, ValueError):
+        source_duration = target_duration = 0.0
+    ratio = target_duration / source_duration if source_duration > 0.001 else 1.0
+    result = []
+    for index, start, end, text in entries:
+        result.append(
+            (
+                index,
+                float(offset) + max(0.0, float(start)) * ratio,
+                float(offset) + max(float(start), float(end)) * ratio,
+                text,
+            )
+        )
+    return result
+
+
+def _collect_caption_entries_for_timeline(videos, timeline_paths, cover_clip=False):
+    """Keep per-scene timing while mapping entries onto the final timeline."""
+    caption_entries = []
+    offset = 0.0
+    path_offset = 0
+    if cover_clip and timeline_paths:
+        offset = ffprobe_duration(timeline_paths[0])
+        path_offset = 1
+    for index, source_video in enumerate(videos):
+        target_index = index + path_offset
+        if target_index >= len(timeline_paths):
+            break
+        scene_dir = _scene_dir_for_combined_video(source_video)
+        target_video = timeline_paths[target_index]
+        if not scene_dir or not is_caption_enabled(scene_dir, {}):
+            offset += ffprobe_duration(target_video)
+            continue
+        try:
+            entries = build_caption_entries_for_scene(scene_dir, source_video)
+            caption_entries.extend(
+                _scale_caption_entries(
+                    entries,
+                    offset,
+                    ffprobe_duration(source_video),
+                    ffprobe_duration(target_video),
+                )
+            )
+        except Exception as exc:
+            raise RuntimeError(f'Gagal menyiapkan caption untuk {os.path.basename(source_video)}: {exc}') from exc
+        offset += ffprobe_duration(target_video)
+    return caption_entries
+
+
+def _collect_caption_entries_for_song(song_scene_dirs, source_videos, chunk_paths, retimed_paths, cover_clip=False, cover_path=None):
+    """Build captions from the exact song chunks used by compose-song."""
+    caption_entries = []
+    offset = ffprobe_duration(cover_path) if cover_clip and cover_path else 0.0
+    for scene_dir, source_video, chunk_path, retimed_path in zip(
+        song_scene_dirs,
+        source_videos,
+        chunk_paths,
+        retimed_paths,
+    ):
+        if not is_caption_enabled(scene_dir, {}):
+            offset += ffprobe_duration(retimed_path)
+            continue
+        try:
+            entries = build_caption_entries_for_scene(
+                scene_dir,
+                source_video,
+                audio_path=chunk_path,
+            )
+            caption_entries.extend(
+                _scale_caption_entries(
+                    entries,
+                    offset,
+                    ffprobe_duration(chunk_path),
+                    ffprobe_duration(retimed_path),
+                )
+            )
+        except Exception as exc:
+            raise RuntimeError(f'Gagal menyiapkan caption untuk {os.path.basename(source_video)}: {exc}') from exc
+        offset += ffprobe_duration(retimed_path)
+    return caption_entries
+
+
 def normalize_video(src, dst, fps, width, height):
     # Re-encode with fixed video settings and guaranteed stereo AAC audio.
     # If source has no audio stream, add silent audio so concat remains stable.
@@ -1096,6 +1203,7 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
                 break
             song_scene_dirs.append(scene_dir)
 
+    caption_entries = []
     with tempfile.TemporaryDirectory(prefix='merge_') as td:
         # Master fps and size from first video
         master_fps = ffprobe_fps(videos[0])
@@ -1151,6 +1259,13 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         if all_same and cover_clip:
             norm_paths = [cover_clip] + norm_paths
 
+        if not compose_song or not song_scene_dirs:
+            caption_entries = _collect_caption_entries_for_timeline(
+                videos,
+                norm_paths,
+                cover_clip=bool(cover_clip),
+            )
+
         list_path = os.path.join(td, 'concat_list.txt')
         with open(list_path, 'w', encoding='utf-8') as f:
             for vp in norm_paths:
@@ -1181,6 +1296,7 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
             song_video_paths = []
             if cover_clip and norm_paths:
                 song_video_paths.append(norm_paths[0])
+            retimed_paths = []
             for index, (video_path, chunk_path) in enumerate(zip(scene_norm_paths, chunk_paths)):
                 retimed_path = os.path.join(td, f'song_video_{index:03d}.mp4')
                 retime_video_only_to_duration(
@@ -1188,7 +1304,17 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
                     retimed_path,
                     ffprobe_duration(chunk_path),
                 )
+                retimed_paths.append(retimed_path)
                 song_video_paths.append(retimed_path)
+
+            caption_entries = _collect_caption_entries_for_song(
+                song_scene_dirs,
+                videos,
+                chunk_paths,
+                retimed_paths,
+                cover_clip=bool(cover_clip),
+                cover_path=norm_paths[0] if cover_clip and norm_paths else None,
+            )
 
             song_video = os.path.join(td, 'song_video_only.mp4')
             concat_videos_only_reencode(song_video_paths, song_video)
@@ -1254,6 +1380,16 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
             float(upscale_factor),
         )
 
+    if caption_entries:
+        caption_tmp = f'{final_out}.caption_tmp.mp4'
+        try:
+            burn_caption_entries(Path(final_out), caption_entries, Path(caption_tmp))
+            os.replace(caption_tmp, final_out)
+            logger.info('Burned final captions to %s', final_out)
+        finally:
+            if os.path.exists(caption_tmp):
+                _safe_remove_file(caption_tmp)
+
     logger.info('Final merged video: %s', final_out)
     return final_out
 
@@ -1312,6 +1448,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             is_s2v = scene_type in {'wan22_s2v', 'minimax-h3_s2v', 'minimax-h3_r2v'}
             is_minimax_h3_av = scene_type in {
                 'minimax-h3_i2v',
+                'minimax-h3_i2v-panjang',
                 'minimax-h3_t2v_i2v',
             }
             audio_composed = bool(scene_meta.get('audio_composed', False))
@@ -1326,6 +1463,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 'wan22_t2v_i2v',
                 'wan22_t2v',
                 'minimax-h3_i2v',
+                'minimax-h3_i2v-panjang',
                 'minimax-h3_t2v_i2v',
             }:
                 export_scene_video_to_combined(scene_dir)

@@ -476,6 +476,12 @@ def generate_variation_configs_for_scene(
     if scene_meta is None:
         return False
     scene_type = str(scene_meta.get("scene_type", "wan22_i2v")).strip()
+    if scene_type == "minimax-h3_i2v-panjang":
+        write_log(
+            f"[agentic] {scene_dir.name}: scene minimax-h3_i2v-panjang tidak mendukung Agentic/Generate Variasi",
+            level="warning",
+        )
+        return False
 
     try:
         project_settings = load_project_settings(scene_dir.parent)
@@ -568,6 +574,12 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
         return False
 
     scene_type = str(scene_meta.get("scene_type", "wan22_i2v")).strip()
+    if scene_type == "minimax-h3_i2v-panjang":
+        write_log(
+            f"[agentic] {scene_dir.name}: scene minimax-h3_i2v-panjang tidak mendukung Agentic/Generate Variasi",
+            level="warning",
+        )
+        return False
     create_initial_image = bool(agentic_config.get("create_initial_image", True))
     image_extra_mode = str(agentic_config.get("image_extra_mode", "image_extra")).strip()
     if scene_type in {"wan22_t2v_i2v", "minimax-h3_t2v_i2v", "minimax-h3_r2v"}:
