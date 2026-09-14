@@ -93,6 +93,11 @@ from prompt_localization import (
     resolve_prompt_payload_for_runtime,
     prepare_project_prompts_for_runtime,
 )
+from minimax_h3_prompt import (
+    I2VA_FIRST_SHOT_VISUAL_EN,
+    ensure_i2va_frame_instructions,
+    validate_i2va_frame_instructions,
+)
 
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
@@ -338,6 +343,53 @@ def _invalidate_comfy_audio_source(scene_dir: str):
             write_log(f"Invalidated stale ComfyUI audio source: {source_path}")
         except OSError as e:
             raise RuntimeError(f"Failed to invalidate ComfyUI audio source: {source_path}: {e}")
+
+
+def _prepare_minimax_h3_i2v_prompt_for_run(prompt: dict, duration: float, *, include_last_frame: bool = False) -> dict:
+    """Repair and hard-validate frame instructions before building a workflow."""
+    prepared = copy.deepcopy(prompt) if isinstance(prompt, dict) else {}
+    entry = prepared.get("positive_prompt")
+    prepared["positive_prompt"] = ensure_i2va_frame_instructions(
+        entry if isinstance(entry, dict) else {},
+        duration,
+        include_last_frame=include_last_frame,
+    )
+    errors = validate_i2va_frame_instructions(
+        prepared["positive_prompt"],
+        duration,
+        include_last_frame=include_last_frame,
+    )
+    if errors:
+        raise ValueError("; ".join(errors))
+    return prepared
+
+
+def _validate_minimax_h3_i2v_workflow_frame_contract(
+    workflow: dict,
+    duration: float,
+    *,
+    include_last_frame: bool,
+):
+    """Ensure the serialized prompt and ComfyUI graph agree about frame inputs."""
+    node = workflow.get("133") if isinstance(workflow, dict) else None
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        raise ValueError("Node MiniMax H3 I2V tidak memiliki input yang valid.")
+    prompt_text = str(inputs.get("prompt", ""))
+    if I2VA_FIRST_SHOT_VISUAL_EN.lower() not in prompt_text.lower():
+        raise ValueError("Kalimat first frame I2VA tidak ditemukan pada prompt workflow.")
+    last_input = inputs.get("last_frame")
+    if include_last_frame:
+        expected = f"At {float(duration):.2f} seconds, <Picture 2> is the last frame of the video"
+        if expected.lower() not in prompt_text.lower():
+            raise ValueError("Kalimat last frame I2VA tidak ditemukan pada prompt workflow.")
+        if not last_input or "139" not in str(last_input):
+            raise ValueError("Input last_frame belum terhubung pada workflow MiniMax H3 I2V.")
+    else:
+        if last_input is not None:
+            raise ValueError("Workflow I2V tanpa image akhir tidak boleh memiliki input last_frame.")
+        if "<picture 2> is the last frame of the video" in prompt_text.lower():
+            raise ValueError("Workflow I2V tanpa image akhir masih memiliki instruksi last frame.")
 
 
 
@@ -919,12 +971,22 @@ def process_scene(scene_dir, server):
 
         i2v_duration = scene_duration - 15
         try:
+            i2v_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
+                i2v_prompt,
+                i2v_duration,
+                include_last_frame=False,
+            )
             i2v_workflow = build_minimax_h3_i2v_workflow(
                 i2v_prompt,
                 scene_meta,
                 uploaded_name=uploaded_name,
                 duration_override=i2v_duration,
                 fps_override=t2v_prompt.get("fps", 24),
+            )
+            _validate_minimax_h3_i2v_workflow_frame_contract(
+                i2v_workflow,
+                i2v_duration,
+                include_last_frame=False,
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
@@ -1057,22 +1119,208 @@ def process_scene(scene_dir, server):
             write_log(f"minimax-h3_i2v-panjang continuation must be 0..3: {continuation_count}")
             return False
 
-        img_path = _find_latest_root_image(scene_dir)
-        if not img_path:
-            write_log(f"minimax-h3_i2v-panjang scene requires at least one input image in root folder {scene_dir}")
-            return False
-        uploaded_name = _upload_to_comfy(img_path)
-        if not uploaded_name:
-            write_log(f"Failed to upload image for minimax-h3_i2v-panjang in {scene_dir}")
-            return False
-
         remove_sound = bool(chained_prompt.get('remove_sound', False))
         segment_paths = []
         active_stage_count = continuation_count + 1
-        for stage_index in range(active_stage_count):
+        try:
+            run_start_stage = int(chained_prompt.get('run_start_stage', 1))
+        except (TypeError, ValueError):
+            write_log("minimax-h3_i2v-panjang run_start_stage harus berupa integer 1..4")
+            return False
+        if not 1 <= run_start_stage <= active_stage_count:
+            write_log(
+                "minimax-h3_i2v-panjang run_start_stage harus berada pada tab aktif: "
+                f"{run_start_stage} (aktif 1..{active_stage_count})"
+            )
+            return False
+        write_log(
+            f"MiniMax H3 I2V panjang akan dimulai dari proses {run_start_stage}; "
+            f"proses aktif {run_start_stage}..{active_stage_count}"
+        )
+
+        # A partial run still needs to produce a complete video. Reuse the
+        # segments before the selected starting tab and prepend them to the
+        # newly generated segments below. Validate them before submitting any
+        # workflow so a missing prerequisite cannot result in an incomplete
+        # final video.
+        for previous_stage in range(1, run_start_stage):
+            previous_segment = os.path.join(
+                scene_dir,
+                f"minimax_h3_i2v_panjang_segment_{previous_stage}.mp4",
+            )
+            if not os.path.isfile(previous_segment) or os.path.getsize(previous_segment) <= 0:
+                write_log(
+                    "MiniMax H3 I2V panjang partial run membutuhkan video segment "
+                    f"{previous_stage} yang sudah ada: {previous_segment}"
+                )
+                return False
+            segment_paths.append(os.path.abspath(previous_segment))
+            write_log(
+                f"Reusing existing MiniMax H3 I2V panjang segment {previous_stage} "
+                f"for partial run: {previous_segment}"
+            )
+
+        configured_references = chained_prompt.get('stage_references')
+        if not isinstance(configured_references, list):
+            configured_references = []
+        has_configured_references = isinstance(chained_prompt.get('stage_references'), list)
+        if has_configured_references and len(configured_references) != 4:
+            write_log(
+                "stage_references MiniMax H3 I2V panjang harus berisi tepat 4 konfigurasi proses"
+            )
+            return False
+
+        def _legacy_or_configured_reference(stage_number, kind):
+            entry = configured_references[stage_number - 1] if stage_number - 1 < len(configured_references) else {}
+            value = entry.get(kind) if isinstance(entry, dict) else None
+            if isinstance(value, str):
+                # Accept a compact legacy form, though the UI writes objects.
+                return {"source": "scene", "name": value.strip()} if value.strip() else {"source": "none", "name": ""}
+            if isinstance(value, dict):
+                source = str(value.get('source', 'none')).strip().lower()
+                name = str(value.get('name', '')).strip()
+                try:
+                    source_stage = int(value.get('stage', stage_number - 1))
+                except (TypeError, ValueError):
+                    source_stage = stage_number - 1
+                return {"source": source, "name": name, "stage": source_stage}
+            return {"source": "none", "name": ""}
+
+        def _resolve_reference(reference, stage_number, generated_frames):
+            source = reference.get('source', 'none')
+            if source == 'scene':
+                name = str(reference.get('name', '')).strip()
+                path = os.path.join(scene_dir, name) if name else None
+            elif source == 'stage_last':
+                try:
+                    source_stage = int(reference.get('stage', 0))
+                except (TypeError, ValueError):
+                    source_stage = 0
+                path = generated_frames.get(source_stage)
+            else:
+                path = None
+            if path and os.path.isfile(path):
+                return os.path.abspath(path)
+            return None
+
+        # A partial run may use the last frame of a process that is not being
+        # rerun. Load those existing frame files before validating references.
+        generated_frames = {}
+        for previous_stage in range(1, run_start_stage):
+            previous_frame = os.path.join(
+                scene_dir,
+                f"minimax_h3_i2v_panjang_frame_{previous_stage}.png",
+            )
+            if not os.path.isfile(previous_frame) or os.path.getsize(previous_frame) <= 0:
+                previous_segment = os.path.join(
+                    scene_dir,
+                    f"minimax_h3_i2v_panjang_segment_{previous_stage}.mp4",
+                )
+                try:
+                    _extract_last_frame_image(previous_segment, previous_frame)
+                    write_log(
+                        f"Created missing last frame for reused MiniMax H3 I2V panjang "
+                        f"segment {previous_stage}: {previous_frame}"
+                    )
+                except Exception as e:
+                    write_log(
+                        f"Failed to extract last frame from reused MiniMax H3 I2V panjang "
+                        f"segment {previous_stage}: {e}"
+                    )
+                    return False
+            generated_frames[previous_stage] = os.path.abspath(previous_frame)
+
+        def _validate_reference(reference, stage_number, kind):
+            source = str(reference.get('source', 'none')).strip().lower()
+            if source in {'', 'none'}:
+                if kind == 'first':
+                    return f"Proses {stage_number} wajib memiliki image referensi awal."
+                return None
+            if source == 'scene':
+                name = str(reference.get('name', '')).strip()
+                path = os.path.join(scene_dir, name) if name else None
+                if not path or not os.path.isfile(path):
+                    return f"Referensi {kind} Proses {stage_number} tidak ditemukan: {name or '-'}"
+                return None
+            if source == 'stage_last':
+                try:
+                    source_stage = int(reference.get('stage', 0))
+                except (TypeError, ValueError):
+                    source_stage = 0
+                if not 1 <= source_stage < stage_number:
+                    return (
+                        f"Referensi {kind} Proses {stage_number} harus menunjuk frame proses "
+                        f"sebelumnya: {source_stage}"
+                    )
+                if source_stage < run_start_stage:
+                    previous_frame = generated_frames.get(source_stage)
+                    if not previous_frame or not os.path.isfile(previous_frame):
+                        return (
+                            f"Frame terakhir Proses {source_stage} diperlukan sebagai referensi "
+                            f"{kind} Proses {stage_number}, tetapi file hasilnya belum ada."
+                        )
+                return None
+            return f"Sumber referensi {kind} Proses {stage_number} tidak dikenal: {source}"
+
+        # Validate only the tabs that will actually run. Previous tabs are
+        # checked separately as file/frame prerequisites, but their prompt and
+        # reference configuration must not block a partial run.
+        for validation_stage in range(run_start_stage, active_stage_count + 1):
+            first_reference = _legacy_or_configured_reference(validation_stage, 'first')
+            last_reference = _legacy_or_configured_reference(validation_stage, 'last')
+            if not has_configured_references:
+                if validation_stage == 1:
+                    first_reference = {
+                        "source": "scene",
+                        "name": os.path.basename(_find_latest_root_image(scene_dir) or ""),
+                    }
+                else:
+                    first_reference = {
+                        "source": "stage_last",
+                        "stage": validation_stage - 1,
+                        "name": "",
+                    }
+            for reference_kind, reference in (("first", first_reference), ("last", last_reference)):
+                error = _validate_reference(reference, validation_stage, reference_kind)
+                if error:
+                    write_log(f"Referensi MiniMax H3 I2V panjang tidak valid: {error}")
+                    return False
+
+        for stage_index in range(run_start_stage - 1, active_stage_count):
+            stage_number = stage_index + 1
+            first_reference = _legacy_or_configured_reference(stage_number, 'first')
+            last_reference = _legacy_or_configured_reference(stage_number, 'last')
+            # Existing JSON files predate stage_references. Preserve their old
+            # behavior by using the latest scene image for process 1 and the
+            # previous generated frame for later processes.
+            if not has_configured_references:
+                if stage_number == 1:
+                    first_reference = {"source": "scene", "name": os.path.basename(_find_latest_root_image(scene_dir) or "")}
+                else:
+                    first_reference = {"source": "stage_last", "stage": stage_number - 1, "name": ""}
+            first_path = _resolve_reference(first_reference, stage_number, generated_frames)
+            if not first_path:
+                write_log(
+                    f"MiniMax H3 I2V panjang process {stage_number} wajib memiliki image referensi awal yang valid"
+                )
+                return False
+            uploaded_name = _upload_to_comfy(first_path)
+            if not uploaded_name:
+                write_log(f"Failed to upload first image for minimax-h3_i2v-panjang process {stage_number}")
+                return False
+            last_path = _resolve_reference(last_reference, stage_number, generated_frames)
+            if last_reference.get('source') not in {'none', ''} and not last_path:
+                write_log(
+                    f"MiniMax H3 I2V panjang last frame reference process {stage_number} tidak ditemukan"
+                )
+                return False
+            last_uploaded_name = _upload_to_comfy(last_path) if last_path else None
+            if last_path and not last_uploaded_name:
+                write_log(f"Failed to upload last image for minimax-h3_i2v-panjang process {stage_number}")
+                return False
             raw_entry = prompts[stage_index]
             if not isinstance(raw_entry, dict):
-                write_log(f"Prompt MiniMax H3 I2V panjang ke-{stage_index + 1} tidak valid")
+                write_log(f"Prompt MiniMax H3 I2V panjang ke-{stage_number} tidak valid")
                 return False
             stage_prompt = copy.deepcopy(chained_prompt)
             stage_prompt['positive_prompt'] = {
@@ -1081,12 +1329,23 @@ def process_scene(scene_dir, server):
                 'en': copy.deepcopy(raw_entry.get('en', {})),
             }
             try:
+                stage_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
+                    stage_prompt,
+                    scene_duration,
+                    include_last_frame=bool(last_path),
+                )
                 i2v_workflow = build_minimax_h3_i2v_workflow(
                     stage_prompt,
                     scene_meta,
                     uploaded_name=uploaded_name,
                     duration_override=scene_duration,
                     fps_override=stage_prompt.get('fps', 24),
+                    last_frame_uploaded_name=last_uploaded_name,
+                )
+                _validate_minimax_h3_i2v_workflow_frame_contract(
+                    i2v_workflow,
+                    scene_duration,
+                    include_last_frame=bool(last_path),
                 )
             except Exception as e:
                 write_log(f"Failed to build MiniMax H3 I2V panjang stage {stage_index + 1}: {e}")
@@ -1099,10 +1358,10 @@ def process_scene(scene_dir, server):
                 source_label=os.path.join(scene_dir, MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME),
             )
             if not i2v_result:
-                write_log(f"send_minimax_h3_i2v_workflow failed for panjang stage {stage_index + 1} in {scene_dir}")
+                write_log(f"send_minimax_h3_i2v_workflow failed for panjang stage {stage_number} in {scene_dir}")
                 return False
             prompt_id = i2v_result.get('prompt_id') or i2v_result.get('id')
-            write_log(f"Posted MiniMax H3 I2V panjang stage {stage_index + 1} for {scene_dir}, prompt_id={prompt_id}")
+            write_log(f"Posted MiniMax H3 I2V panjang stage {stage_number} for {scene_dir}, prompt_id={prompt_id}")
             video_out = None
             if prompt_id:
                 video_out = comfyui_api.wait_for_output(
@@ -1113,11 +1372,11 @@ def process_scene(scene_dir, server):
                     interval=POLL_INTERVAL,
                 )
             if not video_out:
-                write_log(f"No MiniMax H3 I2V video found for panjang stage {stage_index + 1} in {scene_dir}")
+                write_log(f"No MiniMax H3 I2V video found for panjang stage {stage_number} in {scene_dir}")
                 return False
             video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
             if not video_filename:
-                write_log(f"Cannot determine MiniMax H3 I2V filename for panjang stage {stage_index + 1}")
+                write_log(f"Cannot determine MiniMax H3 I2V filename for panjang stage {stage_number}")
                 return False
             video_url = comfyui_api.get_file_url(
                 server,
@@ -1127,37 +1386,36 @@ def process_scene(scene_dir, server):
             )
             video_out_path = os.path.join(
                 scene_dir,
-                f"minimax_h3_i2v_panjang_segment_{stage_index + 1}.mp4",
+                f"minimax_h3_i2v_panjang_segment_{stage_number}.mp4",
             )
             try:
                 comfyui_api.download_file_url(video_url, video_out_path)
                 if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
                     raise RuntimeError('file hasil kosong atau tidak ditemukan')
             except Exception as e:
-                write_log(f"Failed to download MiniMax H3 I2V panjang stage {stage_index + 1}: {e}")
+                write_log(f"Failed to download MiniMax H3 I2V panjang stage {stage_number}: {e}")
                 return False
             if remove_sound:
                 try:
                     _remove_video_audio(video_out_path)
                 except Exception as e:
-                    write_log(f"Failed to remove sound from panjang stage {stage_index + 1}: {e}")
+                    write_log(f"Failed to remove sound from panjang stage {stage_number}: {e}")
                     return False
             segment_paths.append(video_out_path)
 
-            if stage_index < active_stage_count - 1:
-                frame_path = os.path.join(
-                    scene_dir,
-                    f"minimax_h3_i2v_panjang_frame_{stage_index + 1}.png",
-                )
-                try:
-                    _extract_last_frame_image(video_out_path, frame_path)
-                except Exception as e:
-                    write_log(f"Failed to extract last frame after panjang stage {stage_index + 1}: {e}")
-                    return False
-                uploaded_name = _upload_to_comfy(frame_path)
-                if not uploaded_name:
-                    write_log(f"Failed to upload continuation frame after panjang stage {stage_index + 1}")
-                    return False
+            # Always persist the last frame, including for the final active
+            # stage. It is needed when a later partial run uses this stage as
+            # its first/last image reference.
+            frame_path = os.path.join(
+                scene_dir,
+                f"minimax_h3_i2v_panjang_frame_{stage_number}.png",
+            )
+            try:
+                _extract_last_frame_image(video_out_path, frame_path)
+            except Exception as e:
+                write_log(f"Failed to extract last frame after panjang stage {stage_number}: {e}")
+                return False
+            generated_frames[stage_number] = frame_path
 
         final_video_path = segment_paths[0]
         if len(segment_paths) > 1:
@@ -1231,12 +1489,22 @@ def process_scene(scene_dir, server):
                 'minimax_h3_i2v_prompt.json',
                 required=True,
             )
+            i2v_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
+                i2v_prompt,
+                scene_duration,
+                include_last_frame=False,
+            )
             i2v_workflow = build_minimax_h3_i2v_workflow(
                 i2v_prompt,
                 scene_meta,
                 uploaded_name=uploaded_name,
                 duration_override=scene_duration,
                 fps_override=i2v_prompt.get("fps", 24),
+            )
+            _validate_minimax_h3_i2v_workflow_frame_contract(
+                i2v_workflow,
+                scene_duration,
+                include_last_frame=False,
             )
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")

@@ -1533,6 +1533,7 @@ Scene type: `minimax-h3_i2v-panjang`
 ```json
 {
   "continuations": 1,
+  "run_start_stage": 1,
   "prompts": [
     {"id_old": {}, "id_new": {}, "en": {}},
     {"id_old": {}, "id_new": {}, "en": {}},
@@ -1543,6 +1544,10 @@ Scene type: `minimax-h3_i2v-panjang`
 ```
 
 - `prompts` selalu berisi tepat 4 item; hanya item sampai `continuations + 1` yang dijalankan
+- `run_start_stage` menentukan proses awal: `1` menjalankan normal, sedangkan `2`, `3`, atau `4` menjalankan proses mulai dari tab tersebut sampai proses aktif terakhir
+- saat partial run, validasi dan terjemahan prompt hanya dilakukan untuk proses mulai dari `run_start_stage` sampai proses aktif terakhir
+- untuk partial run, segment video dari proses sebelum `run_start_stage` harus sudah ada; file frame terakhir akan digunakan jika ada atau dibuat ulang dari segment tersebut
+- setiap proses yang selesai selalu menyimpan frame terakhirnya agar dapat dipakai sebagai referensi pada run berikutnya
 - setiap item memakai schema I2VA dan `mode: "I2VA"`
 - setiap prompt lanjutan diterjemahkan secara runtime jika `id_new` berbeda dari `id_old` atau `en` belum valid
 - hasil stage aktif digabung menjadi `minimax_h3_i2v_panjang_final.mp4`
@@ -1796,7 +1801,7 @@ Text encoder MiniMax H3:
 - ketiga workflow memakai encoder yang sama:
 
 ```text
-MINIMAX-H3/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+MINIMAX-H3/qwen3vl_32b_minimax_h3_int8_convrot.safetensors
 ```
 
 - `type` loader adalah `minimax` dan `device` adalah `default`

@@ -1415,6 +1415,46 @@ def prepare_prompt_payload_for_save(filename: str, data: dict, existing_data: di
     result = copy.deepcopy(data or {})
     existing = existing_data if isinstance(existing_data, dict) else {}
 
+    if filename == MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME:
+        # The chained editor stores four structured prompts instead of one
+        # top-level positive_prompt.  Keep the previous translation marker
+        # when a prompt was edited in the UI, so runtime localization can see
+        # id_old != id_new and translate that specific tab.  A complete
+        # id_old == id_new + en object is the result of the explicit "Buat
+        # Prompt" action and is already translated, so preserve it.
+        incoming_prompts = result.get("prompts")
+        existing_prompts = existing.get("prompts")
+        if isinstance(incoming_prompts, list):
+            normalized_prompts = []
+            for index, raw_entry in enumerate(incoming_prompts):
+                entry = copy.deepcopy(raw_entry) if isinstance(raw_entry, dict) else {}
+                previous_entry = (
+                    existing_prompts[index]
+                    if isinstance(existing_prompts, list)
+                    and index < len(existing_prompts)
+                    and isinstance(existing_prompts[index], dict)
+                    else {}
+                )
+                current_id_new = entry.get("id_new")
+                previous_id_new = previous_entry.get("id_new")
+                if (
+                    isinstance(current_id_new, dict)
+                    and isinstance(previous_id_new, dict)
+                    and current_id_new != previous_id_new
+                ):
+                    already_translated = (
+                        entry.get("id_old") == current_id_new
+                        and isinstance(entry.get("en"), dict)
+                    )
+                    if not already_translated:
+                        entry["id_old"] = copy.deepcopy(
+                            previous_entry.get("id_old", previous_id_new)
+                        )
+                        entry["en"] = copy.deepcopy(previous_entry.get("en", {}))
+                normalized_prompts.append(entry)
+            result["prompts"] = normalized_prompts
+        return result
+
     if filename in {"minimax_h3_s2v_prompt.json", "minimax_h3_r2v_prompt.json"}:
         incoming = result.get("positive_prompt")
         if isinstance(incoming, dict):
@@ -1507,14 +1547,26 @@ def resolve_prompt_payload_for_runtime(
         except (TypeError, ValueError):
             active_count = 1
         active_count = max(1, min(4, active_count))
+        try:
+            run_start_stage = int(source.get("run_start_stage", 1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("run_start_stage MiniMax H3 I2V panjang tidak valid.") from exc
+        if not 1 <= run_start_stage <= active_count:
+            raise ValueError(
+                "run_start_stage MiniMax H3 I2V panjang harus berada pada tab yang aktif: "
+                f"{run_start_stage} (aktif 1..{active_count})."
+            )
         for index, raw_entry in enumerate(prompts, start=1):
-            if not isinstance(raw_entry, dict):
-                raise ValueError(f"Prompt MiniMax H3 I2V panjang ke-{index} tidak valid.")
             entry = copy.deepcopy(raw_entry)
-            if index > active_count:
+            if index < run_start_stage or index > active_count:
+                # A partial run does not need to validate or translate a
+                # prompt before the selected starting stage. Keep it intact
+                # so it can be validated when that stage is run later.
                 stored_prompts.append(entry)
                 resolved_prompts.append(copy.deepcopy(entry))
                 continue
+            if not isinstance(raw_entry, dict):
+                raise ValueError(f"Prompt MiniMax H3 I2V panjang ke-{index} tidak valid.")
             id_new = entry.get("id_new")
             probe = {"id_old": id_new, "id_new": id_new, "en": id_new}
             errors = validate_structured_prompt(probe, expected_mode="I2VA")

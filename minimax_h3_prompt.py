@@ -43,6 +43,11 @@ REF2VA_SECTION_KEYS = (
 
 _REF2VA_TOKEN_PATTERN = re.compile(r"<[^<>]+>")
 _REF2VA_REFERENCE_PATTERN = re.compile(r"<(Picture|Video|Audio)\s+(\d+)>")
+_I2VA_LAST_FRAME_SENTENCE_PATTERN = re.compile(
+    r"(?:At\s+\d+(?:\.\d+)?\s+seconds,\s*<Picture\s+2>\s+is\s+the\s+last\s+frame\s+of\s+the\s+video|"
+    r"Pada\s+\d+(?:[.,]\d+)?\s+detik,\s*<Picture\s+2>\s+adalah\s+frame\s+terakhir\s+video)\.?",
+    re.IGNORECASE,
+)
 
 
 def empty_ref2va_prompt() -> dict:
@@ -173,29 +178,134 @@ def structured_prompt_entry(mode: str, id_new=None, en: dict | None = None) -> d
 
 
 def enforce_i2va_first_shot_visual(entry: dict) -> dict:
-    """Force the exact bilingual first-frame visual wording for I2VA Shot 1."""
+    """Ensure the bilingual first-frame wording without discarding Shot 1."""
     result = copy.deepcopy(entry or {})
     if not isinstance(result, dict):
         return result
+    first_sentences = {
+        "id_new": I2VA_FIRST_SHOT_VISUAL_ID,
+        "en": I2VA_FIRST_SHOT_VISUAL_EN,
+    }
+    for localized_key, first_sentence in first_sentences.items():
+        localized = result.get(localized_key)
+        shots = localized.get("shots") if isinstance(localized, dict) else None
+        if not isinstance(shots, list):
+            continue
+        for shot in shots:
+            if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1":
+                visual = str(shot.get("visual", "")).strip()
+                if first_sentence.lower() not in visual.lower():
+                    shot["visual"] = f"{first_sentence}. {visual}".strip()
+                break
     id_new = result.get("id_new")
-    en = result.get("en")
-    if isinstance(id_new, dict):
-        shots = id_new.get("shots")
-        if isinstance(shots, list):
-            for shot in shots:
-                if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1":
-                    shot["visual"] = I2VA_FIRST_SHOT_VISUAL_ID
-                    break
-    if isinstance(en, dict):
-        shots = en.get("shots")
-        if isinstance(shots, list):
-            for shot in shots:
-                if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1":
-                    shot["visual"] = I2VA_FIRST_SHOT_VISUAL_EN
-                    break
     if isinstance(id_new, dict):
         result["id_old"] = copy.deepcopy(id_new)
     return result
+
+
+def ensure_i2va_frame_instructions(entry: dict, end_time: float, include_last_frame: bool = False) -> dict:
+    """Repair the mandatory first/last-frame sentences without replacing the prompt."""
+    result = copy.deepcopy(entry or {})
+    first_sentences = {
+        "en": I2VA_FIRST_SHOT_VISUAL_EN,
+        "id_new": I2VA_FIRST_SHOT_VISUAL_ID,
+    }
+    last_sentences = {
+        "en": f"At {float(end_time):.2f} seconds, <Picture 2> is the last frame of the video",
+        "id_new": f"Pada {float(end_time):.2f} detik, <Picture 2> adalah frame terakhir video",
+    }
+    for localized_key, first_sentence in first_sentences.items():
+        localized = result.get(localized_key)
+        if not isinstance(localized, dict):
+            continue
+        shots = localized.get("shots")
+        if not isinstance(shots, list):
+            continue
+        # Remove stale final-frame instructions first. This makes changing
+        # duration or unchecking the final image fully idempotent.
+        for shot in shots:
+            if isinstance(shot, dict):
+                visual = _I2VA_LAST_FRAME_SENTENCE_PATTERN.sub("", str(shot.get("visual", "")))
+                shot["visual"] = re.sub(r"\s{2,}", " ", visual).strip()
+        first_shot = next((shot for shot in shots if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1"), None)
+        if first_shot is not None and first_sentence.lower() not in str(first_shot.get("visual", "")).lower():
+            first_shot["visual"] = f"{first_sentence}. {str(first_shot.get('visual', '')).strip()}".strip()
+        if include_last_frame:
+            last_shot = next((shot for shot in reversed(shots) if isinstance(shot, dict)), None)
+            last_sentence = last_sentences[localized_key]
+            if last_shot is not None and last_sentence.lower() not in str(last_shot.get("visual", "")).lower():
+                last_shot["visual"] = f"{str(last_shot.get('visual', '')).strip()} {last_sentence}".strip()
+    # Keep id_old untouched. It is the persisted translation marker: Save
+    # must be able to leave id_old behind when the UI changes the prompt or
+    # toggles the last-frame instruction, so runtime localization translates
+    # the updated id_new for that specific process.
+    return result
+
+
+def validate_i2va_shot_timeline(value: dict, end_time: float) -> list[str]:
+    """Ensure the first and final shot boundaries match the video duration."""
+    if not isinstance(value, dict):
+        return ["Prompt I2VA harus berupa object JSON."]
+    shots = value.get("shots")
+    if not isinstance(shots, list) or not shots:
+        return []
+    try:
+        expected_end = float(end_time)
+    except (TypeError, ValueError):
+        return ["Durasi video I2VA tidak valid."]
+
+    errors = []
+    first_shot = next(
+        (shot for shot in shots if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1"),
+        None,
+    )
+    if first_shot is not None:
+        first_start = first_shot.get("start")
+        if isinstance(first_start, Real) and not isinstance(first_start, bool) and abs(float(first_start)) > 1e-6:
+            errors.append("Shot 1 I2VA harus dimulai pada 0.00 detik.")
+
+    last_shot = next((shot for shot in reversed(shots) if isinstance(shot, dict)), None)
+    if last_shot is not None:
+        last_end = last_shot.get("end")
+        if (
+            isinstance(last_end, Real)
+            and not isinstance(last_end, bool)
+            and abs(float(last_end) - expected_end) > 1e-6
+        ):
+            errors.append(
+                f"Shot terakhir I2VA harus berakhir pada {expected_end:.2f} detik "
+                "sesuai durasi Meta."
+            )
+    return errors
+
+
+def validate_i2va_frame_instructions(entry: dict, end_time: float, include_last_frame: bool = False) -> list[str]:
+    """Validate mandatory frame sentences in the English prompt payload."""
+    errors = []
+    localized = entry.get("en") if isinstance(entry, dict) else None
+    if not isinstance(localized, dict):
+        return ["positive_prompt.en harus berupa object JSON."]
+    if str(localized.get("mode", "")).upper() != "I2VA":
+        errors.append("positive_prompt.en.mode harus I2VA.")
+    shots = localized.get("shots")
+    if not isinstance(shots, list) or not shots:
+        return ["positive_prompt.en.shots wajib berisi minimal satu shot."]
+    errors.extend(validate_i2va_shot_timeline(localized, end_time))
+    first_shot = next((shot for shot in shots if isinstance(shot, dict) and shot.get("shot_id") == "Shot 1"), None)
+    if first_shot is None or I2VA_FIRST_SHOT_VISUAL_EN.lower() not in str(first_shot.get("visual", "")).lower():
+        errors.append("Kalimat first frame I2VA wajib ada pada Shot 1.")
+    if include_last_frame:
+        last_shot = next((shot for shot in reversed(shots) if isinstance(shot, dict)), None)
+        expected = f"At {float(end_time):.2f} seconds, <Picture 2> is the last frame of the video"
+        if last_shot is None or expected.lower() not in str(last_shot.get("visual", "")).lower():
+            errors.append("Kalimat last frame I2VA wajib ada pada shot terakhir.")
+    elif any(
+        _I2VA_LAST_FRAME_SENTENCE_PATTERN.search(str(shot.get("visual", "")))
+        for shot in shots
+        if isinstance(shot, dict)
+    ):
+        errors.append("Kalimat last frame tidak boleh ada jika image akhir tidak dipilih.")
+    return errors
 
 
 def _recover_nested_legacy_prompt(value):

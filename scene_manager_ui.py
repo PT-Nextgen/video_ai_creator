@@ -65,6 +65,7 @@ from minimax_h3_r2v.minimax_h3_r2v import (
 )
 from minimax_h3_prompt import (
     I2VA_FIRST_FRAME_DETAIL_INSTRUCTION,
+    ensure_i2va_frame_instructions,
     enforce_i2va_first_shot_visual,
     REF2VA_SECTION_KEYS,
     normalize_minimax_prompt_payload,
@@ -72,6 +73,7 @@ from minimax_h3_prompt import (
     serialize_structured_prompt,
     validate_ref2va_prompt,
     validate_ref2va_reference_tokens,
+    validate_i2va_shot_timeline,
     validate_structured_prompt,
 )
 from scripts.voice_profiles import (
@@ -1295,6 +1297,7 @@ def validate_scene_data(
     minimax_h3_t2v_prompt: dict | None = None,
     minimax_h3_i2v_prompt: dict | None = None,
     minimax_h3_r2v_prompt: dict | None = None,
+    minimax_h3_i2v_panjang_prompt: dict | None = None,
 ):
     issues = []
     scene_type = str(meta.get("scene_type", "wan22_i2v")).strip()
@@ -1349,10 +1352,72 @@ def validate_scene_data(
             issues.append(
                 "Durasi scene minimax-h3_i2v(-panjang) harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal."
             )
-        if not _prompt_text_for_validation(minimax_h3_i2v_prompt.get("positive_prompt")):
-            issues.append("Prompt positif MiniMax H3 I2V wajib diisi.")
-        if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
-            issues.append("Adegan MiniMax H3 I2V membutuhkan minimal satu gambar lokal di folder scene.")
+        if scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE:
+            chained_payload = minimax_h3_i2v_panjang_prompt if isinstance(minimax_h3_i2v_panjang_prompt, dict) else minimax_h3_i2v_prompt
+            stage_references = chained_payload.get("stage_references") if isinstance(chained_payload, dict) else None
+            if isinstance(stage_references, list):
+                try:
+                    active_count = int(chained_payload.get("continuations", 0)) + 1
+                except (TypeError, ValueError):
+                    active_count = 1
+                active_count = max(1, min(4, active_count))
+                try:
+                    run_start_stage = int(chained_payload.get("run_start_stage", 1))
+                except (TypeError, ValueError):
+                    run_start_stage = 0
+                    issues.append("Run mulai dari tab MiniMax H3 I2V panjang tidak valid.")
+                if not 1 <= run_start_stage <= active_count:
+                    issues.append(
+                        "Run mulai dari tab MiniMax H3 I2V panjang harus berada "
+                        f"pada tab aktif 1 sampai {active_count}."
+                    )
+                    run_start_stage = 1
+                if run_start_stage == 1 and not _prompt_text_for_validation(
+                    minimax_h3_i2v_prompt.get("positive_prompt")
+                ):
+                    issues.append("Prompt positif MiniMax H3 I2V wajib diisi.")
+                for stage_index in range(run_start_stage - 1, active_count):
+                    stage_entry = stage_references[stage_index] if stage_index < len(stage_references) else {}
+                    stage_entry = stage_entry if isinstance(stage_entry, dict) else {}
+                    first = stage_entry.get("first", {})
+                    first = first if isinstance(first, dict) else {}
+                    source = str(first.get("source", "none")).strip().lower()
+                    if source == "scene":
+                        name = str(first.get("name", "")).strip()
+                        if not name or not scene_dir or not (scene_dir / name).is_file():
+                            issues.append(f"Image referensi awal Proses {stage_index + 1} wajib dipilih dan harus ada di folder scene.")
+                    elif source != "stage_last":
+                        issues.append(f"Image referensi awal Proses {stage_index + 1} wajib dipilih.")
+                    if source == "stage_last":
+                        try:
+                            source_stage = int(first.get("stage", 0))
+                        except (TypeError, ValueError):
+                            source_stage = 0
+                        if source_stage < 1 or source_stage > stage_index:
+                            issues.append(f"Sumber frame awal Proses {stage_index + 1} tidak valid.")
+                    last = stage_entry.get("last", {})
+                    last = last if isinstance(last, dict) else {}
+                    last_source = str(last.get("source", "none")).strip().lower()
+                    if last_source == "scene":
+                        name = str(last.get("name", "")).strip()
+                        if not name or not scene_dir or not (scene_dir / name).is_file():
+                            issues.append(f"Image referensi akhir Proses {stage_index + 1} tidak ditemukan.")
+                    elif last_source == "stage_last":
+                        try:
+                            source_stage = int(last.get("stage", 0))
+                        except (TypeError, ValueError):
+                            source_stage = 0
+                        if source_stage < 1 or source_stage > stage_index:
+                            issues.append(f"Sumber frame akhir Proses {stage_index + 1} tidak valid.")
+                    elif last_source not in {"", "none"}:
+                        issues.append(f"Sumber image akhir Proses {stage_index + 1} tidak valid.")
+            if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
+                issues.append("Adegan MiniMax H3 I2V membutuhkan minimal satu gambar lokal di folder scene.")
+        else:
+            if not _prompt_text_for_validation(minimax_h3_i2v_prompt.get("positive_prompt")):
+                issues.append("Prompt positif MiniMax H3 I2V wajib diisi.")
+            if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
+                issues.append("Adegan MiniMax H3 I2V membutuhkan minimal satu gambar lokal di folder scene.")
     if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
         try:
             duration_value = float(meta.get("duration_seconds", 0))
@@ -3061,8 +3126,25 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_panjang_continuations_input.valueChanged.connect(
             self.update_minimax_h3_i2v_panjang_prompt_enabled
         )
+        self.minimax_h3_i2v_panjang_run_start_input = QComboBox()
+        self.minimax_h3_i2v_panjang_run_start_input.addItem("Tab 1 (normal)", 1)
+        self.minimax_h3_i2v_panjang_run_start_input.addItem("Tab 2", 2)
+        self.minimax_h3_i2v_panjang_run_start_input.addItem("Tab 3", 3)
+        self.minimax_h3_i2v_panjang_run_start_input.addItem("Tab 4", 4)
+        self.minimax_h3_i2v_panjang_run_start_input.currentIndexChanged.connect(
+            self.update_minimax_h3_i2v_panjang_prompt_enabled
+        )
         self.minimax_h3_i2v_panjang_prompt_inputs = []
         self.minimax_h3_i2v_panjang_generate_buttons = []
+        self.minimax_h3_i2v_panjang_stage_tabs = None
+        self.minimax_h3_i2v_panjang_stage_pages = []
+        self.minimax_h3_i2v_panjang_first_ref_lists = []
+        self.minimax_h3_i2v_panjang_last_ref_enabled = []
+        self.minimax_h3_i2v_panjang_last_ref_lists = []
+        self.minimax_h3_i2v_panjang_first_ref_labels = []
+        self.minimax_h3_i2v_panjang_last_ref_labels = []
+        self.minimax_h3_i2v_panjang_ref_boxes = []
+        self._pending_minimax_h3_i2v_panjang_stage_references = None
         for prompt_index in range(1, MINIMAX_H3_I2V_PANJANG_MAX_PROMPTS):
             prompt_input = QTextEdit()
             generate_button = QToolButton()
@@ -3593,53 +3675,97 @@ class SceneEditorWindow(QMainWindow):
         tabs.addTab(self.minimax_h3_t2v_tab, "MINIMAX-H3_T2V")
 
         self.minimax_h3_i2v_tab = QWidget()
-        minimax_i2v_layout = QGridLayout(self.minimax_h3_i2v_tab)
-        minimax_i2v_layout.setColumnStretch(0, 0)
-        minimax_i2v_layout.setColumnStretch(1, 1)
-        minimax_i2v_layout.setColumnStretch(2, 0)
-        minimax_i2v_layout.setColumnStretch(3, 0)
-        self.minimax_h3_i2v_lora_strength_input.setFixedWidth(84)
-        minimax_i2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_size_input, 0, 1, 1, 3)
-        minimax_i2v_layout.addWidget(QLabel("Lora"), 1, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 1, 1)
-        minimax_i2v_layout.addWidget(QLabel("Kekuatan"), 1, 2)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 1, 3)
-        minimax_i2v_layout.addWidget(QLabel("Lora 2"), 2, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_name_2_input, 2, 1)
-        minimax_i2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 2, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 3, 1)
-        minimax_i2v_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 3, 2, 1, 2, Qt.AlignLeft)
-        self.minimax_h3_i2v_prompt_label = QLabel("Prompt Positif")
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_prompt_label, 4, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_positive_input, 4, 1, 1, 3)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, 5, 1, 1, 3, Qt.AlignLeft)
-        self.minimax_h3_i2v_panjang_continuations_label = QLabel("Lanjutan")
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_panjang_continuations_label, 6, 0)
-        minimax_i2v_layout.addWidget(self.minimax_h3_i2v_panjang_continuations_input, 6, 1)
+        minimax_i2v_outer_layout = QVBoxLayout(self.minimax_h3_i2v_tab)
+        self.minimax_h3_i2v_panjang_stage_tabs = QTabWidget()
+        self.minimax_h3_i2v_panjang_stage_pages = []
+        self.minimax_h3_i2v_panjang_first_ref_lists = []
+        self.minimax_h3_i2v_panjang_last_ref_enabled = []
+        self.minimax_h3_i2v_panjang_last_ref_lists = []
+        self.minimax_h3_i2v_panjang_first_ref_labels = []
+        self.minimax_h3_i2v_panjang_last_ref_labels = []
+        self.minimax_h3_i2v_panjang_ref_boxes = []
         self.minimax_h3_i2v_panjang_extra_rows = []
-        for extra_offset, (prompt_index, prompt_input, generate_button) in enumerate(
-            zip(
-                range(2, MINIMAX_H3_I2V_PANJANG_MAX_PROMPTS + 1),
-                self.minimax_h3_i2v_panjang_prompt_inputs,
-                self.minimax_h3_i2v_panjang_generate_buttons,
-            ),
-        ):
-            row = 7 + (extra_offset * 2)
-            prompt_input.setMinimumHeight(240)
-            label = QLabel(f"Prompt {prompt_index}")
-            minimax_i2v_layout.addWidget(label, row, 0)
-            minimax_i2v_layout.addWidget(prompt_input, row, 1, 1, 3)
-            minimax_i2v_layout.addWidget(generate_button, row + 1, 1, 1, 3, Qt.AlignLeft)
-            self.minimax_h3_i2v_panjang_extra_rows.append((label, prompt_input, generate_button))
-        minimax_i2v_layout.addWidget(
-            self._h3_cache_group(self.minimax_h3_i2v_h3_cache_inputs),
-            13,
-            0,
-            1,
-            4,
-        )
+
+        def build_reference_box(stage_index, parent_layout, row):
+            reference_box = QGroupBox("Image Referensi")
+            reference_layout = QGridLayout(reference_box)
+            first_label = QLabel("Image awal (wajib)")
+            first_list = QListWidget()
+            first_list.setSelectionMode(QAbstractItemView.NoSelection)
+            first_list.setFixedHeight(120)
+            first_list.itemChanged.connect(
+                lambda _item, widget=first_list: self._limit_r2v_reference_selection(widget, 1)
+            )
+            last_enabled = QCheckBox("Gunakan image akhir / last frame")
+            last_list = QListWidget()
+            last_list.setSelectionMode(QAbstractItemView.NoSelection)
+            last_list.setFixedHeight(120)
+            last_list.itemChanged.connect(
+                lambda _item, widget=last_list: self._limit_r2v_reference_selection(widget, 1)
+            )
+            # Keep the reference panel identical on all four process tabs.
+            # Without a fixed vertical policy, pages 2-4 expand this group
+            # into their otherwise-unused page height.
+            reference_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            last_enabled.toggled.connect(self.update_minimax_h3_i2v_panjang_prompt_enabled)
+            reference_layout.addWidget(first_label, 0, 0)
+            reference_layout.addWidget(first_list, 0, 1)
+            reference_layout.addWidget(last_enabled, 1, 0)
+            reference_layout.addWidget(last_list, 1, 1)
+            parent_layout.addWidget(reference_box, row, 0, 1, 4)
+            self.minimax_h3_i2v_panjang_ref_boxes.append(reference_box)
+            self.minimax_h3_i2v_panjang_first_ref_lists.append(first_list)
+            self.minimax_h3_i2v_panjang_last_ref_enabled.append(last_enabled)
+            self.minimax_h3_i2v_panjang_last_ref_lists.append(last_list)
+            self.minimax_h3_i2v_panjang_first_ref_labels.append(first_label)
+            self.minimax_h3_i2v_panjang_last_ref_labels.append(last_enabled)
+
+        for stage_index in range(MINIMAX_H3_I2V_PANJANG_MAX_PROMPTS):
+            page = QWidget()
+            page_layout = QGridLayout(page)
+            page_layout.setColumnStretch(1, 1)
+            page_layout.setColumnStretch(2, 0)
+            page_layout.setColumnStretch(3, 0)
+            if stage_index == 0:
+                self.minimax_h3_i2v_lora_strength_input.setFixedWidth(84)
+                page_layout.addWidget(QLabel("Ukuran"), 0, 0)
+                page_layout.addWidget(self.minimax_h3_i2v_size_input, 0, 1, 1, 3)
+                page_layout.addWidget(QLabel("Lora"), 1, 0)
+                page_layout.addWidget(self.minimax_h3_i2v_lora_name_input, 1, 1)
+                page_layout.addWidget(QLabel("Kekuatan"), 1, 2)
+                page_layout.addWidget(self.minimax_h3_i2v_lora_strength_input, 1, 3)
+                page_layout.addWidget(QLabel("Lora 2"), 2, 0)
+                page_layout.addWidget(self.minimax_h3_i2v_lora_name_2_input, 2, 1)
+                page_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
+                page_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 2, 3)
+                page_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 3, 1)
+                page_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 3, 2, 1, 2, Qt.AlignLeft)
+                build_reference_box(stage_index, page_layout, 4)
+                prompt_row = 5
+                self.minimax_h3_i2v_prompt_label = QLabel("Prompt Positif")
+                self.minimax_h3_i2v_panjang_continuations_label = QLabel("Jumlah lanjutan")
+                page_layout.addWidget(self.minimax_h3_i2v_panjang_continuations_label, 7, 0)
+                page_layout.addWidget(self.minimax_h3_i2v_panjang_continuations_input, 7, 1)
+                self.minimax_h3_i2v_panjang_run_start_label = QLabel("Run mulai dari tab")
+                page_layout.addWidget(self.minimax_h3_i2v_panjang_run_start_label, 8, 0)
+                page_layout.addWidget(self.minimax_h3_i2v_panjang_run_start_input, 8, 1)
+                page_layout.addWidget(self.minimax_h3_i2v_prompt_label, prompt_row, 0)
+                page_layout.addWidget(self.minimax_h3_i2v_positive_input, prompt_row, 1, 1, 3)
+                page_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, prompt_row + 1, 1, 1, 3, Qt.AlignLeft)
+                page_layout.addWidget(self._h3_cache_group(self.minimax_h3_i2v_h3_cache_inputs), 9, 0, 1, 4)
+            else:
+                build_reference_box(stage_index, page_layout, 0)
+                prompt_input = self.minimax_h3_i2v_panjang_prompt_inputs[stage_index - 1]
+                generate_button = self.minimax_h3_i2v_panjang_generate_buttons[stage_index - 1]
+                prompt_input.setMinimumHeight(240)
+                label = QLabel(f"Prompt {stage_index + 1}")
+                page_layout.addWidget(label, 1, 0)
+                page_layout.addWidget(prompt_input, 1, 1, 1, 3)
+                page_layout.addWidget(generate_button, 2, 1, 1, 3, Qt.AlignLeft)
+                self.minimax_h3_i2v_panjang_extra_rows.append((label, prompt_input, generate_button))
+            self.minimax_h3_i2v_panjang_stage_pages.append(page)
+            self.minimax_h3_i2v_panjang_stage_tabs.addTab(page, f"Proses {stage_index + 1}")
+        minimax_i2v_outer_layout.addWidget(self.minimax_h3_i2v_panjang_stage_tabs)
         tabs.addTab(self.minimax_h3_i2v_tab, "MINIMAX-H3_I2V")
 
         self.minimax_h3_r2v_tab = QWidget()
@@ -3876,12 +4002,49 @@ class SceneEditorWindow(QMainWindow):
         self.update_minimax_h3_i2v_panjang_prompt_enabled()
 
     def update_minimax_h3_i2v_panjang_prompt_enabled(self, *_args):
-        """Show the chained controls only for the chained MiniMax scene."""
+        """Keep the four process pages and their reference controls in sync."""
         is_chained = self.scene_type_combo.currentText().strip() == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE
         continuation_count = self.minimax_h3_i2v_panjang_continuations_input.value() if is_chained else 0
         self.minimax_h3_i2v_prompt_label.setText("Prompt 1" if is_chained else "Prompt Positif")
+        self.copy_minimax_h3_i2v_variations_button.setVisible(not is_chained)
+        if self.minimax_h3_i2v_panjang_stage_tabs is not None:
+            self.minimax_h3_i2v_panjang_stage_tabs.tabBar().setVisible(is_chained)
+            for stage_index in range(self.minimax_h3_i2v_panjang_stage_tabs.count()):
+                self.minimax_h3_i2v_panjang_stage_tabs.setTabVisible(
+                    stage_index, not is_chained or stage_index <= continuation_count
+                )
         self.minimax_h3_i2v_panjang_continuations_label.setVisible(is_chained)
         self.minimax_h3_i2v_panjang_continuations_input.setVisible(is_chained)
+        if hasattr(self, "minimax_h3_i2v_panjang_run_start_label"):
+            self.minimax_h3_i2v_panjang_run_start_label.setVisible(is_chained)
+        if hasattr(self, "minimax_h3_i2v_panjang_run_start_input"):
+            self.minimax_h3_i2v_panjang_run_start_input.setVisible(is_chained)
+            try:
+                selected_start = int(self.minimax_h3_i2v_panjang_run_start_input.currentData() or 1)
+            except (TypeError, ValueError):
+                selected_start = 1
+            if selected_start > continuation_count + 1:
+                self.minimax_h3_i2v_panjang_run_start_input.setCurrentIndex(
+                    max(0, self.minimax_h3_i2v_panjang_run_start_input.findData(1))
+                )
+            for option_index in range(self.minimax_h3_i2v_panjang_run_start_input.count()):
+                try:
+                    stage_number = int(self.minimax_h3_i2v_panjang_run_start_input.itemData(option_index))
+                except (TypeError, ValueError):
+                    stage_number = 1
+                item = self.minimax_h3_i2v_panjang_run_start_input.model().item(option_index)
+                if item is not None:
+                    item.setEnabled(stage_number <= continuation_count + 1)
+        for stage_index, ref_box in enumerate(self.minimax_h3_i2v_panjang_ref_boxes):
+            ref_box.setVisible(is_chained)
+            first_list = self.minimax_h3_i2v_panjang_first_ref_lists[stage_index]
+            last_enabled = self.minimax_h3_i2v_panjang_last_ref_enabled[stage_index]
+            last_list = self.minimax_h3_i2v_panjang_last_ref_lists[stage_index]
+            first_list.setEnabled(is_chained)
+            last_enabled.setVisible(is_chained)
+            last_enabled.setEnabled(is_chained)
+            last_list.setVisible(is_chained)
+            last_list.setEnabled(is_chained and last_enabled.isChecked())
         for prompt_number, (label, prompt_input, button) in enumerate(
             self.minimax_h3_i2v_panjang_extra_rows,
             start=2,
@@ -3892,6 +4055,145 @@ class SceneEditorWindow(QMainWindow):
             button.setVisible(is_chained)
             prompt_input.setEnabled(active)
             button.setEnabled(active)
+
+    @staticmethod
+    def _minimax_h3_panjang_reference_key(reference: dict | None) -> str:
+        reference = reference if isinstance(reference, dict) else {}
+        source = str(reference.get("source", "none")).strip().lower()
+        if source == "stage_last":
+            try:
+                return f"stage_last|{int(reference.get('stage', 0))}"
+            except (TypeError, ValueError):
+                return ""
+        if source == "scene":
+            name = str(reference.get("name", "")).strip()
+            return f"scene|{name}" if name else ""
+        return ""
+
+    @staticmethod
+    def _minimax_h3_panjang_reference_from_key(key: str) -> dict:
+        raw = str(key or "").strip()
+        source, separator, value = raw.partition("|")
+        if source == "scene" and value:
+            return {"source": "scene", "name": value}
+        if source == "stage_last":
+            try:
+                stage = int(value)
+            except (TypeError, ValueError):
+                stage = 0
+            if stage > 0:
+                return {"source": "stage_last", "stage": stage, "name": ""}
+        return {"source": "none", "name": ""}
+
+    def _minimax_h3_panjang_checked_reference(self, widget: QListWidget) -> dict:
+        for index in range(widget.count()):
+            item = widget.item(index)
+            if item.checkState() == Qt.Checked:
+                return self._minimax_h3_panjang_reference_from_key(item.data(Qt.UserRole))
+        return {"source": "none", "name": ""}
+
+    def _set_minimax_h3_panjang_reference_list(self, widget: QListWidget, choices: list[tuple[str, str]], selected: dict):
+        selected_key = self._minimax_h3_panjang_reference_key(selected)
+        widget.blockSignals(True)
+        widget.clear()
+        for label, key in choices:
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, key)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if key == selected_key else Qt.Unchecked)
+            widget.addItem(item)
+        widget.blockSignals(False)
+
+    def refresh_minimax_h3_i2v_panjang_reference_options(self, preferred=None):
+        scene_dir = self.active_scene_dir()
+        image_names = []
+        if scene_dir and scene_dir.exists():
+            image_names = sorted(
+                [p.name for p in scene_dir.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS],
+                key=str.lower,
+            )
+        pending = self._pending_minimax_h3_i2v_panjang_stage_references
+        if isinstance(preferred, list):
+            configured = preferred
+        elif isinstance(pending, list):
+            configured = pending
+        else:
+            configured = [
+                {
+                    "first": self._minimax_h3_panjang_checked_reference(widget),
+                    "last": self._minimax_h3_panjang_checked_reference(last_widget)
+                    if enabled.isChecked() else {"source": "none", "name": ""},
+                }
+                for widget, enabled, last_widget in zip(
+                    self.minimax_h3_i2v_panjang_first_ref_lists,
+                    self.minimax_h3_i2v_panjang_last_ref_enabled,
+                    self.minimax_h3_i2v_panjang_last_ref_lists,
+                )
+            ]
+        if not isinstance(configured, list):
+            configured = []
+        has_current_selection = any(
+            isinstance(entry, dict)
+            and self._minimax_h3_panjang_reference_key(entry.get("first"))
+            for entry in configured
+        )
+        for stage_index in range(MINIMAX_H3_I2V_PANJANG_MAX_PROMPTS):
+            configured_entry = configured[stage_index] if stage_index < len(configured) else {}
+            configured_entry = configured_entry if isinstance(configured_entry, dict) else {}
+            first_selected = configured_entry.get("first", {})
+            last_selected = configured_entry.get("last", {})
+            if not has_current_selection and stage_index == 0 and image_names:
+                # Preserve the old default for existing scenes while keeping
+                # the field explicit and editable in the new UI.
+                first_selected = {"source": "scene", "name": image_names[-1]}
+            elif not has_current_selection and stage_index > 0:
+                first_selected = {"source": "stage_last", "stage": stage_index, "name": ""}
+            first_choices = [(name, f"scene|{name}") for name in image_names]
+            first_choices += [
+                (f"Frame terakhir Proses {source_stage}", f"stage_last|{source_stage}")
+                for source_stage in range(1, stage_index + 1)
+            ]
+            last_choices = [(name, f"scene|{name}") for name in image_names]
+            last_choices += [
+                (f"Frame terakhir Proses {source_stage}", f"stage_last|{source_stage}")
+                for source_stage in range(1, stage_index + 1)
+            ]
+            self._set_minimax_h3_panjang_reference_list(
+                self.minimax_h3_i2v_panjang_first_ref_lists[stage_index], first_choices, first_selected
+            )
+            last_source = str(last_selected.get("source", "none")).strip().lower() if isinstance(last_selected, dict) else "none"
+            self.minimax_h3_i2v_panjang_last_ref_enabled[stage_index].setChecked(last_source not in {"", "none"})
+            self._set_minimax_h3_panjang_reference_list(
+                self.minimax_h3_i2v_panjang_last_ref_lists[stage_index], last_choices, last_selected
+            )
+        self._pending_minimax_h3_i2v_panjang_stage_references = None
+        self.update_minimax_h3_i2v_panjang_prompt_enabled()
+
+    def gather_minimax_h3_i2v_panjang_stage_references(self) -> list[dict]:
+        references = []
+        active_count = self.minimax_h3_i2v_panjang_continuations_input.value() + 1
+        try:
+            run_start_stage = int(
+                self.minimax_h3_i2v_panjang_run_start_input.currentData() or 1
+            )
+        except (TypeError, ValueError):
+            run_start_stage = 1
+        for stage_index in range(MINIMAX_H3_I2V_PANJANG_MAX_PROMPTS):
+            first = self._minimax_h3_panjang_checked_reference(
+                self.minimax_h3_i2v_panjang_first_ref_lists[stage_index]
+            )
+            is_run_stage = run_start_stage <= stage_index + 1 <= active_count
+            if is_run_stage and first.get("source") == "none":
+                raise ValueError(f"Image referensi awal Proses {stage_index + 1} wajib dipilih.")
+            last = {"source": "none", "name": ""}
+            if self.minimax_h3_i2v_panjang_last_ref_enabled[stage_index].isChecked():
+                last = self._minimax_h3_panjang_checked_reference(
+                    self.minimax_h3_i2v_panjang_last_ref_lists[stage_index]
+                )
+                if is_run_stage and last.get("source") == "none":
+                    raise ValueError(f"Image referensi akhir Proses {stage_index + 1} belum dipilih.")
+            references.append({"first": first, "last": last})
+        return references
 
     def _reset_editor_tab_order(self):
         """Restore the order in which editor tabs are initially created."""
@@ -5989,6 +6291,9 @@ class SceneEditorWindow(QMainWindow):
                 first_entry = chained_entries[0] if chained_entries else {}
                 minimax_h3_i2v_prompt = copy.deepcopy(minimax_h3_i2v_panjang_prompt)
                 minimax_h3_i2v_prompt["positive_prompt"] = first_entry
+                self._pending_minimax_h3_i2v_panjang_stage_references = copy.deepcopy(
+                    minimax_h3_i2v_panjang_prompt.get("stage_references")
+                )
             s2v_prompt = load_json(scene_dir / s2v_prompt_filename(scene_type), s2v_prompt_default(scene_type))
             web_prompt = load_json(scene_dir / "web_scroll_prompt.json", DEFAULT_WEB_SCROLL_PROMPT)
             image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
@@ -6112,6 +6417,9 @@ class SceneEditorWindow(QMainWindow):
                 first_entry = chained_entries[0] if chained_entries else {}
                 minimax_h3_i2v_prompt = copy.deepcopy(minimax_h3_i2v_panjang_prompt)
                 minimax_h3_i2v_prompt["positive_prompt"] = first_entry
+                self._pending_minimax_h3_i2v_panjang_stage_references = copy.deepcopy(
+                    minimax_h3_i2v_panjang_prompt.get("stage_references")
+                )
             s2v_filename = s2v_prompt_filename(scene_type)
             s2v_default = s2v_prompt_default(scene_type)
             s2v_prompt = load_json_with_fallback(scene_dir / s2v_filename, (fallback_dir / s2v_filename) if fallback_dir else None, s2v_default)
@@ -6345,6 +6653,15 @@ class SceneEditorWindow(QMainWindow):
                 except (TypeError, ValueError):
                     continuation_value = 0
                 self.minimax_h3_i2v_panjang_continuations_input.setValue(max(0, min(3, continuation_value)))
+                try:
+                    run_start_value = int(
+                        minimax_h3_i2v_panjang_prompt.get("run_start_stage", 1)
+                    )
+                except (TypeError, ValueError):
+                    run_start_value = 1
+                run_start_value = max(1, min(4, run_start_value))
+                run_start_index = self.minimax_h3_i2v_panjang_run_start_input.findData(run_start_value)
+                self.minimax_h3_i2v_panjang_run_start_input.setCurrentIndex(max(0, run_start_index))
                 chained_prompts = minimax_h3_i2v_panjang_prompt.get("prompts", [])
                 for extra_index, prompt_input in enumerate(self.minimax_h3_i2v_panjang_prompt_inputs, start=1):
                     entry = chained_prompts[extra_index] if extra_index < len(chained_prompts) else {}
@@ -6554,11 +6871,22 @@ class SceneEditorWindow(QMainWindow):
             )
             chained_entries = chained_existing.get("prompts", []) if isinstance(chained_existing, dict) else []
             chained_first_entry = chained_entries[0] if chained_entries else {}
-            i2v_positive_entry = self._merge_minimax_h3_prompt_entry_value(
-                chained_first_entry,
-                "I2VA",
-                json.loads(self.minimax_h3_i2v_positive_input.toPlainText().strip() or "{}"),
-            )
+            try:
+                run_start_stage = int(
+                    self.minimax_h3_i2v_panjang_run_start_input.currentData() or 1
+                )
+            except (TypeError, ValueError):
+                run_start_stage = 1
+            if run_start_stage == 1:
+                i2v_positive_entry = self._merge_minimax_h3_prompt_entry_value(
+                    chained_first_entry,
+                    "I2VA",
+                    json.loads(self.minimax_h3_i2v_positive_input.toPlainText().strip() or "{}"),
+                )
+            else:
+                # Tab 1 is not part of this partial run. Preserve its saved
+                # value without parsing/validating the hidden editor content.
+                i2v_positive_entry = copy.deepcopy(chained_first_entry)
         else:
             i2v_positive_entry = self._merge_minimax_h3_prompt_entry(
                 self.current_scene_dir / "minimax_h3_i2v_prompt.json",
@@ -6609,28 +6937,92 @@ class SceneEditorWindow(QMainWindow):
                 else copy.deepcopy(DEFAULT_MINIMAX_H3_I2V_CACHE)
             ),
         }
+        if (
+            scene_type in {
+                MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+                MINIMAX_H3_I2V_SCENE_TYPE,
+                MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
+            }
+            and (
+                scene_type != MINIMAX_H3_I2V_PANJANG_SCENE_TYPE
+                or run_start_stage == 1
+            )
+        ):
+            i2v_prompt["positive_prompt"] = ensure_i2va_frame_instructions(
+                i2v_prompt.get("positive_prompt", {}),
+                5.0,
+                include_last_frame=False,
+            )
         return t2v_prompt, i2v_prompt
 
-    def gather_minimax_h3_i2v_panjang_prompt(self, i2v_prompt: dict) -> dict:
+    def gather_minimax_h3_i2v_panjang_prompt(self, i2v_prompt: dict, duration_override=None) -> dict:
         """Build the chained JSON while keeping all four prompt entries."""
         path = self.current_scene_dir / MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME
         existing = load_json(path, DEFAULT_MINIMAX_H3_I2V_PANJANG_PROMPT)
         existing_prompts = existing.get("prompts", []) if isinstance(existing, dict) else []
+        continuation_value = int(self.minimax_h3_i2v_panjang_continuations_input.value())
+        active_count = continuation_value + 1
+        try:
+            run_start_stage = int(
+                self.minimax_h3_i2v_panjang_run_start_input.currentData() or 1
+            )
+        except (TypeError, ValueError):
+            run_start_stage = 1
+        if not 1 <= run_start_stage <= active_count:
+            raise ValueError(
+                f"Run mulai dari tab harus berada pada tab aktif 1 sampai {active_count}."
+            )
         prompts = [copy.deepcopy(i2v_prompt.get("positive_prompt", {}))]
         for extra_index, prompt_input in enumerate(self.minimax_h3_i2v_panjang_prompt_inputs, start=1):
+            stage_number = extra_index + 1
+            old_entry = existing_prompts[extra_index] if extra_index < len(existing_prompts) else {}
+            if not run_start_stage <= stage_number <= active_count:
+                # Do not validate an unrun tab. Keep its persisted prompt so
+                # it remains available if the user activates it later.
+                prompts.append(copy.deepcopy(old_entry) if isinstance(old_entry, dict) else {})
+                continue
             raw_text = prompt_input.toPlainText().strip()
             try:
                 id_new = json.loads(raw_text) if raw_text else {}
             except json.JSONDecodeError as exc:
-                raise ValueError(f"JSON id_new MiniMax I2V Prompt {extra_index + 1} tidak valid: {exc.msg}.") from exc
+                raise ValueError(f"JSON id_new MiniMax I2V Prompt {stage_number} tidak valid: {exc.msg}.") from exc
             if not isinstance(id_new, dict):
-                raise ValueError(f"JSON id_new MiniMax I2V Prompt {extra_index + 1} harus berupa object.")
-            old_entry = existing_prompts[extra_index] if extra_index < len(existing_prompts) else {}
+                raise ValueError(f"JSON id_new MiniMax I2V Prompt {stage_number} harus berupa object.")
             prompts.append(self._merge_minimax_h3_prompt_entry_value(old_entry, "I2VA", id_new))
+        stage_references = self.gather_minimax_h3_i2v_panjang_stage_references()
+        try:
+            prompt_duration = float(duration_override if duration_override is not None else 5.0)
+        except (TypeError, ValueError):
+            prompt_duration = 5.0
+        for stage_index in range(len(prompts)):
+            stage_number = stage_index + 1
+            if not run_start_stage <= stage_number <= active_count:
+                continue
+            last = stage_references[stage_index].get("last", {})
+            include_last_frame = isinstance(last, dict) and str(last.get("source", "none")).strip().lower() not in {"", "none"}
+            prompts[stage_index] = ensure_i2va_frame_instructions(
+                prompts[stage_index],
+                prompt_duration,
+                include_last_frame=include_last_frame,
+            )
+            normalized_id_new = prompts[stage_index].get("id_new", {})
+            timeline_errors = validate_i2va_shot_timeline(normalized_id_new, prompt_duration)
+            if timeline_errors:
+                raise ValueError(
+                    f"Timeline prompt MiniMax I2V panjang ke-{stage_index + 1} tidak valid: "
+                    + "; ".join(timeline_errors[:3])
+                )
+            if stage_index == 0:
+                prompt_widget = self.minimax_h3_i2v_positive_input
+            else:
+                prompt_widget = self.minimax_h3_i2v_panjang_prompt_inputs[stage_index - 1]
+            prompt_widget.setPlainText(json.dumps(normalized_id_new, ensure_ascii=False, indent=2))
         result = copy.deepcopy(i2v_prompt)
         result.pop("positive_prompt", None)
-        result["continuations"] = int(self.minimax_h3_i2v_panjang_continuations_input.value())
+        result["continuations"] = continuation_value
+        result["run_start_stage"] = run_start_stage
         result["prompts"] = prompts
+        result["stage_references"] = stage_references
         return result
 
     def _synchronize_minimax_h3_prompt_translation(self, prompt: dict, mode: str) -> dict:
@@ -7431,6 +7823,14 @@ class SceneEditorWindow(QMainWindow):
             scene_dir / "minimax_h3_i2v_prompt.json",
             DEFAULT_MINIMAX_H3_I2V_PROMPT,
         )
+        if scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE:
+            chained_prompt = load_json(
+                scene_dir / MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME,
+                DEFAULT_MINIMAX_H3_I2V_PANJANG_PROMPT,
+            )
+            chained_entries = chained_prompt.get("prompts", []) if isinstance(chained_prompt, dict) else []
+            minimax_h3_i2v_prompt = copy.deepcopy(chained_prompt)
+            minimax_h3_i2v_prompt["positive_prompt"] = chained_entries[0] if chained_entries else {}
         return validate_scene_data(
             meta,
             z_prompt,
@@ -7492,6 +7892,7 @@ class SceneEditorWindow(QMainWindow):
             self.asset_list.addItem(item)
         self.refresh_image_edit_source_options()
         self.refresh_r2v_reference_options()
+        self.refresh_minimax_h3_i2v_panjang_reference_options()
         if not assets:
             self.viewer_info_label.setText("Tidak ada file media di scene ini.")
 
@@ -7625,9 +8026,14 @@ class SceneEditorWindow(QMainWindow):
                 )
             elif scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE:
                 minimax_h3_i2v_panjang_prompt = self.gather_minimax_h3_i2v_panjang_prompt(
-                    minimax_h3_i2v_prompt
+                    minimax_h3_i2v_prompt,
+                    duration_override=meta.get("duration_seconds"),
                 )
+                active_count = int(minimax_h3_i2v_panjang_prompt.get("continuations", 0)) + 1
+                run_start_stage = int(minimax_h3_i2v_panjang_prompt.get("run_start_stage", 1))
                 for index, entry in enumerate(minimax_h3_i2v_panjang_prompt.get("prompts", []), start=1):
+                    if not run_start_stage <= index <= active_count:
+                        continue
                     id_new = entry.get("id_new") if isinstance(entry, dict) else None
                     probe = {"id_old": id_new, "id_new": id_new, "en": id_new}
                     errors = validate_structured_prompt(probe, expected_mode="I2VA")
@@ -7666,6 +8072,7 @@ class SceneEditorWindow(QMainWindow):
             minimax_h3_t2v_prompt,
             minimax_h3_i2v_prompt,
             r2v_prompt,
+            minimax_h3_i2v_panjang_prompt=minimax_h3_i2v_panjang_prompt,
         )
         if issues and not silent:
             reply = QMessageBox.question(

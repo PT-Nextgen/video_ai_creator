@@ -8,6 +8,7 @@ from minimax_h3_prompt import (
     I2VA_FIRST_SHOT_VISUAL_EN,
     I2VA_FIRST_SHOT_VISUAL_ID,
     default_structured_prompt,
+    ensure_i2va_frame_instructions,
     serialize_structured_prompt,
     structured_prompt_entry,
 )
@@ -222,16 +223,10 @@ def build_workflow(
     uploaded_name: str | None = None,
     duration_override: int | float | None = None,
     fps_override: int | None = None,
+    last_frame_uploaded_name: str | None = None,
 ) -> dict:
     prompt = i2v_prompt if isinstance(i2v_prompt, dict) else {}
     workflow = copy.deepcopy(_load_template())
-
-    positive_value = prompt.get("positive_prompt", DEFAULT_PROMPT["positive_prompt"])
-    if isinstance(positive_value, dict) and isinstance(positive_value.get("en"), dict):
-        positive_prompt = serialize_structured_prompt(positive_value["en"])
-    else:
-        positive_prompt = str(positive_value or "")
-    _set_input(workflow, "133", "prompt", positive_prompt)
 
     try:
         width = int(prompt.get("width", DEFAULT_PROMPT["width"]))
@@ -253,6 +248,18 @@ def build_workflow(
     except (TypeError, ValueError):
         duration = 5.0
     _set_input(workflow, "135", "value", duration)
+    positive_value = prompt.get("positive_prompt", DEFAULT_PROMPT["positive_prompt"])
+    if isinstance(positive_value, dict):
+        positive_value = ensure_i2va_frame_instructions(
+            positive_value,
+            duration,
+            include_last_frame=bool(last_frame_uploaded_name),
+        )
+    if isinstance(positive_value, dict) and isinstance(positive_value.get("en"), dict):
+        positive_prompt = serialize_structured_prompt(positive_value["en"])
+    else:
+        positive_prompt = str(positive_value or "")
+    _set_input(workflow, "133", "prompt", positive_prompt)
     # MiniMax H3 hanya mendukung/menjalankan workflow pada 24 FPS.
     fps = 24
     _set_input(workflow, "132", "fps", fps)
@@ -264,6 +271,24 @@ def build_workflow(
 
     if uploaded_name:
         _set_input(workflow, "114", "image", str(uploaded_name))
+    # The template remains backward-compatible: the optional LoadImage node
+    # is added only for a first/last-frame request.
+    if last_frame_uploaded_name:
+        workflow["139"] = {
+            "inputs": {"image": str(last_frame_uploaded_name)},
+            "class_type": "LoadImage",
+            "_meta": {"title": "Load Last Frame"},
+        }
+        node_133 = workflow.get("133")
+        if isinstance(node_133, dict) and isinstance(node_133.get("inputs"), dict):
+            node_133["inputs"]["last_frame"] = ["139", 0]
+    else:
+        workflow.pop("139", None)
+        node_133 = workflow.get("133")
+        if isinstance(node_133, dict):
+            node_133_inputs = node_133.get("inputs")
+            if isinstance(node_133_inputs, dict):
+                node_133_inputs.pop("last_frame", None)
 
     _set_lora_node(
         workflow,
@@ -287,6 +312,7 @@ def build_minimax_h3_i2v_workflow(
     uploaded_name: str | None = None,
     duration_override: int | float | None = None,
     fps_override: int | None = None,
+    last_frame_uploaded_name: str | None = None,
 ) -> dict:
     return build_workflow(
         i2v_prompt,
@@ -294,6 +320,7 @@ def build_minimax_h3_i2v_workflow(
         uploaded_name=uploaded_name,
         duration_override=duration_override,
         fps_override=fps_override,
+        last_frame_uploaded_name=last_frame_uploaded_name,
     )
 
 
@@ -303,9 +330,22 @@ def send_workflow(
     server,
     log_file=None,
     source_label="in-memory workflow",
+    last_frame_uploaded_name=None,
 ):
     if uploaded_name:
         _set_input(workflow, "114", "image", str(uploaded_name))
+    if last_frame_uploaded_name:
+        if "139" not in workflow:
+            workflow["139"] = {
+                "inputs": {"image": str(last_frame_uploaded_name)},
+                "class_type": "LoadImage",
+                "_meta": {"title": "Load Last Frame"},
+            }
+        else:
+            _set_input(workflow, "139", "image", str(last_frame_uploaded_name))
+        node_133 = workflow.get("133")
+        if isinstance(node_133, dict) and isinstance(node_133.get("inputs"), dict):
+            node_133["inputs"]["last_frame"] = ["139", 0]
     prompt_logs = []
     for node_id, node in (workflow or {}).items():
         inputs = node.get("inputs") if isinstance(node, dict) else None
