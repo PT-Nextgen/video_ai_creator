@@ -22,6 +22,7 @@ SCENE_VOICE_OPTIONS = [
     ("Arkana - Arab (tilawah)", "arkana_arab"),
     ("Candy (anak perempuan bersemangat)", "candy"),
     ("Lily (anak perempuan kalem)", "lily"),
+    ("Asna (narator muda religius-gaul)", "asna"),
     ("Lily - Ngaji", "lily_ngaji"),
     ("Lily - Arab", "lily_arab"),
     ("Finn (anak laki-laki bersemangat)", "finn"),
@@ -75,6 +76,16 @@ VOICE_CHARACTER_MAP = {
         "profile_file": "Lily.txt",
         "elevenlabs_voice_id": "Pt5YrLNyu6d2s3s4CVMg",
         "gemini_profile_text": "7 years old Indonesian youthful female voice with a soft and cute tone. Perfect for animated characters and storytelling. Ideal for bringing warmth and sweetness to playful or gentle characters.",
+    },
+    "asna": {
+        "display_name": "Asna",
+        "profile_file": "Asna.txt",
+        "elevenlabs_voice_id": "Pt5YrLNyu6d2s3s4CVMg",
+        "elevenlabs_voice_settings": {
+            "speed": 1.12,
+            "style": 0.35,
+        },
+        "gemini_profile_text": "18-year-old Indonesian youthful female voice based on Lily's soft, clear, and sweet tone, but with a noticeably higher, brighter register and a more mature young-adult presence. Speak faster and fluidly with crisp articulation, lively energy, short natural pauses, and an engaging narrator rhythm. Sound like a modern young Muslim woman: warm, respectful, optimistic, sincere, and subtly religious while remaining casual, relatable, fresh, and gaul. Keep the delivery expressive and confident without sounding childish, babyish, overly formal, preachy, solemn, slow, breathy, or artificial. Do not sing.",
     },
     "lily_ngaji": {
         "display_name": "Lily - Ngaji",

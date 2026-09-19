@@ -9,7 +9,7 @@
   },
   "prompt_generation": {
     "provider": "llama.cpp",
-    "model": "qwen3.8-27b-uc-q4_k_m",
+    "model": "qwen3.8-27b",
     "host": "nextgenserver",
     "port": 8080
   },

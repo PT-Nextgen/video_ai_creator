@@ -329,7 +329,7 @@ Catatan voice dan caption:
   - dipakai juga sebagai sumber caption
 - `voice_character`
   - dipilih per scene dari karakter suara:
-    - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `arkana`, `arkana_arab`, `candy`, `lily`, `lily_ngaji`, `lily_arab`, `finn`, `kevin`
+    - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `arkana`, `arkana_arab`, `candy`, `lily`, `asna`, `lily_ngaji`, `lily_arab`, `finn`, `kevin`
 - prompt lain seperti `sound_prompt`, `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
 - konfigurasi provider voice bersifat global per project di `project_settings.json.voice`:
   - `voice_provider=gemini` -> model runtime fixed `gemini-3.1-flash-tts-preview` (language `id-ID`)
@@ -609,7 +609,7 @@ Fungsi utama:
 - tombol di sebelah `Buka Project` untuk menjalankan `Execute Agentic` ke beberapa project sekaligus
 - saat pindah scene, tampilan otomatis kembali ke `Root Scene`
 - untuk voice, tersedia field:
-  - `Pilihan Suara Scene` (per scene): 8 karakter suara
+- `Pilihan Suara Scene` (per scene): 13 karakter suara
 - group `Audio` berisi proses generate voice/sound untuk scene atau semua scene
 - tombol `Upscale Video` di group `Scene` untuk upscale video terakhir pada root scene aktif
 - edit ukuran image dan WAN
@@ -1161,9 +1161,9 @@ Fungsi:
 - jika provider `gemini`:
   - memakai Gemini API native TTS
   - model fixed `gemini-3.1-flash-tts-preview`
-  - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Arkana/Arkana Arab/Candy/Lily/Finn/Kevin)
+  - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Arkana/Arkana Arab/Candy/Lily/Asna/Finn/Kevin)
   - profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
-    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Arkana.txt`, `Arkana Arab.txt`, `Candy.txt`, `Lily.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
+    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Arkana.txt`, `Arkana Arab.txt`, `Candy.txt`, `Lily.txt`, `Asna.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
   - format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
   - `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
   - jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
@@ -1179,6 +1179,7 @@ Fungsi:
   - memakai ElevenLabs API
   - model fixed `eleven_v3`
   - `voice_id` otomatis mengikuti `voice_character`
+  - karakter `Asna` memakai voice ID Lily yang sama dengan pengaturan speed `1.12` dan style `0.35`
 - file output voice selalu memakai awalan `speech_`
 
 Contoh:

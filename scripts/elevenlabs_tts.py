@@ -31,18 +31,22 @@ def find_elevenlabs_key():
     return None
 
 
-def synthesize(text, voice_id, api_key, timeout=TTS_CALL_TIMEOUT_SECONDS):
+def synthesize(text, voice_id, api_key, timeout=TTS_CALL_TIMEOUT_SECONDS, voice_settings=None):
     try:
         from elevenlabs.client import ElevenLabs
+        from elevenlabs.types.voice_settings import VoiceSettings
     except Exception as e:
         raise RuntimeError("elevenlabs SDK not installed; please pip install elevenlabs") from e
     client = ElevenLabs(base_url="https://api.elevenlabs.io", api_key=api_key, timeout=timeout)
-    res = client.text_to_speech.convert(
-        voice_id=voice_id,
-        output_format="mp3_44100_128",
-        text=text,
-        model_id=ELEVENLABS_MODEL_ID_FIXED,
-    )
+    convert_kwargs = {
+        "voice_id": voice_id,
+        "output_format": "mp3_44100_128",
+        "text": text,
+        "model_id": ELEVENLABS_MODEL_ID_FIXED,
+    }
+    if isinstance(voice_settings, dict) and voice_settings:
+        convert_kwargs["voice_settings"] = VoiceSettings(**voice_settings)
+    res = client.text_to_speech.convert(**convert_kwargs)
     if isinstance(res, (bytes, bytearray)):
         return bytes(res)
     if isinstance(res, types.GeneratorType):
@@ -86,6 +90,7 @@ def process_scene(scene_dir, api_key, logger=None, write_log=None):
     voice_key = resolve_scene_voice_key(meta)
     voice = get_voice_character(voice_key)
     voice_id = str(voice.get("elevenlabs_voice_id", "")).strip()
+    voice_settings = voice.get("elevenlabs_voice_settings")
     if not voice_id or not text:
         if write_log:
             write_log(f"Scene {scene_dir} tidak memiliki voice character atau voice_text yang valid.", level="error")
@@ -94,7 +99,7 @@ def process_scene(scene_dir, api_key, logger=None, write_log=None):
         return False
 
     try:
-        audio_bytes = synthesize(text, voice_id, api_key)
+        audio_bytes = synthesize(text, voice_id, api_key, voice_settings=voice_settings)
     except Exception as e:
         if logger:
             logger.error("ElevenLabs synth failed for %s: %s", scene_dir, e)

@@ -26,6 +26,7 @@ GEMINI_VOICE_NAME_BY_CHARACTER = {
     "arkana_arab": "Fenrir",
     "candy": "Leda",
     "lily": "Leda",
+    "asna": "Leda",
     "lily_ngaji": "Leda",
     "lily_arab": "Leda",
     "finn": "Puck",
