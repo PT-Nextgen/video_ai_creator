@@ -67,6 +67,7 @@ from minimax_h3_prompt import (
     I2VA_FIRST_FRAME_DETAIL_INSTRUCTION,
     ensure_i2va_frame_instructions,
     enforce_i2va_first_shot_visual,
+    synchronize_i2va_frame_instructions,
     REF2VA_SECTION_KEYS,
     normalize_minimax_prompt_payload,
     parse_structured_response,
@@ -7004,6 +7005,12 @@ class SceneEditorWindow(QMainWindow):
                 prompts[stage_index],
                 prompt_duration,
                 include_last_frame=include_last_frame,
+            )
+            # Frame configuration is metadata, not a creative prompt edit.
+            # Keep all three prompt representations synchronized so runtime
+            # localization is not triggered by first/last-frame changes.
+            prompts[stage_index] = synchronize_i2va_frame_instructions(
+                prompts[stage_index]
             )
             normalized_id_new = prompts[stage_index].get("id_new", {})
             timeline_errors = validate_i2va_shot_timeline(normalized_id_new, prompt_duration)

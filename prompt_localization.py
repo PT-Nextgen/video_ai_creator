@@ -26,6 +26,7 @@ from minimax_h3_prompt import (
     validate_structured_prompt,
     protect_ref2va_tokens,
     restore_ref2va_tokens,
+    synchronize_i2va_frame_instructions,
 )
 
 
@@ -1419,15 +1420,16 @@ def prepare_prompt_payload_for_save(filename: str, data: dict, existing_data: di
         # The chained editor stores four structured prompts instead of one
         # top-level positive_prompt.  Keep the previous translation marker
         # when a prompt was edited in the UI, so runtime localization can see
-        # id_old != id_new and translate that specific tab.  A complete
-        # id_old == id_new + en object is the result of the explicit "Buat
-        # Prompt" action and is already translated, so preserve it.
+        # id_old != id_new and translate that specific tab.  Frame-only
+        # changes are synchronized across id_old/id_new/en before this point,
+        # so they remain already translated and never trigger localization.
         incoming_prompts = result.get("prompts")
         existing_prompts = existing.get("prompts")
         if isinstance(incoming_prompts, list):
             normalized_prompts = []
             for index, raw_entry in enumerate(incoming_prompts):
                 entry = copy.deepcopy(raw_entry) if isinstance(raw_entry, dict) else {}
+                entry = synchronize_i2va_frame_instructions(entry)
                 previous_entry = (
                     existing_prompts[index]
                     if isinstance(existing_prompts, list)

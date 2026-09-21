@@ -1545,13 +1545,16 @@ Scene type: `minimax-h3_i2v-panjang`
 ```
 
 - `prompts` selalu berisi tepat 4 item; hanya item sampai `continuations + 1` yang dijalankan
+- setelah scene berhasil menjalankan proses, final dibangun dari semua file yang tersedia dengan pola `minimax_h3_i2v_panjang_segment_<nomor>.mp4`
+- segment diurutkan berdasarkan nomor secara numerik; video dengan nama lain, final lama, dan file temporary tidak ikut digabungkan
+- minimal satu segment harus tersedia dan valid; segment yang ditemukan tetapi kosong atau tidak valid membuat finalisasi scene gagal dan file final lama tidak ditimpa
 - `run_start_stage` menentukan proses awal: `1` menjalankan normal, sedangkan `2`, `3`, atau `4` menjalankan proses mulai dari tab tersebut sampai proses aktif terakhir
 - saat partial run, validasi dan terjemahan prompt hanya dilakukan untuk proses mulai dari `run_start_stage` sampai proses aktif terakhir
 - untuk partial run, segment video dari proses sebelum `run_start_stage` harus sudah ada; file frame terakhir akan digunakan jika ada atau dibuat ulang dari segment tersebut
 - setiap proses yang selesai selalu menyimpan frame terakhirnya agar dapat dipakai sebagai referensi pada run berikutnya
 - setiap item memakai schema I2VA dan `mode: "I2VA"`
 - setiap prompt lanjutan diterjemahkan secara runtime jika `id_new` berbeda dari `id_old` atau `en` belum valid
-- hasil stage aktif digabung menjadi `minimax_h3_i2v_panjang_final.mp4`
+- semua segment yang tersedia digabung berurutan menjadi `minimax_h3_i2v_panjang_final.mp4`, terlepas dari nilai `continuations` atau `run_start_stage`
 - color match dilakukan setelah seluruh stage digabung, menggunakan frame pertama video gabungan sebagai referensi
 - utilitas CLI `scripts/color_match_video.py` juga dapat digunakan untuk memproses video terhadap frame pertamanya; audio dipertahankan
 - contoh: `.\.venv\Scripts\python.exe scripts\color_match_video.py --project ohyes --scene 3`

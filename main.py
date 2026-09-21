@@ -15,6 +15,7 @@ if ROOT not in sys.path:
 import glob
 import math
 import imageio
+import subprocess
 from PIL import Image
 
 from scripts import comfyui_api
@@ -106,6 +107,8 @@ POLL_INTERVAL = COMFYUI_POLL_INTERVAL_SECONDS
 I2V_FPS = 16
 WEB_SCROLL_FPS = 16
 MINIMAX_H3_DURATION_DECIMALS = 4
+MINIMAX_H3_I2V_PANJANG_SEGMENT_PREFIX = "minimax_h3_i2v_panjang_segment_"
+MINIMAX_H3_I2V_PANJANG_SEGMENT_SUFFIX = ".mp4"
 DEFAULT_WEB_SCROLL_PROMPT = {
     "url": "",
     "width": 368,
@@ -223,11 +226,42 @@ def _extract_last_frame_image(video_path: str, output_path: str):
 
 def _concat_video_segments(segment_paths: list[str], output_path: str, *, preserve_audio: bool = False):
     valid_segments = [str(path) for path in segment_paths if str(path or "").strip() and os.path.exists(path)]
-    if len(valid_segments) < 2:
-        raise RuntimeError("Minimal dua video diperlukan untuk concat.")
+    if not valid_segments:
+        raise RuntimeError("Minimal satu video diperlukan untuk concat.")
 
     base_fps = max(1, int(round(float(ffprobe_fps(valid_segments[0])))))
     base_width, base_height = ffprobe_size(valid_segments[0])
+
+    if len(valid_segments) == 1:
+        src = valid_segments[0]
+        if preserve_audio and ffprobe_has_audio(src):
+            run_ffmpeg(
+                f'ffmpeg -y -i "{src}" '
+                f'-map 0:v:0 -map 0:a:0 '
+                f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                f'-af "aresample=44100:async=1:first_pts=0,'
+                f'aformat=sample_rates=44100:channel_layouts=stereo" '
+                f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                f'-c:a aac -b:a 192k -ac 2 -ar 44100 "{output_path}"'
+            )
+        elif preserve_audio:
+            segment_duration = max(0.1, ffprobe_duration(src))
+            run_ffmpeg(
+                f'ffmpeg -y -i "{src}" '
+                f'-f lavfi -t {segment_duration:.6f} '
+                f'-i anullsrc=channel_layout=stereo:sample_rate=44100 '
+                f'-map 0:v:0 -map 1:a:0 '
+                f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                f'-c:v libx264 -preset fast -pix_fmt yuv420p '
+                f'-c:a aac -b:a 192k -ac 2 -ar 44100 -shortest "{output_path}"'
+            )
+        else:
+            run_ffmpeg(
+                f'ffmpeg -y -i "{src}" '
+                f'-vf "scale={base_width}:{base_height},fps={base_fps}" '
+                f'-an -c:v libx264 -preset fast -pix_fmt yuv420p "{output_path}"'
+            )
+        return output_path
 
     with tempfile.TemporaryDirectory(prefix="wan22_concat_") as td:
         normalized_paths = []
@@ -291,6 +325,74 @@ def _concat_video_segments(segment_paths: list[str], output_path: str, *, preser
                 f'-c:v libx264 -preset fast -pix_fmt yuv420p -an "{output_path}"'
             )
     return output_path
+
+
+def _get_minimax_h3_i2v_panjang_segment_paths(scene_dir: str) -> list[str]:
+    """Return every available numeric MiniMax segment file in numeric order."""
+    scene_dir = str(scene_dir)
+    prefix = MINIMAX_H3_I2V_PANJANG_SEGMENT_PREFIX
+    suffix = MINIMAX_H3_I2V_PANJANG_SEGMENT_SUFFIX
+    candidates = []
+    try:
+        filenames = os.listdir(scene_dir)
+    except OSError as exc:
+        raise RuntimeError(f"scene tidak dapat dibaca: {exc}") from exc
+    for filename in filenames:
+        lowered = filename.lower()
+        if not lowered.startswith(prefix.lower()) or not lowered.endswith(suffix):
+            continue
+        number_text = filename[len(prefix):-len(suffix)]
+        if not number_text.isdigit() or int(number_text) <= 0:
+            continue
+        candidates.append((int(number_text), filename))
+    candidates.sort(key=lambda item: (item[0], item[1].lower()))
+    if not candidates:
+        raise RuntimeError(
+            "tidak ditemukan video dengan pola "
+            f"{prefix}<nomor>{suffix}"
+        )
+
+    segment_paths = [os.path.join(scene_dir, filename) for _, filename in candidates]
+    invalid = []
+    for path in segment_paths:
+        if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+            invalid.append(os.path.basename(path))
+            continue
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "json",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            payload = json.loads(probe.stdout or "{}")
+            streams = payload.get("streams") if isinstance(payload, dict) else None
+            stream = streams[0] if isinstance(streams, list) and streams else None
+            width = int(stream.get("width", 0)) if isinstance(stream, dict) else 0
+            height = int(stream.get("height", 0)) if isinstance(stream, dict) else 0
+            duration = ffprobe_duration(path)
+            if probe.returncode != 0 or width <= 0 or height <= 0 or duration <= 0:
+                invalid.append(os.path.basename(path))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            invalid.append(os.path.basename(path))
+
+    if invalid:
+        raise RuntimeError(
+            "video segment MiniMax H3 I2V panjang tidak valid/kosong: "
+            + ", ".join(invalid)
+        )
+    return [os.path.abspath(path) for path in segment_paths]
 
 
 def _remove_video_audio(video_path: str) -> str:
@@ -1417,33 +1519,38 @@ def process_scene(scene_dir, server):
                 return False
             generated_frames[stage_number] = frame_path
 
-        final_video_path = segment_paths[0]
-        if len(segment_paths) > 1:
-            final_video_path = os.path.join(scene_dir, 'minimax_h3_i2v_panjang_final.mp4')
-            try:
-                _concat_video_segments(
-                    segment_paths,
-                    final_video_path,
-                    preserve_audio=not remove_sound,
-                )
-            except Exception as e:
-                write_log(f"Failed to concat MiniMax H3 I2V panjang stages for {scene_dir}: {e}")
-                return False
+        try:
+            # Final assembly is independent from the active run range and uses
+            # every numeric segment file currently available in the scene.
+            segment_paths = _get_minimax_h3_i2v_panjang_segment_paths(scene_dir)
+        except Exception as e:
+            write_log(f"Failed to collect MiniMax H3 I2V panjang segments for {scene_dir}: {e}")
+            return False
+
+        final_video_path = os.path.join(scene_dir, 'minimax_h3_i2v_panjang_final.mp4')
+        concat_tmp_path = os.path.join(scene_dir, '__minimax_h3_i2v_panjang_concat_tmp__.mp4')
         color_match_tmp_path = os.path.join(scene_dir, '__minimax_h3_i2v_panjang_color_match_tmp__.mp4')
         try:
-            color_match_video(Path(final_video_path), Path(color_match_tmp_path), strength=1.0)
+            _concat_video_segments(
+                segment_paths,
+                concat_tmp_path,
+                preserve_audio=not remove_sound,
+            )
+            color_match_video(Path(concat_tmp_path), Path(color_match_tmp_path), strength=1.0)
             os.replace(color_match_tmp_path, final_video_path)
             write_log(
                 f"Applied color match to combined MiniMax H3 I2V panjang video: {final_video_path}"
             )
         except Exception as e:
-            write_log(f"Failed to color match MiniMax H3 I2V panjang video for {scene_dir}: {e}")
-            if os.path.exists(color_match_tmp_path):
-                try:
-                    os.remove(color_match_tmp_path)
-                except OSError:
-                    pass
+            write_log(f"Failed to assemble MiniMax H3 I2V panjang video for {scene_dir}: {e}")
             return False
+        finally:
+            for temporary_path in (concat_tmp_path, color_match_tmp_path):
+                if os.path.exists(temporary_path):
+                    try:
+                        os.remove(temporary_path)
+                    except OSError:
+                        pass
         try:
             _invalidate_comfy_audio_source(scene_dir)
         except Exception as e:

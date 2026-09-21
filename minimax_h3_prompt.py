@@ -50,6 +50,58 @@ _I2VA_LAST_FRAME_SENTENCE_PATTERN = re.compile(
 )
 
 
+def _without_i2va_frame_instructions(value: dict, localized_key: str) -> dict:
+    """Return an I2VA prompt with generated first/last-frame sentences removed."""
+    result = copy.deepcopy(value)
+    if not isinstance(result, dict):
+        return result
+    shots = result.get("shots")
+    if not isinstance(shots, list):
+        return result
+    first_sentence = {
+        "en": I2VA_FIRST_SHOT_VISUAL_EN,
+        "id_new": I2VA_FIRST_SHOT_VISUAL_ID,
+        "id_old": I2VA_FIRST_SHOT_VISUAL_ID,
+    }.get(localized_key)
+    last_shot_index = max(
+        (index for index, shot in enumerate(shots) if isinstance(shot, dict)),
+        default=-1,
+    )
+    for index, shot in enumerate(shots):
+        if not isinstance(shot, dict):
+            continue
+        visual = _I2VA_LAST_FRAME_SENTENCE_PATTERN.sub("", str(shot.get("visual", "")))
+        if shot.get("shot_id") == "Shot 1" and first_sentence:
+            visual = re.sub(
+                rf"^\s*{re.escape(first_sentence)}\.?\s*",
+                "",
+                visual,
+                flags=re.IGNORECASE,
+            )
+        if index == last_shot_index:
+            # A period is added immediately before the generated last-frame
+            # sentence. Ignore that formatting-only change when comparing the
+            # creative prompt against id_old.
+            visual = re.sub(r"\.$", "", visual.rstrip())
+        shot["visual"] = re.sub(r"\s{2,}", " ", visual).strip()
+    return result
+
+
+def synchronize_i2va_frame_instructions(entry: dict) -> dict:
+    """Sync id_old only when id_new differs from it by frame instructions."""
+    result = copy.deepcopy(entry or {})
+    current_id_new = result.get("id_new")
+    previous_id_old = result.get("id_old")
+    if (
+        isinstance(current_id_new, dict)
+        and isinstance(previous_id_old, dict)
+        and _without_i2va_frame_instructions(current_id_new, "id_new")
+        == _without_i2va_frame_instructions(previous_id_old, "id_old")
+    ):
+        result["id_old"] = copy.deepcopy(current_id_new)
+    return result
+
+
 def empty_ref2va_prompt() -> dict:
     return {key: "" for key in REF2VA_SECTION_KEYS}
 
@@ -234,11 +286,10 @@ def ensure_i2va_frame_instructions(entry: dict, end_time: float, include_last_fr
             last_shot = next((shot for shot in reversed(shots) if isinstance(shot, dict)), None)
             last_sentence = last_sentences[localized_key]
             if last_shot is not None and last_sentence.lower() not in str(last_shot.get("visual", "")).lower():
-                last_shot["visual"] = f"{str(last_shot.get('visual', '')).strip()} {last_sentence}".strip()
-    # Keep id_old untouched. It is the persisted translation marker: Save
-    # must be able to leave id_old behind when the UI changes the prompt or
-    # toggles the last-frame instruction, so runtime localization translates
-    # the updated id_new for that specific process.
+                visual = str(last_shot.get("visual", "")).strip()
+                if visual and visual[-1] not in ".!?":
+                    visual += "."
+                last_shot["visual"] = f"{visual} {last_sentence}".strip()
     return result
 
 
