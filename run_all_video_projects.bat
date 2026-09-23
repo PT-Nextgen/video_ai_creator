@@ -19,7 +19,7 @@ if not exist "%MAIN%" (
     exit /b 1
 )
 
-set "PROJECTS=bj_video_2 hj_video_2 pov_video_2 bj_video_rika hj_video_rika pov_video_rika"
+set "PROJECTS=hj_video_rika pov_video_rika"
 
 echo ============================================================
 echo Menjalankan seluruh scene secara berurutan

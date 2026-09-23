@@ -1980,9 +1980,16 @@ class WebSearchWorker(QObject):
 
 
 class ComposeMusicDialog(QDialog):
-    def __init__(self, music_files: list[Path], compose_song_enabled: bool = False, parent=None):
+    def __init__(
+        self,
+        music_files: list[Path],
+        compose_song_enabled: bool = False,
+        parent=None,
+        show_compose_song: bool = True,
+        window_title: str = "Buat Video Final",
+    ):
         super().__init__(parent)
-        self.setWindowTitle("Buat Video Final")
+        self.setWindowTitle(window_title)
         self.music_combo = QComboBox(self)
         self.music_combo.addItem("(Tanpa music)", "")
         for path in music_files:
@@ -2007,7 +2014,8 @@ class ComposeMusicDialog(QDialog):
         layout = QFormLayout(self)
         layout.addRow("File Music", self.music_combo)
         layout.addRow("Upscale", self.upscale_input)
-        layout.addRow("Mode", self.compose_song_input)
+        if show_compose_song:
+            layout.addRow("Mode", self.compose_song_input)
         layout.addRow("Volume (0.00 - 2.00)", self.volume_input)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
@@ -2913,6 +2921,8 @@ class SceneEditorWindow(QMainWindow):
         self.variation_action_group_widget = None
         self.run_action_group_widget = None
         self.audio_action_group_widget = None
+        self.batch_action_group_widget = None
+        self.batch_scene_action_buttons = []
         self.backup_action_group_widget = None
         self.compose_action_group_widget = None
         self.runtime_action_group_widget = None
@@ -4361,6 +4371,7 @@ class SceneEditorWindow(QMainWindow):
         self.variation_action_group_widget = self.build_variation_action_group()
         self.run_action_group_widget = self.build_run_action_group()
         self.audio_action_group_widget = self.build_audio_action_group()
+        self.batch_action_group_widget = self.build_batch_action_group()
         self.backup_action_group_widget = self.build_backup_action_group()
         self.compose_action_group_widget = self.build_compose_action_group()
         self.runtime_action_group_widget = self.build_runtime_action_group()
@@ -4371,6 +4382,7 @@ class SceneEditorWindow(QMainWindow):
         self.toolbar.addWidget(self.audio_action_group_widget)
         self.toolbar.addWidget(self.compose_action_group_widget)
         self.toolbar.addWidget(self.runtime_action_group_widget)
+        self.toolbar.addWidget(self.batch_action_group_widget)
         self.toolbar.addWidget(self.edit_prompt_action_group_widget)
         self.toolbar.addWidget(self.backup_action_group_widget)
         self._apply_scene_view_mode()
@@ -4404,7 +4416,6 @@ class SceneEditorWindow(QMainWindow):
 
         add_button("Buat project baru.", QStyle.SP_FileDialogNewFolder, self.new_project)
         add_button("Buka project yang sudah ada.", QStyle.SP_DirOpenIcon, self.open_project)
-        add_button("Jalankan agentic execute untuk beberapa project yang dipilih.", QStyle.SP_MediaPlay, self.open_multi_project_agentic_dialog)
         add_button("Tutup project aktif.", QStyle.SP_DialogCloseButton, self.close_project)
         add_button(
             "Buka konfigurasi project (deskripsi, ukuran video, model, voice, caption, cover).",
@@ -4889,6 +4900,9 @@ class SceneEditorWindow(QMainWindow):
         ):
             if group_widget is not None:
                 group_widget.setEnabled(not read_only)
+
+        for button in self.batch_scene_action_buttons:
+            button.setEnabled(not read_only)
 
         if self.variation_action_group_widget is not None:
             self.variation_action_group_widget.setEnabled(self.current_scene_dir is not None)
@@ -5535,7 +5549,6 @@ class SceneEditorWindow(QMainWindow):
             self.generate_initial_image_only,
         )
         add_button("Jalankan Adegan", "Jalankan alur untuk adegan yang dipilih.", QStyle.SP_MediaPlay, self.run_current_scene)
-        add_button("Jalankan Semua", "Jalankan semua adegan secara berurutan.", QStyle.SP_MediaSkipForward, self.run_all_scenes)
         return frame
 
     def update_run_action_buttons_state(self):
@@ -5572,9 +5585,56 @@ class SceneEditorWindow(QMainWindow):
             layout.addWidget(button)
 
         add_button("Buat voice untuk adegan yang dipilih.", QStyle.SP_MediaVolume, self.generate_voice_current_scene)
-        add_button("Buat voice untuk semua adegan.", QStyle.SP_MediaSeekForward, self.generate_voice_all_scenes)
         add_button("Buat sound untuk adegan yang dipilih.", QStyle.SP_DialogOpenButton, self.generate_sound_current_scene)
-        add_button("Buat sound untuk semua adegan.", QStyle.SP_DialogApplyButton, self.generate_sound_all_scenes)
+        return frame
+
+    def build_batch_action_group(self):
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setStyleSheet("QFrame { background: #fefce8; border: 1px solid #fde68a; border-radius: 6px; }")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        title = QLabel("Batch", frame)
+        title.setStyleSheet("font-weight: 600; color: #a16207;")
+        layout.addWidget(title)
+
+        self.batch_scene_action_buttons = []
+
+        def add_button(tooltip, icon_kind, handler, scene_scoped=False):
+            button = QToolButton(frame)
+            button.setIcon(self.style().standardIcon(icon_kind))
+            button.setToolTip(tooltip)
+            button.setStatusTip(tooltip)
+            button.clicked.connect(handler)
+            layout.addWidget(button)
+            if scene_scoped:
+                self.batch_scene_action_buttons.append(button)
+
+        add_button(
+            "Jalankan agentic execute untuk beberapa project yang dipilih.",
+            QStyle.SP_MediaPlay,
+            self.open_multi_project_agentic_dialog,
+        )
+        add_button(
+            "Jalankan semua adegan secara berurutan.",
+            QStyle.SP_MediaSkipForward,
+            self.run_all_scenes,
+            scene_scoped=True,
+        )
+        add_button(
+            "Buat voice untuk semua adegan.",
+            QStyle.SP_MediaSeekForward,
+            self.generate_voice_all_scenes,
+            scene_scoped=True,
+        )
+        add_button(
+            "Buat sound untuk semua adegan.",
+            QStyle.SP_DialogApplyButton,
+            self.generate_sound_all_scenes,
+            scene_scoped=True,
+        )
         return frame
 
     def build_backup_action_group(self):
@@ -5632,6 +5692,7 @@ class SceneEditorWindow(QMainWindow):
         layout.addWidget(seedvr2_button)
 
         add_button("Gabungkan video dan audio untuk semua adegan.", QStyle.SP_DialogYesButton, self.compose_all_scenes)
+        add_button("Compose satu video untuk setiap adegan dengan music dan scale.", QStyle.SP_MediaPlay, self.compose_per_scene)
         return frame
 
     def build_runtime_action_group(self):
@@ -9561,6 +9622,52 @@ class SceneEditorWindow(QMainWindow):
             args,
             "Menggabungkan video dan audio untuk semua adegan",
             watch_dirs=[*self.list_scene_dirs_current(), self.project_dir() / "combined" if self.project_dir() else API_PRODUCTION / "combined", MUSIC_DIR],
+        )
+
+    def compose_per_scene(self):
+        if not self.ensure_project_selected():
+            return
+        if not self.confirm_run_action(
+            "Compose Per Scene",
+            "Buat satu video untuk setiap adegan menggunakan video terbaru, music, dan scale?",
+        ):
+            return
+        if self.current_scene_dir:
+            self.save_current_scene(silent=True)
+
+        scene_dirs = self.list_scene_dirs_current()
+        if not scene_dirs:
+            QMessageBox.information(self, "Belum Ada Scene", "Project belum memiliki scene.")
+            return
+
+        music_files = []
+        if MUSIC_DIR.exists():
+            exts = {".m4a", ".mp3", ".wav"}
+            music_files = sorted(
+                [p for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in exts],
+                key=lambda p: p.name.lower(),
+            )
+        dialog = ComposeMusicDialog(
+            music_files,
+            compose_song_enabled=False,
+            parent=self,
+            show_compose_song=False,
+            window_title="Compose Per Scene",
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        music_file, music_volume, upscale_factor, _compose_song = dialog.get_values()
+        args = ["--project", self.current_project_name, "--compose-per-scene"]
+        if music_file:
+            args.extend(["--music-file", music_file, "--music-volume", f"{music_volume:.2f}"])
+        if float(upscale_factor) > 1.0:
+            args.extend(["--upscale-factor", f"{float(upscale_factor):.2f}"])
+
+        self.start_process(
+            COMPOSE_SCRIPT,
+            args,
+            "Membuat satu video compose untuk setiap adegan",
+            watch_dirs=[*scene_dirs, self.project_dir() / "combined" if self.project_dir() else API_PRODUCTION / "combined", MUSIC_DIR],
         )
 
     def upscale_marked_scene_videos(self):

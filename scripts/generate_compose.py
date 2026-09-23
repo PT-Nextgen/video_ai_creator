@@ -997,6 +997,19 @@ def export_scene_video_to_combined(scene_dir):
     return out_path
 
 
+def _postprocess_scene_output(output_path, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0):
+    """Apply per-scene background music and scale without merging scenes."""
+    if not output_path or not os.path.isfile(output_path):
+        return output_path
+    if music_file:
+        _mix_background_music(output_path, music_file, music_volume)
+    _force_dual_mono_audio(output_path)
+    if float(upscale_factor) > 1.0:
+        upscale_video(output_path, output_path, float(upscale_factor))
+    logger.info('Post-processed scene output: %s', output_path)
+    return output_path
+
+
 def _scene_dir_for_combined_video(video_path):
     """Resolve ``combined/Scene_N_...`` back to its root scene directory."""
     basename = os.path.basename(video_path)
@@ -1394,7 +1407,7 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
     return final_out
 
 
-def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0, compose_song=False):
+def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=False, music_file=None, music_volume=BACKGROUND_MUSIC_VOLUME, upscale_factor=1.0, compose_song=False, compose_per_scene=False):
     global API_PRODUCTION
     API_PRODUCTION = os.path.join(ROOT, 'api_production', str(project_name).strip())
     if not os.path.exists(API_PRODUCTION):
@@ -1427,6 +1440,8 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
     scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
+    failed_scenes = []
+    composed_scene_count = 0
     for scene in scenes:
         scene_dir = os.path.join(API_PRODUCTION, scene)
         print('Collecting', scene_dir)
@@ -1453,11 +1468,19 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             }
             audio_composed = bool(scene_meta.get('audio_composed', False))
 
+            latest_video = _get_latest_scene_video(scene_dir)
+
+            # Per-scene mode always uses one latest root video. It never
+            # concatenates older generations or creates combined_all.mp4.
+            if compose_per_scene and not latest_video:
+                raise RuntimeError('No video found in scene folder.')
+
             # WAN I2V/T2V and MiniMax H3 I2V/T2V-I2V already contain the
             # complete scene mix produced during scene execution.  Export the
-            # existing video unchanged; calling compose_scene here would add
-            # the same voice and sound-effect files for a second time.
-            if audio_composed and scene_type in {
+            # existing video unchanged in normal final-compose mode; calling
+            # compose_scene there would add the same voice and sound-effect
+            # files for a second time.
+            if not compose_per_scene and audio_composed and scene_type in {
                 'wan22',
                 'wan22_i2v',
                 'wan22_t2v_i2v',
@@ -1468,19 +1491,40 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             }:
                 export_scene_video_to_combined(scene_dir)
                 continue
+            if compose_per_scene and audio_composed and scene_type in {
+                'wan22',
+                'wan22_i2v',
+                'wan22_t2v_i2v',
+                'wan22_t2v',
+                'minimax-h3_i2v',
+                'minimax-h3_i2v-panjang',
+                'minimax-h3_t2v_i2v',
+            }:
+                output_path = export_scene_video_to_combined(scene_dir)
+                if not output_path:
+                    raise RuntimeError('Failed to export latest scene video.')
+                _postprocess_scene_output(
+                    output_path,
+                    music_file=music_file,
+                    music_volume=music_volume,
+                    upscale_factor=upscale_factor,
+                )
+                composed_scene_count += 1
+                continue
             selected_video_files = None
             embedded_audio_source = None
             include_video_audio = is_s2v
             include_scene_speech = not is_s2v
-            if scene_type in {'minimax-h3_s2v', 'minimax-h3_r2v'}:
+            if compose_per_scene:
+                selected_video_files = [latest_video]
+            elif scene_type in {'minimax-h3_s2v', 'minimax-h3_r2v'}:
                 # A MiniMax scene represents one final generation. Older
                 # downloaded outputs in the root must not be concatenated.
-                latest_video = _get_latest_scene_video(scene_dir)
                 selected_video_files = [latest_video] if latest_video else []
             if is_minimax_h3_av:
-                latest_video = _get_latest_scene_video(scene_dir)
                 selected_video_files = [latest_video] if latest_video else []
-                embedded_audio_source = _prepare_comfy_audio_source(scene_dir, latest_video)
+                if not (compose_per_scene and audio_composed):
+                    embedded_audio_source = _prepare_comfy_audio_source(scene_dir, latest_video)
                 if embedded_audio_source:
                     # Rebuild from the raw ComfyUI audio master and add scene
                     # speech/sound without touching the root video.
@@ -1500,7 +1544,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                             'preserving existing root-video audio as fallback.',
                             scene_dir,
                         )
-            compose_scene(
+            output_path = compose_scene(
                 scene_dir,
                 speech_volume=0.0 if is_s2v else speech_volume,
                 video_files=selected_video_files,
@@ -1511,8 +1555,28 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 trim_s2v_extra_frames=is_wan22_s2v,
                 project_video_size=project_video_size,
             )
+            if compose_per_scene:
+                if not output_path:
+                    raise RuntimeError('Scene compose menghasilkan output kosong.')
+                _postprocess_scene_output(
+                    output_path,
+                    music_file=music_file,
+                    music_volume=music_volume,
+                    upscale_factor=upscale_factor,
+                )
+                composed_scene_count += 1
         except Exception as e:
             logger.error('Failed to compose %s: %s', scene_dir, e)
+            failed_scenes.append(scene)
+    if compose_per_scene:
+        if failed_scenes:
+            logger.error('Per-scene compose failed for: %s', ', '.join(failed_scenes))
+            return 1
+        if composed_scene_count == 0:
+            logger.error('No scene video was composed.')
+            return 1
+        logger.info('Per-scene compose completed: %s scene(s)', composed_scene_count)
+        return 0
     # After collecting, merge videos in combined (unless quick mode is requested)
     if no_final_merge:
         logger.info('Skip final merge because --no-final-merge is enabled.')
@@ -1552,6 +1616,11 @@ if __name__ == '__main__':
     parser.add_argument('--music-volume', type=float, default=BACKGROUND_MUSIC_VOLUME, help='Background music volume in range 0.0 to 2.0')
     parser.add_argument('--upscale-factor', type=float, default=1.0, help='Optional final upscale factor, e.g. 1.5 or 2.0')
     parser.add_argument(
+        '--compose-per-scene',
+        action='store_true',
+        help='Create one composed video per scene from the latest scene video; do not create combined_all.mp4.',
+    )
+    parser.add_argument(
         '--compose-song',
         action='store_true',
         help='Use speech chunks as the song timeline; only WAN22 S2V discards its extra frames.',
@@ -1567,4 +1636,5 @@ if __name__ == '__main__':
         music_volume=music_volume,
         upscale_factor=float(args.upscale_factor or 1.0),
         compose_song=bool(args.compose_song),
+        compose_per_scene=bool(args.compose_per_scene),
     ))

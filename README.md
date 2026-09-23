@@ -1360,10 +1360,18 @@ Fungsi:
 - upscale `1.5x` atau `2x` dilakukan setelah `combined_all.mp4` selesai dibuat
   - project `368x640` menghasilkan final `368x640`, lalu `2x` menghasilkan `736x1280`
   - project `480x848` menghasilkan final `480x848`, lalu `2x` menghasilkan `960x1696`
+- mode `--compose-per-scene` membuat satu output untuk setiap scene tanpa membuat `combined_all.mp4`:
+  - hanya video terbaru berdasarkan waktu modifikasi di folder scene yang digunakan
+  - scene yang sudah memiliki audio compose diekspor tanpa mencampurkan ulang voice/sound
+  - music yang sama di-loop atau dipotong agar sesuai durasi masing-masing video scene
+  - volume music dan scale diterapkan pada setiap output scene secara terpisah
+  - output tetap disimpan sebagai `combined/Scene_<nomor>_<judul>.mp4`
 
 Di UI:
 - tersedia tombol `Compose Semua Adegan`
 - saat `Compose Semua Adegan`, muncul dialog untuk memilih music, volume, dan checkbox `Compose Lagu`
+- tersedia tombol `Compose Per Scene`; dialognya memiliki pilihan music, volume, dan scale tanpa opsi `Compose Lagu`
+- `Compose Per Scene` menghasilkan satu video per scene dari video terbaru dan tidak membuat `combined_all.mp4`
 - tombol `2x` di group Compose menjalankan upscale GAN untuk root scene yang memiliki `upscale=true`
 - tombol `720p` di sebelah tombol `2x` menjalankan workflow SeedVR2 yang sama cakupannya dengan upscale GAN
 - tombol `720p` memakai `api_template/seedvr2_upscale_api.json` dan menyimpan output scene sebagai `seedvr2_upscaled_720p.mp4`
@@ -1375,6 +1383,7 @@ Contoh:
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --scene scene_1 --scene scene_2
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --music-file ".\\music\\Another Night (Corporate).m4a" --music-volume 1.00
+.\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --compose-per-scene --music-file ".\\music\\Another Night (Corporate).m4a" --music-volume 1.00 --upscale-factor 1.5
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project song_allah_mendengar_semua_doa --compose-song
 ```
 
