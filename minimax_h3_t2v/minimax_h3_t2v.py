@@ -4,7 +4,7 @@ import os
 import random
 import copy
 
-from minimax_h3_prompt import default_structured_prompt, serialize_structured_prompt, structured_prompt_entry
+from minimax_h3.minimax_h3_prompt import default_structured_prompt, serialize_structured_prompt, structured_prompt_entry
 
 from scripts import comfyui_api
 from logging_config import get_logger, write_log

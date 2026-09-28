@@ -25,6 +25,7 @@ TEMPLATE_PATH = ROOT / "api_template" / "seedvr2_upscale_api.json"
 API_PRODUCTION_ROOT = ROOT / "api_production"
 OUTPUT_FILENAME = "seedvr2_upscaled_720p.mp4"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
+INPUT_NODE_ID = "21"
 
 
 def _scene_sort_key(path: Path):
@@ -74,12 +75,23 @@ def _upload_video(server: str, source: Path) -> str:
 
 def _build_workflow(uploaded_name: str) -> dict:
     workflow = _load_template()
-    node = workflow.get("21")
+    node = workflow.get(INPUT_NODE_ID)
     inputs = node.get("inputs") if isinstance(node, dict) else None
     if not isinstance(inputs, dict):
         raise ValueError("Node 21 LoadVideo tidak memiliki inputs yang valid")
     inputs["file"] = uploaded_name
     return workflow
+
+
+def _output_node_ids(workflow: dict) -> tuple[str, ...]:
+    node_ids = tuple(
+        str(node_id)
+        for node_id, node in workflow.items()
+        if isinstance(node, dict) and node.get("class_type") == "SaveVideo"
+    )
+    if not node_ids:
+        raise ValueError("Template SeedVR2 tidak memiliki node SaveVideo sebagai output")
+    return node_ids
 
 
 def _output_filename(video_output: dict) -> str:
@@ -114,6 +126,7 @@ def upscale_scene(scene_dir: Path, server: str) -> bool:
     try:
         uploaded_name = _upload_video(server, source)
         workflow = _build_workflow(uploaded_name)
+        output_node_ids = _output_node_ids(workflow)
         result = comfyui_api.post_workflow_api(workflow, server)
         prompt_id = result.get("prompt_id") or result.get("id") if isinstance(result, dict) else None
         write_log(f"[seedvr2-upscale] {scene_dir.name}: workflow dikirim, prompt_id={prompt_id}")
@@ -126,10 +139,17 @@ def upscale_scene(scene_dir: Path, server: str) -> bool:
             output_type="video",
             timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
             interval=COMFYUI_POLL_INTERVAL_SECONDS,
+            output_node_ids=output_node_ids,
+            require_output_type=True,
         )
         output_name = _output_filename(video_output)
         if not output_name:
             raise RuntimeError("Output video SeedVR2 tidak ditemukan")
+        write_log(
+            f"[seedvr2-upscale] {scene_dir.name}: output ComfyUI="
+            f"{output_name}, subfolder={video_output.get('subfolder')}, "
+            f"type={video_output.get('type')}, node={video_output.get('node_id')}"
+        )
         video_url = comfyui_api.get_file_url(
             server,
             output_name,

@@ -4,7 +4,7 @@ import os
 import random
 import copy
 
-from minimax_h3_prompt import (
+from minimax_h3.minimax_h3_prompt import (
     I2VA_FIRST_SHOT_VISUAL_EN,
     I2VA_FIRST_SHOT_VISUAL_ID,
     default_structured_prompt,

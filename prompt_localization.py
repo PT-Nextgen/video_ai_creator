@@ -16,7 +16,7 @@ from scripts.runtime_service_controller import ensure_llama
 from gemini.gemini_image import find_gemini_key
 from scripts.server_config import load_server_config
 from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
-from minimax_h3_prompt import (
+from minimax_h3.minimax_h3_prompt import (
     REF2VA_SECTION_KEYS,
     serialize_ref2va_prompt,
     validate_ref2va_prompt,

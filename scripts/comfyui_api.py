@@ -167,18 +167,36 @@ def get_history_for_prompt(server: str, prompt_id: str, timeout: int = COMFYUI_W
     return last_json or {}
 
 
-def wait_for_output(server: str, prompt_id: str, output_type: str = 'image', timeout: int = COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval: float = 2.0):
+def wait_for_output(
+    server: str,
+    prompt_id: str,
+    output_type: str = 'image',
+    timeout: int = COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
+    interval: float = 2.0,
+    output_node_ids=None,
+    require_output_type: bool = False,
+):
     """Poll history for a specific prompt_id until an output of type `output_type` appears.
-    Returns the first matching output dict or None if timeout reached.
+    ``output_node_ids`` restricts matching to known output nodes in workflows
+    that also expose input media as history items. ``require_output_type``
+    rejects items explicitly marked as ``type=input``.
     """
     import time
     deadline = time.time() + timeout
+    output_node_ids = {
+        str(node_id).strip()
+        for node_id in (output_node_ids or [])
+        if str(node_id).strip()
+    }
+
     def _collect_from_outputs(outputs):
-        """Simple collector that looks at top-level outputs dict only."""
+        """Collect a matching media item from the selected history nodes."""
         if not isinstance(outputs, dict):
             return None
         # outputs: node_id -> {kind: [items]}
-        for node_val in outputs.values():
+        for node_id, node_val in outputs.items():
+            if output_node_ids and str(node_id) not in output_node_ids:
+                continue
             if not isinstance(node_val, dict):
                 continue
             for kind, items in node_val.items():
@@ -189,8 +207,16 @@ def wait_for_output(server: str, prompt_id: str, output_type: str = 'image', tim
                         fn = it.get('filename')
                         sub = it.get('subfolder')
                         typ = it.get('type') or kind
+                        explicit_type = str(it.get('type') or '').strip().lower()
+                        if require_output_type and explicit_type and explicit_type not in {'output', 'outputs'}:
+                            continue
                         if fn and _matches_type_by_ext(fn, output_type):
-                            return {'filename': fn, 'subfolder': sub, 'type': typ}
+                            return {
+                                'filename': fn,
+                                'subfolder': sub,
+                                'type': typ,
+                                'node_id': str(node_id),
+                            }
         return None
 
     while time.time() < deadline:

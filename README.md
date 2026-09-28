@@ -593,7 +593,6 @@ Fungsi utama:
 - menampilkan daftar scene dari project aktif
 - drag-and-drop untuk reorder scene
 - tambah, sisipkan, dan hapus scene
-- grup toolbar `Edit` untuk append prompt massal ke semua scene dan semua variasi dalam project aktif
 - edit metadata scene
 - edit prompt image
 - tab `Prompt Tambahan` untuk 3 prompt image tambahan berbasis aturan `Gambar Awal`
@@ -814,13 +813,6 @@ Perilaku UI:
     - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
     - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini, lalu hasilnya dipakai untuk edit
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
-- dialog `Edit Prompt` menyediakan 5 group append dengan tombol `Jalankan` terpisah:
-  - append positive `wan22_t2v`
-  - append negative `wan22_t2v`
-  - append positive `wan22_i2v`
-  - append negative `wan22_i2v`
-  - append positive `image`
-  - setiap aksi menerjemahkan teks tambahan sekali di awal untuk mengisi `en`, lalu menambahkan kalimat itu di awal prompt yang relevan pada semua `scene_*` dan semua folder `variasi*`
 - dialog multi-project agentic menampilkan daftar project dalam bentuk checkbox dan tombol `Agentic`
 - saat tombol `Agentic` dijalankan dari dialog itu, project terpilih diproses berurutan berdasarkan abjad dengan mode `Execute Agentic`
 - saat `Compose Semua Adegan`, dialog compose juga menyediakan dropdown `Upscale`:
@@ -1224,60 +1216,6 @@ Contoh:
 .\.venv\Scripts\python.exe scripts\generate_sound.py --project demo_project --scene scene_1
 ```
 
-### Generate Music dengan Lyria 3 Pro
-
-Script: `lyria3/generate_music.py`
-
-Fungsi:
-- membuat musik menggunakan Gemini API dengan model `lyria-3-pro-preview`
-- menyimpan hasil audio sebagai MP3 di folder `output-music`
-- menyimpan lirik hasil generasi sebagai file `.lyrics.txt` jika tersedia
-- durasi target dimasukkan ke prompt dan dibatasi maksimal `180` detik
-- dapat menerima maksimal 10 gambar referensi untuk mengarahkan mood dan gaya musik
-
-Argumen utama:
-- `--prompt`, `-p`: prompt musik wajib
-- `--duration`, `-d`: durasi target dalam detik, wajib, maksimal `180`
-- `--output-name`, `-o`: nama file output tanpa ekstensi; default `lyria3_music`
-- `--image`: gambar referensi, bisa diulang maksimal 10 kali
-- `--timeout`: timeout request dalam detik; default `600`
-
-Rekomendasi isi prompt:
-- genre dan gaya
-- mood dan arah emosi
-- instrumen utama
-- tempo atau BPM
-- musik instrumental atau vokal
-- struktur musik dan timestamp bila timing penting
-- instruksi `instrumental only, no vocals, no lyrics` jika musik dipakai sebagai background music
-
-Contoh musik instrumental:
-```powershell
-.\.venv\Scripts\python.exe lyria3\generate_music.py --prompt "Buat musik instrumental sinematik yang hangat, penuh rasa ingin tahu, dan cocok untuk video edukasi anak. Gunakan piano felt, pizzicato strings, marimba, woodwind lembut, tempo sedang sekitar 100 BPM, aransemen sederhana agar menyisakan ruang untuk narasi, tanpa vokal dan tanpa lirik." --duration 45 --output-name edukasi_magnet
-```
-
-Contoh dengan gambar referensi:
-```powershell
-.\.venv\Scripts\python.exe lyria3\generate_music.py --prompt "Buat musik ambient sinematik yang terinspirasi dari gambar, tenang dan penuh harapan, dengan piano lembut, string pad, dan tekstur udara. Musik instrumental saja." --duration 60 --output-name suasana_pagi --image input\scene_1.png
-```
-
-Kebutuhan key:
-- `GEMINIKEY` di `keys.cfg`
-- atau `GEMINI_API_KEY` sebagai environment variable
-
-Output:
-- `output-music/<nama>/<nama>.mp3`
-- `output-music/<nama>/<nama>.lyrics.txt` jika Lyria mengembalikan lirik
-
-Setiap lagu dibuat dalam folder sendiri berdasarkan nilai `--output-name`.
-
-
-Catatan implementasi saat ini:
-- folder `lyria3` saat ini hanya menyediakan `generate_music.py`
-- fitur pemotongan musik menjadi chunk belum tersedia di folder ini
-- alignment lirik dan analisis jeda vokal belum menjadi bagian dari pipeline yang terdokumentasi
-- file `.lyrics.txt` hanya disimpan jika respons Lyria mengembalikan teks lirik
-
 ## Caption Otomatis
 
 Script pendukung: `scripts/generate_caption.py`
@@ -1376,6 +1314,7 @@ Di UI:
 - tombol `720p` di sebelah tombol `2x` menjalankan workflow SeedVR2 yang sama cakupannya dengan upscale GAN
 - tombol `720p` memakai `api_template/seedvr2_upscale_api.json` dan menyimpan output scene sebagai `seedvr2_upscaled_720p.mp4`
 - workflow SeedVR2 memakai `SeedVR2VideoUpscaler` dengan resolusi `720`, VAE `ema_vae_fp16.safetensors`, dan DiT `seedvr2_ema_3b-Q4_K_M.gguf`
+- output SeedVR2 diambil hanya dari node `SaveVideo`, bukan file input dari node `LoadVideo`
 
 Contoh:
 ```powershell

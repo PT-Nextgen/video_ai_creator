@@ -17,7 +17,7 @@ from collections.abc import Mapping
 
 from scripts import comfyui_api
 from logging_config import write_log
-from minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_prompt
+from minimax_h3.minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_prompt
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

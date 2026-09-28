@@ -14,7 +14,7 @@ from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
 from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
 from prompt_localization import get_prompt_translator, prepare_prompt_payload_for_save
-from minimax_h3_prompt import (
+from minimax_h3.minimax_h3_prompt import (
     REF2VA_SECTION_KEYS,
     enforce_i2va_first_shot_visual,
     validate_ref2va_prompt,

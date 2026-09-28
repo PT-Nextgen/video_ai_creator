@@ -59,7 +59,7 @@ from minimax_h3_i2v.minimax_h3_i2v import (
     build_minimax_h3_i2v_workflow,
     send_workflow as send_minimax_h3_i2v_workflow,
 )
-from minimax_h3_i2v_panjang import (
+from minimax_h3.minimax_h3_i2v_panjang import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_I2V_PANJANG_PROMPT,
     PROMPT_FILENAME as MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME,
 )
@@ -94,7 +94,7 @@ from prompt_localization import (
     resolve_prompt_payload_for_runtime,
     prepare_project_prompts_for_runtime,
 )
-from minimax_h3_prompt import (
+from minimax_h3.minimax_h3_prompt import (
     I2VA_FIRST_SHOT_VISUAL_EN,
     ensure_i2va_frame_instructions,
     validate_i2va_frame_instructions,
