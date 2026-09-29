@@ -31,7 +31,6 @@ from minimax_h3.minimax_h3_prompt import (
 
 
 RUNTIME_PROMPT_FILENAMES = (
-    "scene_meta.json",
     "z_image_prompt.json",
     "image_edit_prompt.json",
     "wan22_t2v_prompt.json",
@@ -134,7 +133,6 @@ def format_llm_runtime_log(
 
 
 PROMPT_TOP_LEVEL_FIELDS = {
-    "scene_meta.json": ["sound_prompt"],
     "z_image_prompt.json": ["positive_prompt", "negative_prompt"],
     "wan22_i2v_prompt.json": [
         "positive_prompt_one",

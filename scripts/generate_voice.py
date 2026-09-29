@@ -5,7 +5,6 @@ import os
 import sys
 import time
 import wave
-from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -20,13 +19,7 @@ from gemini.gemini_tts import (
     process_scene as process_gemini_tts_scene,
     synthesize_with_fallbacks as synthesize_gemini_with_fallbacks,
 )
-from scripts.elevenlabs_tts import find_elevenlabs_key, process_scene as process_elevenlabs_tts_scene
-from scripts.voice_profiles import (
-    VOICE_PROVIDER_ELEVENLABS,
-    VOICE_PROVIDER_GEMINI,
-    resolve_scene_voice_key,
-)
-from scripts.project_settings import load_project_settings
+from scripts.voice_profiles import resolve_scene_voice_key
 
 
 setup_logging()
@@ -710,19 +703,6 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
     if not os.path.exists(project_dir):
         print("Project folder not found:", project_dir)
         return 1
-    try:
-        project_settings = load_project_settings(Path(project_dir))
-    except Exception as e:
-        write_log(f"Gagal membaca project_settings.json: {e}", level="error")
-        return 1
-    voice_cfg = project_settings.get("voice", {}) if isinstance(project_settings, dict) else {}
-    voice_provider = str(voice_cfg.get("voice_provider", VOICE_PROVIDER_GEMINI)).strip().lower()
-    elevenlabs_key = None
-    if voice_provider == VOICE_PROVIDER_ELEVENLABS:
-        elevenlabs_key = find_elevenlabs_key()
-        if not elevenlabs_key:
-            write_log("Mode voice project adalah ElevenLabs, tetapi ELEVENLABSKEY tidak ditemukan di keys.cfg.", level="error")
-            return 1
 
     scenes = sorted([d for d in os.listdir(project_dir) if d.startswith("scene_")], key=_scene_sort_key)
     if specific_scenes:
@@ -734,7 +714,7 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
     had_error = False
     processed_count = 0
 
-    if voice_provider == VOICE_PROVIDER_GEMINI and not specific_scenes and len(scenes) > 1:
+    if not specific_scenes and len(scenes) > 1:
         print("Processing all scenes with Gemini consistent mode")
         ok = _process_gemini_all_scenes_consistent(project_dir, scenes, logger)
         if ok:
@@ -756,18 +736,12 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
 
         print("Processing", scene_dir)
         processed_count += 1
-        if voice_provider == VOICE_PROVIDER_ELEVENLABS:
-            ok = process_elevenlabs_tts_scene(scene_dir, api_key=elevenlabs_key, logger=logger, write_log=write_log)
-            if not ok:
-                write_log(f"Gagal membuat voice ElevenLabs untuk {scene}.")
-                had_error = True
-        else:
-            ok = process_gemini_tts_scene(scene_dir, logger=logger, write_log=write_log)
-            if ok:
-                ok = _prepare_minimax_h3_s2v_scene_audio(scene_dir)
-            if not ok:
-                write_log(f"Gagal membuat voice Gemini TTS untuk {scene}.")
-                had_error = True
+        ok = process_gemini_tts_scene(scene_dir, logger=logger, write_log=write_log)
+        if ok:
+            ok = _prepare_minimax_h3_s2v_scene_audio(scene_dir)
+        if not ok:
+            write_log(f"Gagal membuat voice Gemini TTS untuk {scene}.")
+            had_error = True
 
     if processed_count == 0:
         write_log("Tidak ada scene yang bisa diproses untuk Gemini TTS.")
@@ -776,7 +750,7 @@ def main(project_name, specific_scenes=None, comfyui_server=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate voice untuk scene berdasarkan provider voice global project")
+    parser = argparse.ArgumentParser(description="Generate voice Gemini untuk scene project")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-s", action="append", help="Scene yang diproses (repeatable)")
     parser.add_argument("--server", default=get_server_address("comfyui"), help="Argumen kompatibilitas lama (tidak dipakai).")

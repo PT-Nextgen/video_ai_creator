@@ -80,14 +80,10 @@ from minimax_h3.minimax_h3_prompt import (
 from scripts.voice_profiles import (
     DEFAULT_SCENE_VOICE_KEY,
     SCENE_VOICE_OPTIONS,
-    VOICE_PROVIDER_GEMINI,
-    VOICE_PROVIDER_OPTIONS,
-    normalize_provider,
     resolve_scene_voice_key,
 )
 from scripts.project_settings import (
     DEFAULT_PROJECT_SETTINGS,
-    DEFAULT_PROJECT_VOICE_CONFIG,
     DEFAULT_PROJECT_CAPTION_CONFIG,
     load_project_settings as load_project_settings_file,
     save_project_settings as save_project_settings_file,
@@ -120,7 +116,6 @@ MAIN_SCRIPT = ROOT / "main.py"
 INITIAL_IMAGE_SCRIPT = ROOT / "scripts" / "generate_initial_image.py"
 IMAGE_EDIT_SCRIPT = ROOT / "scripts" / "generate_image_edit.py"
 VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
-SOUND_SCRIPT = ROOT / "scripts" / "generate_sound.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
 UPSCALE_VIDEO_SCRIPT = ROOT / "scripts" / "upscale_video.py"
@@ -147,7 +142,6 @@ UPSCALE_ACTION_OPTIONS = [
 DEFAULT_SCENE_META = {
     "scene_title": "", "scene_description": "", "duration_seconds": 10, "voice_text": "",
     "voice_character": DEFAULT_SCENE_VOICE_KEY,
-    "sound_prompt": "", "sound_volume": "",
     "scene_type": "wan22_i2v", "upscale": False,
     "i2v_continuations": 0,
 }
@@ -2000,10 +1994,6 @@ class ProjectSettingsDialog(QDialog):
         prompt_ollama_server_layout.addWidget(self.prompt_ollama_host_input, 1)
         prompt_ollama_server_layout.addWidget(self.prompt_ollama_port_input, 0)
 
-        self.voice_provider_input = QComboBox(self)
-        for provider_label, provider_key in VOICE_PROVIDER_OPTIONS:
-            self.voice_provider_input.addItem(provider_label, provider_key)
-
         self.caption_enabled_input = QCheckBox("Aktifkan Generate Caption otomatis", self)
 
         self.cover_model_input = QComboBox(self)
@@ -2039,7 +2029,6 @@ class ProjectSettingsDialog(QDialog):
         self.form_layout.addRow("Provider Prompt Generation", self.prompt_provider_input)
         self.form_layout.addRow("Model Prompt Generation", self.prompt_model_input)
         self.form_layout.addRow("llama.cpp Host / Port", self.prompt_ollama_server_widget)
-        self.form_layout.addRow("Voice Project", self.voice_provider_input)
         self.form_layout.addRow("Caption Project", self.caption_enabled_input)
 
         self.form_layout.addRow(QLabel("Konfigurasi Cover"))
@@ -2136,11 +2125,6 @@ class ProjectSettingsDialog(QDialog):
         self._pending_prompt_model_value = str(prompt_generation.get("model", "")).strip()
         prompt_provider_index = self.prompt_provider_input.findData(prompt_provider)
         self.prompt_provider_input.setCurrentIndex(max(prompt_provider_index, 0))
-
-        voice = data.get("voice", {})
-        voice_provider = normalize_provider(voice.get("voice_provider", VOICE_PROVIDER_GEMINI))
-        voice_index = self.voice_provider_input.findData(voice_provider)
-        self.voice_provider_input.setCurrentIndex(max(voice_index, 0))
 
         caption = data.get("caption", {})
         self.caption_enabled_input.setChecked(bool(caption.get("generate_caption", True)))
@@ -2462,7 +2446,7 @@ class ProjectSettingsDialog(QDialog):
                 "provider": prompt_provider,
                 "model": prompt_model,
             },
-            "voice": {"voice_provider": normalize_provider(self.voice_provider_input.currentData() or VOICE_PROVIDER_GEMINI)},
+            "voice": {"voice_provider": "gemini"},
             "caption": {"generate_caption": bool(self.caption_enabled_input.isChecked())},
             "cover": cover_data,
         }
@@ -2663,7 +2647,6 @@ class SceneEditorWindow(QMainWindow):
         self.current_project_name = ""
         self.current_scene_dir = None
         self.current_scene_view_dir = None
-        self.project_voice_config = copy.deepcopy(DEFAULT_PROJECT_VOICE_CONFIG)
         self.project_caption_config = copy.deepcopy(DEFAULT_PROJECT_CAPTION_CONFIG)
         self.project_settings = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
         self.process = None
@@ -2755,10 +2738,6 @@ class SceneEditorWindow(QMainWindow):
         voice_line_height = self.voice_text_input.fontMetrics().lineSpacing()
         self.voice_text_input.setFixedHeight((voice_line_height * 10) + 16)
         self.voice_text_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.sound_prompt_input = QTextEdit()
-        self.sound_prompt_input.setFixedHeight(80)
-        self.sound_prompt_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.sound_volume_input = QLineEdit()
         self.scene_upscale_input = QCheckBox("Upscale")
         self.scene_upscale_input.setChecked(False)
         self.z_positive_input = QTextEdit()
@@ -3200,7 +3179,7 @@ class SceneEditorWindow(QMainWindow):
             self.duration_decimal_input.textChanged,
             self.scene_type_combo.currentTextChanged,
             self.scene_voice_character_input.currentTextChanged,
-            self.sound_volume_input.textChanged, self.z_model_input.currentIndexChanged,
+            self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
             self.z_size_input.currentTextChanged, self.wan_size_input.currentTextChanged,
             self.wan_t2v_size_input.currentTextChanged,
@@ -3230,7 +3209,7 @@ class SceneEditorWindow(QMainWindow):
         ]:
             signal.connect(self.refresh_scene_status)
         for widget in [
-            self.scene_description_input, self.voice_text_input, self.sound_prompt_input, self.z_positive_input,
+            self.scene_description_input, self.voice_text_input, self.z_positive_input,
             self.z_negative_input, self.z_seed_input, self.z_lora_name_input, self.z_lora_strength_input,
             self.wan_lora_high_name_input, self.wan_lora_high_strength_input,
             self.wan_lora_low_name_input, self.wan_lora_low_strength_input,
@@ -3343,8 +3322,7 @@ class SceneEditorWindow(QMainWindow):
         for label, widget in [
             ("Tipe Adegan", self.scene_type_combo),
             ("Pilihan Suara Scene", self.scene_voice_character_input),
-            ("Teks Suara", self.voice_text_input), ("Prompt Suara Latar", self.sound_prompt_input),
-            ("Volume Suara Latar", self.sound_volume_input),
+            ("Teks Suara", self.voice_text_input),
             ("", self.scene_upscale_input),
         ]:
             meta_layout.addRow(label, widget)
@@ -4927,12 +4905,10 @@ class SceneEditorWindow(QMainWindow):
         pdir = self.project_dir()
         if pdir is None:
             self.project_settings = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
-            self.project_voice_config = copy.deepcopy(DEFAULT_PROJECT_VOICE_CONFIG)
             self.project_caption_config = copy.deepcopy(DEFAULT_PROJECT_CAPTION_CONFIG)
             self.apply_project_size_constraints_to_ui()
             return
         self.project_settings = load_project_settings_file(pdir)
-        self.project_voice_config = copy.deepcopy(self.project_settings.get("voice", DEFAULT_PROJECT_VOICE_CONFIG))
         self.project_caption_config = copy.deepcopy(self.project_settings.get("caption", DEFAULT_PROJECT_CAPTION_CONFIG))
         self.apply_project_size_constraints_to_ui()
 
@@ -4941,20 +4917,11 @@ class SceneEditorWindow(QMainWindow):
         if pdir is None:
             return
         self.project_settings = save_project_settings_file(pdir, settings)
-        self.project_voice_config = copy.deepcopy(self.project_settings.get("voice", DEFAULT_PROJECT_VOICE_CONFIG))
         self.project_caption_config = copy.deepcopy(self.project_settings.get("caption", DEFAULT_PROJECT_CAPTION_CONFIG))
 
         self.apply_project_size_constraints_to_ui()
         if sync_scene_sizes:
             self.sync_project_size_to_all_scenes()
-
-    def save_project_voice_settings(self, provider: str | None = None):
-        if provider is None:
-            provider = self.project_voice_config.get("voice_provider", VOICE_PROVIDER_GEMINI)
-        provider = normalize_provider(provider)
-        updated = copy.deepcopy(self.project_settings)
-        updated["voice"] = {"voice_provider": provider}
-        self.save_project_settings(updated, sync_scene_sizes=False)
 
     def open_project_settings_dialog(self):
         if not self.ensure_project_selected():
@@ -5256,7 +5223,6 @@ class SceneEditorWindow(QMainWindow):
             layout.addWidget(button)
 
         add_button("Buat voice untuk adegan yang dipilih.", QStyle.SP_MediaVolume, self.generate_voice_current_scene)
-        add_button("Buat sound untuk adegan yang dipilih.", QStyle.SP_DialogOpenButton, self.generate_sound_current_scene)
         return frame
 
     def build_batch_action_group(self):
@@ -5298,12 +5264,6 @@ class SceneEditorWindow(QMainWindow):
             "Buat voice untuk semua adegan.",
             QStyle.SP_MediaSeekForward,
             self.generate_voice_all_scenes,
-            scene_scoped=True,
-        )
-        add_button(
-            "Buat sound untuk semua adegan.",
-            QStyle.SP_DialogApplyButton,
-            self.generate_sound_all_scenes,
             scene_scoped=True,
         )
         return frame
@@ -6184,8 +6144,6 @@ class SceneEditorWindow(QMainWindow):
             index = self.scene_voice_character_input.findData(voice_key)
             self.scene_voice_character_input.setCurrentIndex(max(index, 0))
             self.voice_text_input.setPlainText(str(meta.get("voice_text", "")))
-            self.sound_prompt_input.setPlainText(str(meta.get("sound_prompt", "")))
-            self.sound_volume_input.setText(str(meta.get("sound_volume", "")))
             self.scene_upscale_input.setChecked(bool(meta.get("upscale", False)))
             z_width = int(z_prompt.get("width", DEFAULT_Z_IMAGE_PROMPT["width"]))
             z_height = int(z_prompt.get("height", DEFAULT_Z_IMAGE_PROMPT["height"]))
@@ -6913,8 +6871,6 @@ class SceneEditorWindow(QMainWindow):
             "duration_seconds": self.parse_duration_value(),
             "voice_text": self.voice_text_input.toPlainText().strip(),
             "voice_character": str(self.scene_voice_character_input.currentData() or DEFAULT_SCENE_VOICE_KEY).strip(),
-            "sound_prompt": self.sound_prompt_input.toPlainText().strip(),
-            "sound_volume": self.sound_volume_input.text().strip(),
             "scene_type": self.scene_type_combo.currentText().strip(),
             "upscale": bool(self.scene_upscale_input.isChecked()),
         }
@@ -7826,7 +7782,6 @@ class SceneEditorWindow(QMainWindow):
         z_image_extra_prompts = self.gather_z_image_extra_prompts()
         t2v_batch_extra_prompts = self.gather_t2v_batch_extra_prompts()
         agentic_config = self.gather_agentic_config()
-        self.save_project_voice_settings()
         write_prompt_json(self.current_scene_dir / "scene_meta.json", meta)
         sync_scene_prompt_files(
             self.current_scene_dir,
@@ -9178,7 +9133,6 @@ class SceneEditorWindow(QMainWindow):
             return
         if not self.save_current_scene():
             return
-        self.save_project_voice_settings()
         self.start_process(
             VOICE_SCRIPT,
             ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--scene", self.current_scene_dir.name],
@@ -9193,42 +9147,10 @@ class SceneEditorWindow(QMainWindow):
             return
         if self.current_scene_dir:
             self.save_current_scene(silent=True)
-        self.save_project_voice_settings()
         self.start_process(
             VOICE_SCRIPT,
             ["--server", self.comfyui_server_address(), "--project", self.current_project_name],
             "Membuat voice untuk semua adegan",
-            watch_dirs=self.list_scene_dirs_current(),
-        )
-
-    def generate_sound_current_scene(self):
-        if not self.ensure_project_selected():
-            return
-        if not self.confirm_run_action("Buat Sound", "Buat sound untuk adegan yang sedang dipilih?"):
-            return
-        if not self.current_scene_dir:
-            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
-            return
-        if not self.save_current_scene():
-            return
-        self.start_process(
-            SOUND_SCRIPT,
-            ["--project", self.current_project_name, "--scene", self.current_scene_dir.name],
-            f"Membuat sound untuk {self.current_scene_dir.name}",
-            watch_dirs=[self.current_scene_dir],
-        )
-
-    def generate_sound_all_scenes(self):
-        if not self.ensure_project_selected():
-            return
-        if not self.confirm_run_action("Buat Semua Sound", "Buat sound untuk semua adegan?"):
-            return
-        if self.current_scene_dir:
-            self.save_current_scene(silent=True)
-        self.start_process(
-            SOUND_SCRIPT,
-            ["--project", self.current_project_name],
-            "Membuat sound untuk semua adegan",
             watch_dirs=self.list_scene_dirs_current(),
         )
 

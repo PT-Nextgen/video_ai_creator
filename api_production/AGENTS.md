@@ -24,7 +24,7 @@ Opsi yang umum dipakai:
 - `--prompt-generation-provider` untuk provider prompt generation (`gemini` atau `llama.cpp`)
 - `--prompt-generation-model` untuk model prompt generation
 - `--prompt-generation-host` dan `--prompt-generation-port` untuk konfigurasi llama.cpp
-- `--voice-provider` untuk provider voice default (`gemini` atau `elevenlabs`)
+- `--voice-provider gemini` untuk provider voice default project
 - `--generate-caption` untuk aktif atau nonaktifkan caption otomatis
 - `--with-default-scene` untuk langsung membuat `scene_1` saat project dibuat
 

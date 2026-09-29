@@ -103,10 +103,9 @@ def _normalize_settings(data: dict | None) -> dict:
         "model": merged["prompt_generation"]["model"],
     }
 
-    voice = merged.get("voice") if isinstance(merged.get("voice"), dict) else {}
     caption = merged.get("caption") if isinstance(merged.get("caption"), dict) else {}
     merged["voice"] = {
-        "voice_provider": str(voice.get("voice_provider", DEFAULT_PROJECT_VOICE_CONFIG["voice_provider"])).strip().lower() or DEFAULT_PROJECT_VOICE_CONFIG["voice_provider"]
+        "voice_provider": DEFAULT_PROJECT_VOICE_CONFIG["voice_provider"]
     }
     merged["caption"] = {
         "generate_caption": bool(caption.get("generate_caption", DEFAULT_PROJECT_CAPTION_CONFIG["generate_caption"]))

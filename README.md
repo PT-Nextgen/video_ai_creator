@@ -109,8 +109,6 @@ Field utama:
   - `duration_seconds`
   - `voice_text`
   - `voice_character`
-  - `sound_prompt`
-  - `sound_volume`
 - `project_settings.json`
   - `project_description`
   - `video_size.width`
@@ -118,7 +116,7 @@ Field utama:
   - `prompt_generation.provider`
   - `prompt_generation.model`
   - `prompt_generation.host` dan `prompt_generation.port` untuk llama.cpp
-  - `voice.voice_provider` (`gemini` / `elevenlabs`)
+  - `voice.voice_provider` (fixed `gemini`)
   - `caption.generate_caption`
   - `cover` (struktur sama seperti `z_image_prompt.json`)
 - `z_image_prompt.json`
@@ -330,10 +328,9 @@ Catatan voice dan caption:
 - `voice_character`
   - dipilih per scene dari karakter suara:
     - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `arkana`, `arkana_arab`, `candy`, `lily`, `asna`, `lily_ngaji`, `lily_arab`, `finn`, `kevin`
-- prompt lain seperti `sound_prompt`, `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
+- prompt lain seperti `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
 - konfigurasi provider voice bersifat global per project di `project_settings.json.voice`:
   - `voice_provider=gemini` -> model runtime fixed `gemini-3.1-flash-tts-preview` (language `id-ID`)
-  - `voice_provider=elevenlabs` -> model runtime fixed `eleven_v3`
 - konfigurasi caption bersifat global per project di `project_settings.json.caption`:
   - `generate_caption`
   - boolean
@@ -369,16 +366,15 @@ Mix audio scene mengikuti pola WAN:
 ```text
 video ComfyUI
 + voice scene
-+ sound effect dari sound_prompt
 = video scene ber-audio
 ```
 
 Untuk `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`:
 
-- `remove_sound=true`: audio bawaan ComfyUI dihapus terlebih dahulu, kemudian voice dan sound effect di-mix
-- `remove_sound=false`: audio bawaan ComfyUI dipertahankan dan di-mix bersama voice serta sound effect
+- `remove_sound=true`: audio bawaan ComfyUI dihapus terlebih dahulu, kemudian voice di-mix
+- `remove_sound=false`: audio bawaan ComfyUI dipertahankan dan di-mix bersama voice
 
-Setelah mix berhasil, `scene_meta.json` diberi marker `audio_composed=true`. Saat `generate_compose.py` membuat final compose, video bertanda tersebut hanya diekspor dengan audio yang sudah ada; voice dan sound effect tidak ditambahkan lagi. Hal ini mencegah double mix.
+Setelah mix berhasil, `scene_meta.json` diberi marker `audio_composed=true`. Saat `generate_compose.py` membuat final compose, video bertanda tersebut hanya diekspor dengan audio yang sudah ada; voice tidak ditambahkan lagi. Hal ini mencegah double mix.
 
 Untuk `minimax-h3_s2v` dan `minimax-h3_r2v`, final compose hanya memilih satu video terbaru di root scene. Video lama yang masih berada di root tidak ikut digabung.
 
@@ -436,7 +432,7 @@ Subcommand:
     - `prompt_generation.provider`
     - `prompt_generation.host`
     - `prompt_generation.port`
-    - `voice.voice_provider`
+    - `voice.voice_provider` (fixed `gemini`)
     - `caption.generate_caption`
 - `create-scene`
   - menambah scene baru berurutan (`scene_1`, `scene_2`, dst)
@@ -771,7 +767,6 @@ Perilaku UI:
   - `Prompt Negatif`
   - tombol `Buat Image`
   - semua grup memakai aturan model/ukuran/seed/Lora/Gemini yang sama seperti tab `Gambar Awal`
-- `sound_prompt` tidak wajib
 - `Generate Caption` default aktif untuk project baru dan disimpan di `project_settings.json.caption`
 - caption tidak lagi dibuat per-scene; timing tetap dihitung per-scene lalu caption dibakar sekali saat final compose jika `project_settings.caption.generate_caption` aktif
 - untuk `web_scroll`:
@@ -1148,30 +1143,22 @@ Script: `scripts/generate_voice.py`
 Fungsi:
 - membaca provider voice global dari `project_settings.json.voice`:
   - `gemini`
-  - `elevenlabs`
 - membaca `voice_text` dan `voice_character` dari `scene_meta.json`
-- jika provider `gemini`:
-  - memakai Gemini API native TTS
-  - model fixed `gemini-3.1-flash-tts-preview`
-  - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Arkana/Arkana Arab/Candy/Lily/Asna/Finn/Kevin)
-  - profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
-    - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Arkana.txt`, `Arkana Arab.txt`, `Candy.txt`, `Lily.txt`, `Asna.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
-  - format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
-  - `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
-  - jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
-  - saat menjalankan semua scene sekaligus, sistem mencoba mode konsisten per `voice_character`:
-    - scene dikelompokkan berdasarkan `voice_character`
-    - grup yang berisi lebih dari satu scene digabung menjadi satu transcript
-    - grup yang hanya berisi satu scene tetap digenerate per scene
-    - menyisipkan token `SCENEBREAKTOKEN` sebagai instruksi jeda panjang antar scene
-    - menghasilkan satu WAV gabungan dan menyimpannya di `api_production/<project_name>/voice_combined/`
-    - membagi WAV berdasarkan jeda panjang, lalu trim silence, snap akhir ke zero crossing, dan memberi fade-out pendek untuk mengurangi bunyi klik
-    - jika deteksi jeda panjang gagal, proses fallback ke generate per scene
-- jika provider `elevenlabs`:
-  - memakai ElevenLabs API
-  - model fixed `eleven_v3`
-  - `voice_id` otomatis mengikuti `voice_character`
-  - karakter `Asna` memakai voice ID Lily yang sama dengan pengaturan speed `1.12` dan style `0.35`
+- memakai Gemini API native TTS dengan model fixed `gemini-3.1-flash-tts-preview`
+- prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Arkana/Arkana Arab/Candy/Lily/Asna/Finn/Kevin)
+- profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
+  - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Arkana.txt`, `Arkana Arab.txt`, `Candy.txt`, `Lily.txt`, `Asna.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
+- format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
+- `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
+- jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
+- saat menjalankan semua scene sekaligus, sistem mencoba mode konsisten per `voice_character`:
+  - scene dikelompokkan berdasarkan `voice_character`
+  - grup yang berisi lebih dari satu scene digabung menjadi satu transcript
+  - grup yang hanya berisi satu scene tetap digenerate per scene
+  - menyisipkan token `SCENEBREAKTOKEN` sebagai instruksi jeda panjang antar scene
+  - menghasilkan satu WAV gabungan dan menyimpannya di `api_production/<project_name>/voice_combined/`
+  - membagi WAV berdasarkan jeda panjang, lalu trim silence, snap akhir ke zero crossing, dan memberi fade-out pendek untuk mengurangi bunyi klik
+  - jika deteksi jeda panjang gagal, proses fallback ke generate per scene
 - file output voice selalu memakai awalan `speech_`
 
 Contoh:
@@ -1183,7 +1170,6 @@ Contoh:
 Contoh `keys.cfg`:
 ```ini
 GEMINIKEY=isi_api_key_gemini
-ELEVENLABSKEY=isi_api_key_elevenlabs
 FIRECRAWLKEY=isi_api_key_firecrawl
 ```
 
@@ -1197,24 +1183,6 @@ Catatan key Firecrawl (untuk Web Search):
 - `FIRECRAWLKEY` dibaca dari `keys.cfg`
 - alias lama `FIRECRAWL_API_KEY` masih diterima untuk kompatibilitas
 - jika key tidak ada, proses `Cari Gambar Web` di UI akan gagal
-
-### Generate Sound
-
-Script: `scripts/generate_sound.py`
-
-Fungsi:
-- membaca `sound_prompt` dan `duration_seconds` dari `scene_meta.json`
-- `sound_prompt` juga mengikuti format bilingual `id_old` / `id_new` / `en`, dan runtime memakai `en` bila tersedia
-- request sound effect ke ElevenLabs Sound Effects API
-- output ElevenLabs dikonversi ke WAV memakai `ffmpeg`, lalu disimpan ke folder scene
-
-Catatan:
-- membaca `keys.cfg` di root project untuk `ELEVENLABSKEY`
-
-Contoh:
-```powershell
-.\.venv\Scripts\python.exe scripts\generate_sound.py --project demo_project --scene scene_1
-```
 
 ## Caption Otomatis
 
@@ -1267,11 +1235,11 @@ Script: `scripts/generate_compose.py`
 Fungsi:
 - compose per scene ke folder `api_production/<project_name>/combined` dengan mix audio:
   - `wan22_s2v` dan `minimax-h3_s2v`: mempertahankan speech/audio bawaan video dan tidak mencampurkan ulang file `speech_*`
-  - `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`: mempertahankan audio hasil ComfyUI lalu mencampurkannya dengan file `speech_*` dan sound effect scene
+  - `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`: mempertahankan audio hasil ComfyUI lalu mencampurkannya dengan file `speech_*`
   - video root/variasi MiniMax tetap merupakan video asli hasil ComfyUI; master audio tidak dicampurkan dan tidak menimpa file video pada tahap generation
   - saat Compose Scene/Compose All dijalankan, master audio ComfyUI dibuat dari video root ke `.comfy_audio_source/audio.wav` jika cache belum ada, lalu dipakai untuk membangun mix tanpa menggandakan audio scene
   - Compose All memakai satu video final terbaru untuk scene MiniMax H3, sehingga file stage T2V tidak tergabung ulang bersama hasil T2V-I2V
-  - scene type lain: mix speech + sound ke video scene
+  - scene type lain: mix speech ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
 - jika `project_settings.caption.generate_caption=true`, caption timing setiap scene dikumpulkan setelah video scene siap, lalu caption dibakar sekali ke `combined_all.mp4` setelah merge, background music, dan upscale final
 - ukuran master compose selalu diambil dari `project_settings.json.video_size`, bukan dari resolusi video scene pertama
@@ -1403,7 +1371,7 @@ Aturan durasi:
 
 Untuk durasi 20 detik atau lebih, frame terakhir video T2V diekstrak, di-upload ke ComfyUI, lalu dipakai sebagai `first_frame` pada workflow I2V.
 
-Secara default audio hasil ComfyUI dipertahankan di video root/variasi. Pada alur dua stage, audio T2V dan I2V tetap disusun berurutan pada video hasil stage, lalu saat Compose audio tersebut dibuat sebagai master `.comfy_audio_source/audio.wav` jika cache belum ada dan dicampur dengan speech serta sound effect scene.
+Secara default audio hasil ComfyUI dipertahankan di video root/variasi. Pada alur dua stage, audio T2V dan I2V tetap disusun berurutan pada video hasil stage, lalu saat Compose audio tersebut dibuat sebagai master `.comfy_audio_source/audio.wav` jika cache belum ada dan dicampur dengan speech.
 
 Kontrol audio per stage:
 
@@ -1460,7 +1428,7 @@ Scene type: `minimax-h3_i2v`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
 - setelah output ComfyUI diunduh, seluruh frame hasil generasi MiniMax dipertahankan;
-- secara default audio hasil ComfyUI dipertahankan di video root/variasi dan baru dicampur dengan speech serta sound effect saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
+- secara default audio hasil ComfyUI dipertahankan di video root/variasi dan baru dicampur dengan speech saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
 - tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus setelah video selesai diunduh dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari video yang sudah tidak memiliki audio
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
@@ -1506,7 +1474,7 @@ Scene type: `minimax-h3_i2v-panjang`
 - color match dilakukan setelah seluruh stage digabung, menggunakan frame pertama video gabungan sebagai referensi
 - utilitas CLI `scripts/color_match_video.py` juga dapat digunakan untuk memproses video terhadap frame pertamanya; audio dipertahankan
 - contoh: `.\.venv\Scripts\python.exe scripts\color_match_video.py --project ohyes --scene 3`
-- audio ComfyUI, voice, dan sound effect tetap mengikuti aturan Compose scene MiniMax H3
+- audio ComfyUI dan voice tetap mengikuti aturan Compose scene MiniMax H3
 - scene ini tidak mempunyai Agentic; variasi tidak dibuat untuk tipe scene ini
 
 ## MiniMax H3 R2V Workflow
@@ -1768,7 +1736,7 @@ Timeout runtime:
 
 - workflow ComfyUI per call: `7200` detik
 - call LLM: `600` detik
-- call Gemini TTS atau ElevenLabs TTS: `600` detik
+- call Gemini TTS: `600` detik
 - tidak ada timeout tambahan per scene; jika satu scene mengirim beberapa workflow, setiap workflow memiliki timeout sendiri
 
 ## Logging

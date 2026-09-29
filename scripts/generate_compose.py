@@ -725,39 +725,13 @@ def compose_scene(
         videos = [os.path.abspath(v) for v in video_files if os.path.isfile(v)]
     all_audios = [os.path.join(scene_dir, f) for f in files if f.lower().endswith(AUDIO_EXTS)]
 
-    meta = _load_scene_meta_runtime(scene_dir)
-
-    # Select only intended audio sources:
-    # - latest speech_* file
-    # - sound files mapped from sound_prompt
+    # Select only the latest standalone speech source. Embedded ComfyUI audio
+    # is handled separately below.
     latest_speech = None
     speech_candidates = [a for a in all_audios if os.path.basename(a).lower().startswith('speech_')]
     if speech_candidates:
         speech_candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         latest_speech = speech_candidates[0]
-
-    sound_prompt = str(meta.get('sound_prompt', '') or '')
-    sound_volume = str(meta.get('sound_volume', '') or '')
-    prompts = [p.strip() for p in sound_prompt.split(',') if p.strip()]
-    vols = [s.strip() for s in sound_volume.split(',') if s.strip()]
-
-    sound_vols = {}
-    for i, p in enumerate(prompts):
-        prompt_name = p.replace(' ', '_')
-        v = 1.0
-        if i < len(vols):
-            try:
-                v = float(vols[i])
-            except Exception:
-                v = 1.0
-        for f in files:
-            if not f.lower().endswith(AUDIO_EXTS):
-                continue
-            fname_no_ext = os.path.splitext(f)[0].lower()
-            if fname_no_ext == prompt_name.lower():
-                full_path = os.path.join(scene_dir, f)
-                sound_vols[full_path] = v
-                logger.debug('Found sound prompt file: %s with volume %s', full_path, v)
 
     if include_scene_speech is None:
         # Backward-compatible default: embedded S2V speech replaces the
@@ -767,9 +741,6 @@ def compose_scene(
     selected_audios = []
     if latest_speech and include_scene_speech:
         selected_audios.append(latest_speech)
-    for snd_path in sound_vols.keys():
-        if snd_path not in selected_audios:
-            selected_audios.append(snd_path)
     audios = selected_audios
     embedded_audio_source = str(embedded_audio_source or '').strip()
     has_embedded_audio_source = bool(
@@ -843,12 +814,11 @@ def compose_scene(
 
     padded_audio_inputs = []
     # Determine speech candidates by filename patterns
-    speech_keys = ('voice', 'tts')
     for idx, a in enumerate(audios):
-        vol = sound_vols.get(a, 1.0)
-        # detect likely speech files by filename
+        vol = 1.0
+        # All speech_* files are narration, regardless of the TTS backend.
         bname = os.path.basename(a).lower()
-        is_speech = any(k in bname for k in speech_keys)
+        is_speech = bname.startswith('speech_')
         if is_speech and speech_volume is not None:
             try:
                 vol = float(vol) * float(speech_volume)
@@ -1458,7 +1428,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
 
             # S2V keeps embedded speech and excludes standalone scene speech.
             # MiniMax H3 T2V/I2V keeps its original ComfyUI audio and combines
-            # that source with standalone scene speech and sound effects.
+            # that source with standalone scene speech.
             is_wan22_s2v = scene_type == 'wan22_s2v'
             is_s2v = scene_type in {'wan22_s2v', 'minimax-h3_s2v', 'minimax-h3_r2v'}
             is_minimax_h3_av = scene_type in {

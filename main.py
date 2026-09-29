@@ -555,7 +555,6 @@ def process_scene(scene_dir, server):
                 current_meta['audio_composed_components'] = [
                     'comfyui_audio_if_preserved',
                     'scene_voice',
-                    'scene_sound_effect',
                 ]
                 temp_meta_path = f'{meta_path}.__audio_composed_tmp__'
                 with open(temp_meta_path, 'w', encoding='utf-8') as meta_file:

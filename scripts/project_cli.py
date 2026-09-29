@@ -41,7 +41,6 @@ PROMPT_PROVIDER_CHOICES = [
 ]
 VOICE_PROVIDER_CHOICES = [
     "gemini",
-    "elevenlabs",
 ]
 
 
