@@ -37,6 +37,11 @@ from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
+from gemini.gemini_tts import (
+    GEMINI_TTS_MODEL_ID_EXTENDED,
+    GEMINI_TTS_MODEL_OPTIONS,
+    list_gemini_tts_voices,
+)
 from minimax_h3_t2v.minimax_h3_t2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_T2V_PROMPT,
     DEFAULT_H3_CACHE as DEFAULT_MINIMAX_H3_T2V_CACHE,
@@ -141,6 +146,9 @@ UPSCALE_ACTION_OPTIONS = [
 ]
 DEFAULT_SCENE_META = {
     "scene_title": "", "scene_description": "", "duration_seconds": 10, "voice_text": "",
+    "gemini_tts_model": "gemini-3.1-flash-tts-preview",
+    "gemini_tts_voice_id": "",
+    "gemini_tts_voice_label": "",
     "voice_character": DEFAULT_SCENE_VOICE_KEY,
     "scene_type": "wan22_i2v", "upscale": False,
     "i2v_continuations": 0,
@@ -2734,6 +2742,10 @@ class SceneEditorWindow(QMainWindow):
         self.scene_voice_character_input = QComboBox()
         for voice_label, voice_key in SCENE_VOICE_OPTIONS:
             self.scene_voice_character_input.addItem(voice_label, voice_key)
+        self.gemini_tts_model_input = QComboBox()
+        for model_label, model_id in GEMINI_TTS_MODEL_OPTIONS:
+            self.gemini_tts_model_input.addItem(model_label, model_id)
+        self.gemini_tts_voice_catalog = None
         self.voice_text_input = QTextEdit()
         voice_line_height = self.voice_text_input.fontMetrics().lineSpacing()
         self.voice_text_input.setFixedHeight((voice_line_height * 10) + 16)
@@ -3178,6 +3190,7 @@ class SceneEditorWindow(QMainWindow):
             self.scene_title_input.textChanged, self.duration_input.currentTextChanged,
             self.duration_decimal_input.textChanged,
             self.scene_type_combo.currentTextChanged,
+            self.gemini_tts_model_input.currentIndexChanged,
             self.scene_voice_character_input.currentTextChanged,
             self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
@@ -3208,6 +3221,7 @@ class SceneEditorWindow(QMainWindow):
             self.agentic_image_extra_mode_input.currentIndexChanged,
         ]:
             signal.connect(self.refresh_scene_status)
+        self.gemini_tts_model_input.currentIndexChanged.connect(self._on_gemini_tts_model_changed)
         for widget in [
             self.scene_description_input, self.voice_text_input, self.z_positive_input,
             self.z_negative_input, self.z_seed_input, self.z_lora_name_input, self.z_lora_strength_input,
@@ -3321,6 +3335,7 @@ class SceneEditorWindow(QMainWindow):
         meta_layout.addRow(self.duration_label, self.duration_input_stack)
         for label, widget in [
             ("Tipe Adegan", self.scene_type_combo),
+            ("Model Gemini TTS", self.gemini_tts_model_input),
             ("Pilihan Suara Scene", self.scene_voice_character_input),
             ("Teks Suara", self.voice_text_input),
             ("", self.scene_upscale_input),
@@ -4108,6 +4123,66 @@ class SceneEditorWindow(QMainWindow):
             default_mode_index = self.agentic_image_extra_mode_input.findData("image_extra")
             self.agentic_image_extra_mode_input.setCurrentIndex(default_mode_index if default_mode_index >= 0 else 0)
         self.apply_project_size_constraints_to_ui()
+
+    def update_gemini_tts_voice_options(self, selected_voice_id="", selected_voice_label=""):
+        """Populate the legacy character list or the Gemini 3.8 voice catalog."""
+        model_id = str(self.gemini_tts_model_input.currentData() or "").strip()
+        combo = self.scene_voice_character_input
+        selected_voice_id = str(selected_voice_id or "").strip()
+        selected_voice_label = str(selected_voice_label or "").strip()
+
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            if model_id != GEMINI_TTS_MODEL_ID_EXTENDED:
+                for voice_label, voice_key in SCENE_VOICE_OPTIONS:
+                    combo.addItem(voice_label, voice_key)
+                index = combo.findData(selected_voice_id or DEFAULT_SCENE_VOICE_KEY)
+                combo.setCurrentIndex(max(index, 0))
+                combo.setEnabled(True)
+                return
+
+            voices = self.gemini_tts_voice_catalog
+            if voices is None:
+                try:
+                    voices = list_gemini_tts_voices()
+                    self.gemini_tts_voice_catalog = voices
+                    cache_path = ROOT / ".cache" / "gemini_tts_voices_en_us.json"
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_text(
+                        json.dumps(voices, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception as exc:
+                    voices = []
+                    cache_path = ROOT / ".cache" / "gemini_tts_voices_en_us.json"
+                    try:
+                        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                        voices = cached if isinstance(cached, list) else []
+                    except Exception:
+                        pass
+                    self.append_log(f"[warning] Katalog voice Gemini 3.8 tidak dapat dimuat: {exc}")
+
+            for voice in voices:
+                voice_id = str(voice.get("id", "")).strip()
+                display_name = str(voice.get("display_name", voice_id)).strip() or voice_id
+                if voice_id:
+                    combo.addItem(display_name, voice_id)
+
+            if selected_voice_id and combo.findData(selected_voice_id) < 0:
+                combo.addItem(selected_voice_label or selected_voice_id, selected_voice_id)
+            if combo.count() == 0:
+                combo.addItem(selected_voice_label or "Tidak ada voice tersedia", selected_voice_id)
+                combo.setEnabled(False)
+                return
+            index = combo.findData(selected_voice_id)
+            combo.setCurrentIndex(max(index, 0))
+            combo.setEnabled(True)
+        finally:
+            combo.blockSignals(False)
+
+    def _on_gemini_tts_model_changed(self, _index=-1):
+        self.update_gemini_tts_voice_options()
 
     def build_viewer_group(self):
         group = QGroupBox("Tampilan")
@@ -6140,9 +6215,26 @@ class SceneEditorWindow(QMainWindow):
                 if index < 0:
                     index = self.duration_input.findText(duration_value)
                 self.duration_input.setCurrentIndex(max(index, 0))
-            voice_key = resolve_scene_voice_key(meta)
-            index = self.scene_voice_character_input.findData(voice_key)
-            self.scene_voice_character_input.setCurrentIndex(max(index, 0))
+            tts_model = str(
+                meta.get("gemini_tts_model", "gemini-3.1-flash-tts-preview")
+            ).strip()
+            model_index = self.gemini_tts_model_input.findData(tts_model)
+            if model_index < 0:
+                model_index = self.gemini_tts_model_input.findData("gemini-3.1-flash-tts-preview")
+                tts_model = "gemini-3.1-flash-tts-preview"
+            self.gemini_tts_model_input.blockSignals(True)
+            try:
+                self.gemini_tts_model_input.setCurrentIndex(max(model_index, 0))
+            finally:
+                self.gemini_tts_model_input.blockSignals(False)
+            if tts_model == GEMINI_TTS_MODEL_ID_EXTENDED:
+                self.update_gemini_tts_voice_options(
+                    selected_voice_id=meta.get("gemini_tts_voice_id", ""),
+                    selected_voice_label=meta.get("gemini_tts_voice_label", ""),
+                )
+            else:
+                voice_key = resolve_scene_voice_key(meta)
+                self.update_gemini_tts_voice_options(selected_voice_id=voice_key)
             self.voice_text_input.setPlainText(str(meta.get("voice_text", "")))
             self.scene_upscale_input.setChecked(bool(meta.get("upscale", False)))
             z_width = int(z_prompt.get("width", DEFAULT_Z_IMAGE_PROMPT["width"]))
@@ -6865,12 +6957,28 @@ class SceneEditorWindow(QMainWindow):
         return entry
 
     def gather_scene_data(self):
+        gemini_tts_model = str(
+            self.gemini_tts_model_input.currentData() or "gemini-3.1-flash-tts-preview"
+        ).strip()
+        selected_voice = str(self.scene_voice_character_input.currentData() or "").strip()
+        selected_voice_label = self.scene_voice_character_input.currentText().strip()
+        if gemini_tts_model == GEMINI_TTS_MODEL_ID_EXTENDED:
+            voice_character = ""
+            gemini_tts_voice_id = selected_voice
+            gemini_tts_voice_label = selected_voice_label
+        else:
+            voice_character = selected_voice or DEFAULT_SCENE_VOICE_KEY
+            gemini_tts_voice_id = ""
+            gemini_tts_voice_label = ""
         meta = {
             "scene_title": self.scene_title_input.text().strip(),
             "scene_description": self.scene_description_input.toPlainText().strip(),
             "duration_seconds": self.parse_duration_value(),
             "voice_text": self.voice_text_input.toPlainText().strip(),
-            "voice_character": str(self.scene_voice_character_input.currentData() or DEFAULT_SCENE_VOICE_KEY).strip(),
+            "gemini_tts_model": gemini_tts_model,
+            "gemini_tts_voice_id": gemini_tts_voice_id,
+            "gemini_tts_voice_label": gemini_tts_voice_label,
+            "voice_character": voice_character,
             "scene_type": self.scene_type_combo.currentText().strip(),
             "upscale": bool(self.scene_upscale_input.isChecked()),
         }

@@ -108,6 +108,9 @@ Field utama:
   - `scene_type`
   - `duration_seconds`
   - `voice_text`
+  - `gemini_tts_model`
+  - `gemini_tts_voice_id` (dipakai oleh model Gemini 3.8)
+  - `gemini_tts_voice_label` (label lokal suara Gemini 3.8)
   - `voice_character`
 - `project_settings.json`
   - `project_description`
@@ -328,9 +331,17 @@ Catatan voice dan caption:
 - `voice_character`
   - dipilih per scene dari karakter suara:
     - `yetty`, `nilasari`, `dany_saputra`, `dakocan`, `arkana`, `arkana_arab`, `candy`, `lily`, `asna`, `lily_ngaji`, `lily_arab`, `finn`, `kevin`
+- `gemini_tts_model`
+  - default dan kompatibilitas scene lama: `gemini-3.1-flash-tts-preview`
+  - pilihan tambahan: `gemini-3.8-flash-tts`
+- `gemini_tts_voice_id` dan `gemini_tts_voice_label`
+  - hanya digunakan ketika model adalah `gemini-3.8-flash-tts`
+  - UI menampilkan nama voice dari Gemini, misalnya `Bodi` atau `Koda`
+  - `gemini_tts_voice_id` menyimpan ID canonical untuk request API; label UI tidak dikirim sebagai nama voice
 - prompt lain seperti `positive_prompt`, `negative_prompt`, dan prompt grup edit/image juga mengikuti format bilingual `id_old` / `id_new` / `en`
 - konfigurasi provider voice bersifat global per project di `project_settings.json.voice`:
-  - `voice_provider=gemini` -> model runtime fixed `gemini-3.1-flash-tts-preview` (language `id-ID`)
+  - `voice_provider=gemini` tetap menjadi provider runtime
+  - model TTS dipilih per scene melalui `scene_meta.json` (language `id-ID`)
 - konfigurasi caption bersifat global per project di `project_settings.json.caption`:
   - `generate_caption`
   - boolean
@@ -665,7 +676,8 @@ Perilaku UI:
 - jika Runtime Controller belum menyediakan endpoint log, dialog menampilkan error HTTP (misalnya `404`) dan tetap mencoba refresh setiap 5 detik
 - `voice` dan `sound` bersifat opsional
 - `voice` hanya wajib jika `voice_text` diisi
-  - pilihan suara scene tersedia di metadata scene melalui `voice_character`, termasuk `lily_arab` (Lily - Arab)
+  - untuk model `gemini-3.1-flash-tts-preview`, pilihan suara tetap melalui `voice_character`, termasuk `lily_arab` (Lily - Arab)
+  - untuk model `gemini-3.8-flash-tts`, pilihan suara diambil dari Gemini Voices API dan ditampilkan berdasarkan nama voice saja
 - language TTS runtime dipaksa ke `id-ID`
 - semua input prompt di UI tetap Bahasa Indonesia dan yang disimpan ke `id_new`; untuk MiniMax, nilainya ditampilkan sebagai object JSON berindentasi, sedangkan scene lain memakai string
 - `id_old` dan `en` tidak diedit langsung dari UI, hanya tersimpan di JSON; editor MiniMax hanya membuka object `id_new`
@@ -1143,14 +1155,16 @@ Script: `scripts/generate_voice.py`
 Fungsi:
 - membaca provider voice global dari `project_settings.json.voice`:
   - `gemini`
-- membaca `voice_text` dan `voice_character` dari `scene_meta.json`
-- memakai Gemini API native TTS dengan model fixed `gemini-3.1-flash-tts-preview`
+- membaca `voice_text` dan konfigurasi TTS per scene dari `scene_meta.json`
+- jika model `gemini-3.1-flash-tts-preview`, memakai profile dan payload lama tanpa perubahan
+- jika model `gemini-3.8-flash-tts`, memakai voice ID dari `gemini_tts_voice_id` dan transcript asli tanpa profile TXT lama
 - prompt style dipilih dari `voice_character` (Yetty/Nilasari/Dany Saputra/Dakocan/Arkana/Arkana Arab/Candy/Lily/Asna/Finn/Kevin)
 - profile Gemini bisa diedit lewat file TXT di folder `gemini_voice_profile/`:
   - `Yetty.txt`, `Nilasari.txt`, `Dany Saputra.txt`, `Dakocan.txt`, `Arkana.txt`, `Arkana Arab.txt`, `Candy.txt`, `Lily.txt`, `Asna.txt`, `Lily Ngaji.txt`, `Lily Arab.txt`, `Finn.txt`, `Kevin.txt`
 - format TXT mengikuti pola prompt Gemini TTS: `# AUDIO PROFILE`, scene, director notes, sample context, lalu `#### TRANSCRIPT`
 - `voice_text` runtime ditempel otomatis tepat di bawah `#### TRANSCRIPT`
 - jika file TXT kosong atau tidak ada, sistem fallback ke profile bawaan di kode
+- katalog voice Gemini 3.8 diambil dari Gemini Voices API dengan filter `language_code=en-US`; label UI hanya menggunakan nama voice seperti `Bodi` atau `Koda`
 - saat menjalankan semua scene sekaligus, sistem mencoba mode konsisten per `voice_character`:
   - scene dikelompokkan berdasarkan `voice_character`
   - grup yang berisi lebih dari satu scene digabung menjadi satu transcript
@@ -1159,6 +1173,7 @@ Fungsi:
   - menghasilkan satu WAV gabungan dan menyimpannya di `api_production/<project_name>/voice_combined/`
   - membagi WAV berdasarkan jeda panjang, lalu trim silence, snap akhir ke zero crossing, dan memberi fade-out pendek untuk mengurangi bunyi klik
   - jika deteksi jeda panjang gagal, proses fallback ke generate per scene
+- scene yang memakai `gemini-3.8-flash-tts` diproses per scene dan tidak digabung dengan `SCENEBREAKTOKEN`
 - file output voice selalu memakai awalan `speech_`
 
 Contoh:

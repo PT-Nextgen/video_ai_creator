@@ -15,6 +15,7 @@ from scripts.server_config import get_server_address
 from scripts.timeout_config import TTS_CALL_TIMEOUT_SECONDS
 from scripts.workflow_builders import load_json
 from gemini.gemini_tts import (
+    GEMINI_TTS_MODEL_ID_EXTENDED,
     GEMINI_VOICE_NAME_BY_CHARACTER,
     process_scene as process_gemini_tts_scene,
     synthesize_with_fallbacks as synthesize_gemini_with_fallbacks,
@@ -646,6 +647,15 @@ def _generate_and_split_gemini_scene_group(project_dir: str, voice_key: str, sce
     return True
 
 
+def _process_gemini_38_scene_item(item: dict, logger_obj) -> bool:
+    ok = process_gemini_tts_scene(item["scene_dir"], logger=logger_obj, write_log=write_log)
+    if ok:
+        ok = _prepare_minimax_h3_s2v_scene_audio(item["scene_dir"])
+    if not ok:
+        write_log(f"Gagal membuat voice Gemini 3.8 TTS untuk {item['scene']}.", level="error")
+    return ok
+
+
 def _process_gemini_all_scenes_consistent(project_dir: str, scenes: list[str], logger_obj):
     scene_items = []
     for scene in scenes:
@@ -661,20 +671,40 @@ def _process_gemini_all_scenes_consistent(project_dir: str, scenes: list[str], l
         text = str(meta.get("voice_text", "")).strip()
         if not text:
             continue
+        tts_model = str(meta.get("gemini_tts_model", "gemini-3.1-flash-tts-preview")).strip()
         voice_key = resolve_scene_voice_key(meta)
         scene_items.append({
             "scene": scene,
             "scene_dir": scene_dir,
             "text": text,
             "voice_key": voice_key,
+            "tts_model": tts_model,
         })
 
     if not scene_items:
         write_log("Mode Gemini konsisten: tidak ada scene dengan voice_text untuk diproses.", level="error")
         return False
 
+    extended_items = [
+        item for item in scene_items
+        if item["tts_model"] == GEMINI_TTS_MODEL_ID_EXTENDED
+    ]
+    legacy_items = [
+        item for item in scene_items
+        if item["tts_model"] != GEMINI_TTS_MODEL_ID_EXTENDED
+    ]
+
+    if extended_items:
+        write_log(
+            "Gemini 3.8 TTS diproses per scene karena transcript model 3.8 "
+            "tidak menggunakan SCENEBREAKTOKEN."
+        )
+        for item in extended_items:
+            if not _process_gemini_38_scene_item(item, logger_obj):
+                return False
+
     grouped_items = {}
-    for item in scene_items:
+    for item in legacy_items:
         grouped_items.setdefault(item["voice_key"], []).append(item)
 
     write_log(

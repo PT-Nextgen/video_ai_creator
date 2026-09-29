@@ -15,7 +15,14 @@ from scripts.voice_profiles import get_voice_character, resolve_scene_voice_key
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_TTS_LANGUAGE_CODE = "id-ID"
-GEMINI_TTS_MODEL_ID_FIXED = "gemini-3.1-flash-tts-preview"
+GEMINI_TTS_VOICE_CATALOG_LANGUAGE = "en-US"
+GEMINI_TTS_MODEL_ID_LEGACY = "gemini-3.1-flash-tts-preview"
+GEMINI_TTS_MODEL_ID_EXTENDED = "gemini-3.8-flash-tts"
+GEMINI_TTS_MODEL_ID_FIXED = GEMINI_TTS_MODEL_ID_LEGACY
+GEMINI_TTS_MODEL_OPTIONS = [
+    ("gemini-3.1-flash-tts-preview", GEMINI_TTS_MODEL_ID_LEGACY),
+    ("gemini-3.8-flash-tts", GEMINI_TTS_MODEL_ID_EXTENDED),
+]
 GEMINI_TTS_MODE_DEFAULT = "structured"
 GEMINI_VOICE_NAME_BY_CHARACTER = {
     "yetty": "Kore",
@@ -43,6 +50,68 @@ def _api_headers(api_key: str) -> dict:
         "Content-Type": "application/json",
         "x-goog-api-key": api_key,
     }
+
+
+def list_gemini_tts_voices(
+    api_key: Optional[str] = None,
+    timeout: int = 30,
+) -> list[dict]:
+    """Return the prebuilt Gemini voice catalog used by Gemini 3.8 TTS."""
+    api_key = api_key or _api_key()
+    if not api_key:
+        raise RuntimeError("Gemini API key tidak ditemukan.")
+
+    voices = []
+    page_token = ""
+    while True:
+        params = {
+            "type": "prebuilt",
+            "language_code": GEMINI_TTS_VOICE_CATALOG_LANGUAGE,
+            "page_size": 1000,
+        }
+        if page_token:
+            params["page_token"] = page_token
+        resp = requests.get(
+            f"{GEMINI_API_URL}/voices",
+            headers={"x-goog-api-key": api_key},
+            params=params,
+            timeout=timeout,
+        )
+        if resp.status_code >= 400:
+            raise requests.HTTPError(
+                f"{resp.status_code} Client Error saat mengambil katalog voice Gemini: "
+                f"{resp.text[:1200]}",
+                response=resp,
+            )
+        result = resp.json()
+        for voice in result.get("voices") or []:
+            if not isinstance(voice, dict):
+                continue
+            voice_id = str(voice.get("id") or voice.get("name") or "").strip()
+            display_name = str(
+                voice.get("display_name")
+                or voice.get("displayName")
+                or voice_id
+            ).strip()
+            if not voice_id:
+                continue
+            voices.append({
+                "id": voice_id,
+                "display_name": display_name or voice_id,
+            })
+
+        page_token = str(
+            result.get("next_page_token")
+            or result.get("nextPageToken")
+            or ""
+        ).strip()
+        if not page_token:
+            break
+
+    unique_voices = {}
+    for voice in voices:
+        unique_voices.setdefault(voice["id"], voice)
+    return sorted(unique_voices.values(), key=lambda voice: voice["display_name"].casefold())
 
 
 def _extract_inline_audio_bytes(response_json: dict) -> Optional[bytes]:
@@ -155,6 +224,54 @@ def synthesize(text: str, voice_name: str, api_key: Optional[str] = None, langua
     return audio_bytes
 
 
+def synthesize_gemini_38(
+    text: str,
+    voice_id: str,
+    api_key: Optional[str] = None,
+    timeout: int = TTS_CALL_TIMEOUT_SECONDS,
+) -> bytes:
+    """Synthesize a verbatim transcript with the Gemini 3.8 voice schema."""
+    api_key = api_key or _api_key()
+    if not api_key:
+        raise RuntimeError("Gemini API key tidak ditemukan.")
+    voice_id = str(voice_id or "").strip()
+    if not voice_id:
+        raise ValueError("Gemini 3.8 TTS membutuhkan voice ID.")
+
+    url = f"{GEMINI_API_URL}/models/{GEMINI_TTS_MODEL_ID_EXTENDED}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": str(text or "").strip()}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {"voice": voice_id},
+                "languageCode": GEMINI_TTS_LANGUAGE_CODE,
+            },
+        },
+    }
+    resp = requests.post(url, headers=_api_headers(api_key), data=json.dumps(payload), timeout=timeout)
+    if resp.status_code >= 400:
+        raise requests.HTTPError(
+            f"{resp.status_code} Client Error for model {GEMINI_TTS_MODEL_ID_EXTENDED}: "
+            f"{resp.text[:1200]}",
+            response=resp,
+        )
+    result = resp.json()
+    audio_bytes = _extract_inline_audio_bytes(result)
+    if not audio_bytes:
+        raise RuntimeError(f"Gemini 3.8 TTS response has no audio data: {json.dumps(result)[:500]}")
+    return audio_bytes
+
+
+def _write_gemini_38_audio(audio_bytes: bytes, out_path: str):
+    """Persist the model's WAV response without double-wrapping its header."""
+    if audio_bytes[:4] == b"RIFF":
+        with open(out_path, "wb") as f:
+            f.write(audio_bytes)
+        return
+    _write_wav_from_pcm(audio_bytes, out_path)
+
+
 def synthesize_with_fallbacks(
     raw_text: str,
     voice_key: str,
@@ -216,6 +333,35 @@ def process_scene(scene_dir, logger=None, write_log=None):
         return False
 
     text = str(meta.get("voice_text", "")).strip()
+    tts_model = str(meta.get("gemini_tts_model", GEMINI_TTS_MODEL_ID_LEGACY)).strip()
+    if tts_model == GEMINI_TTS_MODEL_ID_EXTENDED:
+        voice_id = str(meta.get("gemini_tts_voice_id", "")).strip()
+        if not text:
+            if write_log:
+                write_log(f"Scene {scene_dir} belum memiliki voice_text untuk Gemini TTS.", level="error")
+            return False
+        if not voice_id:
+            if write_log:
+                write_log(
+                    f"Scene {scene_dir} belum memiliki gemini_tts_voice_id untuk model {tts_model}.",
+                    level="error",
+                )
+            return False
+        try:
+            audio_bytes = synthesize_gemini_38(text, voice_id)
+            out_name = f"speech_gemini_tts_{int(time.time())}.wav"
+            out_path = os.path.join(scene_dir, out_name)
+            _write_gemini_38_audio(audio_bytes, out_path)
+            if logger:
+                logger.info("Wrote Gemini 3.8 TTS audio %s using voice %s", out_path, voice_id)
+            return True
+        except Exception as e:
+            if write_log:
+                write_log(f"Gemini 3.8 TTS gagal untuk {scene_dir}: {e}", level="error")
+            if logger:
+                logger.error("Gemini 3.8 TTS failed for %s: %s", scene_dir, e)
+            return False
+
     voice_key = resolve_scene_voice_key(meta)
     voice_name = GEMINI_VOICE_NAME_BY_CHARACTER.get(voice_key, "Kore")
     if not text:
