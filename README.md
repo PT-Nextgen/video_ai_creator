@@ -790,6 +790,7 @@ Perilaku UI:
   - input: `search_term` dan `ukuran`
   - tombol `Cari Gambar Web` akan mengunduh hasil gambar ke root folder scene
   - hasil unduhan langsung terlihat di tab `Aset` setelah proses selesai
+  - durasi scene dapat diisi sebagai angka integer antara `1` sampai `15` detik
 - untuk `image_pan`:
   - tab `Gambar Awal` tetap tersedia
   - tab `Image Pan` ditampilkan dengan input: `ukuran` (portrait-only), `direction`

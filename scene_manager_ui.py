@@ -496,6 +496,10 @@ def s2v_prompt_default(scene_type: str) -> dict:
 def r2v_prompt_default(scene_type: str) -> dict:
     return copy.deepcopy(DEFAULT_MINIMAX_H3_R2V_PROMPT)
 DEFAULT_DURATION_OPTIONS = [5, 10]
+FREE_INTEGER_DURATION_SCENE_TYPES = {"i2v", "image_pan", "image_zoom"}
+FREE_INTEGER_DURATION_OPTIONS = list(range(1, 16))
+FREE_INTEGER_DURATION_MIN = 1
+FREE_INTEGER_DURATION_MAX = 15
 WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
 MINIMAX_H3_DURATION_OPTIONS = [1, 5, 10, 15, 20, 25, 30]
 MINIMAX_H3_I2V_DURATION_OPTIONS = [1, 5, 10, 15]
@@ -504,6 +508,8 @@ MINIMAX_H3_DURATION_DECIMALS = 4
 MINIMAX_H3_DEFAULT_FPS = 24
 def duration_options_for_scene_type(scene_type: str) -> list[int]:
     scene_type = str(scene_type or "").strip()
+    if scene_type in FREE_INTEGER_DURATION_SCENE_TYPES:
+        return list(FREE_INTEGER_DURATION_OPTIONS)
     if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE:
         return list(MINIMAX_H3_DURATION_OPTIONS)
     if scene_type in {MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE}:
@@ -942,12 +948,18 @@ def create_scene_in_project(
         raw_duration = float(duration)
     except (TypeError, ValueError) as exc:
         raise ValueError("Durasi harus berupa angka.") from exc
+    if scene_type in FREE_INTEGER_DURATION_SCENE_TYPES and not raw_duration.is_integer():
+        raise ValueError("Durasi untuk scene i2v, image_pan, dan image_zoom harus berupa angka integer.")
     if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE, MINIMAX_H3_R2V_SCENE_TYPE}:
         if raw_duration != round(raw_duration, MINIMAX_H3_DURATION_DECIMALS):
             raise ValueError("Durasi MiniMax maksimal memiliki 4 angka desimal.")
         duration = round(raw_duration, MINIMAX_H3_DURATION_DECIMALS)
     else:
         duration = int(raw_duration)
+    if scene_type in FREE_INTEGER_DURATION_SCENE_TYPES and not (
+        FREE_INTEGER_DURATION_MIN <= duration <= FREE_INTEGER_DURATION_MAX
+    ):
+        raise ValueError("Durasi untuk scene i2v, image_pan, dan image_zoom harus antara 1 dan 15 detik.")
     if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE and not (
         MINIMAX_H3_DURATION_MIN <= duration <= 30.0
         and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)
@@ -1159,11 +1171,23 @@ def validate_scene_data(
     if not str(meta.get("scene_description", "")).strip():
         issues.append("Deskripsi adegan wajib diisi.")
     try:
-        if scene_type not in {"wan22_s2v", "web_scroll"} and int(meta.get("duration_seconds", 0)) <= 0:
+        if scene_type not in {"wan22_s2v", "web_scroll"} | FREE_INTEGER_DURATION_SCENE_TYPES and int(meta.get("duration_seconds", 0)) <= 0:
             issues.append("Durasi harus lebih besar dari 0.")
     except Exception:
-        if scene_type not in {"wan22_s2v", "web_scroll"}:
+        if scene_type not in {"wan22_s2v", "web_scroll"} | FREE_INTEGER_DURATION_SCENE_TYPES:
             issues.append("Durasi harus berupa angka.")
+    if scene_type in FREE_INTEGER_DURATION_SCENE_TYPES:
+        try:
+            raw_duration = meta.get("duration_seconds", 0)
+            duration_value = float(raw_duration)
+            is_integer = not isinstance(raw_duration, bool) and duration_value.is_integer()
+        except (TypeError, ValueError, OverflowError):
+            duration_value = 0
+            is_integer = False
+        if not is_integer or not (
+            FREE_INTEGER_DURATION_MIN <= duration_value <= FREE_INTEGER_DURATION_MAX
+        ):
+            issues.append("Durasi untuk scene i2v, image_pan, dan image_zoom harus berupa integer antara 1 dan 15 detik.")
     if scene_type == WAN22_T2V_SCENE_TYPE:
         try:
             duration_value = int(meta.get("duration_seconds", 0))
@@ -1447,12 +1471,16 @@ class SceneTemplateDialog(QDialog):
         ])
         self.duration_combo = QComboBox()
         populate_duration_combo(self.duration_combo, self.type_combo.currentText(), selected_value=10)
+        self.duration_integer_input = QSpinBox()
+        self.duration_integer_input.setRange(FREE_INTEGER_DURATION_MIN, FREE_INTEGER_DURATION_MAX)
+        self.duration_integer_input.setValue(10)
         self.duration_text_input = QLineEdit("10.0")
         self.duration_text_input.setValidator(QDoubleValidator(1.0, 30.0, MINIMAX_H3_DURATION_DECIMALS, self.duration_text_input))
         self.duration_text_input.setPlaceholderText("contoh: 15.5")
         self.duration_text_input.setFixedHeight(self.duration_combo.sizeHint().height())
         self.duration_editor_stack = QStackedWidget()
         self.duration_editor_stack.addWidget(self.duration_combo)
+        self.duration_editor_stack.addWidget(self.duration_integer_input)
         self.duration_editor_stack.addWidget(self.duration_text_input)
         self.duration_editor_stack.setFixedHeight(self.duration_combo.sizeHint().height())
         form = QFormLayout(self)
@@ -1480,6 +1508,9 @@ class SceneTemplateDialog(QDialog):
                 validator.setTop(maximum)
             self.duration_editor_stack.setCurrentWidget(self.duration_text_input)
             self.duration_text_input.setEnabled(True)
+        elif scene_type in FREE_INTEGER_DURATION_SCENE_TYPES:
+            self.duration_editor_stack.setCurrentWidget(self.duration_integer_input)
+            self.duration_integer_input.setEnabled(True)
         else:
             populate_duration_combo(self.duration_combo, scene_type)
             self.duration_editor_stack.setCurrentWidget(self.duration_combo)
@@ -1500,6 +1531,8 @@ class SceneTemplateDialog(QDialog):
                 duration = round(float(self.duration_text_input.text().strip() or "10.0"), MINIMAX_H3_DURATION_DECIMALS)
             except ValueError as exc:
                 raise ValueError("Durasi harus berupa angka dengan maksimal 4 angka desimal.") from exc
+        elif scene_type in FREE_INTEGER_DURATION_SCENE_TYPES:
+            duration = int(self.duration_integer_input.value())
         else:
             duration = int(self.duration_combo.currentData() or 10)
         return {
@@ -2715,12 +2748,16 @@ class SceneEditorWindow(QMainWindow):
         self.scene_description_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.duration_input = QComboBox()
         populate_duration_combo(self.duration_input, "wan22_i2v", selected_value=10)
+        self.duration_integer_input = QSpinBox()
+        self.duration_integer_input.setRange(FREE_INTEGER_DURATION_MIN, FREE_INTEGER_DURATION_MAX)
+        self.duration_integer_input.setValue(10)
         self.duration_decimal_input = QLineEdit("10.0")
         self.duration_decimal_input.setValidator(QDoubleValidator(MINIMAX_H3_DURATION_MIN, 30.0, MINIMAX_H3_DURATION_DECIMALS, self.duration_decimal_input))
         self.duration_decimal_input.setPlaceholderText("contoh: 15.5")
         self.duration_decimal_input.setFixedHeight(self.duration_input.sizeHint().height())
         self.duration_input_stack = QStackedWidget()
         self.duration_input_stack.addWidget(self.duration_input)
+        self.duration_input_stack.addWidget(self.duration_integer_input)
         self.duration_input_stack.addWidget(self.duration_decimal_input)
         self.duration_input_stack.setFixedHeight(self.duration_input.sizeHint().height())
         self.scene_type_combo = QComboBox()
@@ -4074,6 +4111,8 @@ class SceneEditorWindow(QMainWindow):
                 validator.setBottom(MINIMAX_H3_DURATION_MIN)
                 validator.setTop(maximum)
             self.duration_input_stack.setCurrentWidget(self.duration_decimal_input)
+        elif scene_type in FREE_INTEGER_DURATION_SCENE_TYPES:
+            self.duration_input_stack.setCurrentWidget(self.duration_integer_input)
         else:
             populate_duration_combo(self.duration_input, scene_type)
             self.duration_input_stack.setCurrentWidget(self.duration_input)
@@ -6210,6 +6249,14 @@ class SceneEditorWindow(QMainWindow):
                     self.duration_decimal_input.setText(str(duration_value or 10.0))
                 except (TypeError, ValueError):
                     self.duration_decimal_input.setText("10.0")
+            elif self._uses_integer_duration_input():
+                try:
+                    parsed_duration = int(float(duration_value))
+                except (TypeError, ValueError):
+                    parsed_duration = 10
+                self.duration_integer_input.setValue(
+                    max(FREE_INTEGER_DURATION_MIN, min(FREE_INTEGER_DURATION_MAX, parsed_duration))
+                )
             else:
                 index = self.duration_input.findData(int(float(duration_value))) if duration_value else -1
                 if index < 0:
@@ -7347,9 +7394,14 @@ class SceneEditorWindow(QMainWindow):
             MINIMAX_H3_R2V_SCENE_TYPE,
         }
 
+    def _uses_integer_duration_input(self) -> bool:
+        return self.scene_type_combo.currentText().strip() in FREE_INTEGER_DURATION_SCENE_TYPES
+
     def _duration_text(self) -> str:
         if self._uses_decimal_duration_input():
             return self.duration_decimal_input.text().strip()
+        if self._uses_integer_duration_input():
+            return str(self.duration_integer_input.value())
         return self.duration_input.currentText().strip()
 
     def parse_duration_value(self):
@@ -7365,6 +7417,12 @@ class SceneEditorWindow(QMainWindow):
             maximum = 30.0 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE else 15.0
             if value < MINIMAX_H3_DURATION_MIN or value > maximum:
                 raise ValueError(f"Durasi harus antara {MINIMAX_H3_DURATION_MIN:g} dan {maximum:g} detik.")
+            return value
+
+        if self._uses_integer_duration_input():
+            value = int(self.duration_integer_input.value())
+            if not FREE_INTEGER_DURATION_MIN <= value <= FREE_INTEGER_DURATION_MAX:
+                raise ValueError("Durasi harus antara 1 dan 15 detik.")
             return value
 
         value = self.duration_input.currentText().strip()
