@@ -150,10 +150,15 @@ def _scene_sort_key(name: str):
         return (10**9, str(name))
 
 
-def _read_scene_json(scene_dir, filename, required=False):
+def _read_scene_json(scene_dir, filename, required=False, preserve_structured=False):
     path = os.path.join(scene_dir, filename)
     try:
-        return read_json_for_runtime(path, required=required, log_fn=write_log)
+        return read_json_for_runtime(
+            path,
+            required=required,
+            log_fn=write_log,
+            preserve_structured=preserve_structured,
+        )
     except FileNotFoundError:
         raise
     except Exception as e:
@@ -180,6 +185,7 @@ def _read_scene_json(scene_dir, filename, required=False):
                 raw_data,
                 translate_fn=lambda text: text,
                 log_fn=write_log,
+                preserve_structured=preserve_structured,
             )
             return resolved
         if not os.path.exists(path):
@@ -190,6 +196,7 @@ def _read_scene_json(scene_dir, filename, required=False):
             raw_data,
             translate_fn=lambda text: text,
             log_fn=write_log,
+            preserve_structured=preserve_structured,
         )
         return resolved
 
@@ -456,6 +463,24 @@ def _prepare_minimax_h3_i2v_prompt_for_run(prompt: dict, duration: float, *, inc
         duration,
         include_last_frame=include_last_frame,
     )
+    english_prompt = prepared["positive_prompt"].get("en")
+    if isinstance(english_prompt, dict):
+        shots = english_prompt.get("shots")
+        last_shot = next(
+            (shot for shot in reversed(shots) if isinstance(shot, dict)),
+            None,
+        ) if isinstance(shots, list) else None
+        if last_shot is not None:
+            try:
+                normalized_duration = float(duration)
+                last_start = float(last_shot.get("start", 0))
+            except (TypeError, ValueError):
+                normalized_duration = None
+                last_start = None
+            if normalized_duration is not None and last_start is not None and normalized_duration > last_start:
+                # Meta duration is authoritative for the runtime workflow.
+                # Do not persist this repair as a creative prompt edit.
+                last_shot["end"] = normalized_duration
     errors = validate_i2va_frame_instructions(
         prepared["positive_prompt"],
         duration,
@@ -970,6 +995,7 @@ def process_scene(scene_dir, server):
                     scene_dir,
                     'minimax_h3_i2v_prompt.json',
                     required=True,
+                    preserve_structured=True,
                 )
                 i2v_prompt = copy.deepcopy(i2v_prompt) if isinstance(i2v_prompt, dict) else {}
 
@@ -1594,6 +1620,7 @@ def process_scene(scene_dir, server):
                 scene_dir,
                 'minimax_h3_i2v_prompt.json',
                 required=True,
+                preserve_structured=True,
             )
             i2v_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
                 i2v_prompt,

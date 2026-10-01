@@ -1519,6 +1519,7 @@ def resolve_prompt_payload_for_runtime(
     translate_provider: str | None = None,
     project_dir: str | Path | None = None,
     log_fn: Callable[[str], None] | None = None,
+    preserve_structured: bool = False,
 ) -> tuple[dict, dict, bool]:
     source = copy.deepcopy(data or {})
     resolved = copy.deepcopy(source)
@@ -1633,12 +1634,20 @@ def resolve_prompt_payload_for_runtime(
                 stored_entry["id_new"] = copy.deepcopy(id_new)
                 stored_entry["en"] = translated_en
                 stored["positive_prompt"] = stored_entry
-                resolved["positive_prompt"] = serialize_structured_prompt(translated_en)
+                resolved["positive_prompt"] = (
+                    copy.deepcopy(stored_entry)
+                    if preserve_structured
+                    else serialize_structured_prompt(translated_en)
+                )
                 return resolved, stored, True
             errors = validate_structured_prompt(structured, expected_mode=mode)
             if errors:
                 raise ValueError("Prompt MiniMax H3 structured en tidak valid: " + "; ".join(errors[:3]))
-            resolved["positive_prompt"] = serialize_structured_prompt(structured["en"])
+            resolved["positive_prompt"] = (
+                copy.deepcopy(structured)
+                if preserve_structured
+                else serialize_structured_prompt(structured["en"])
+            )
             stored["positive_prompt"] = structured
             return resolved, stored, changed
 
@@ -1695,6 +1704,7 @@ def read_json_for_runtime(
     translate_provider: str | None = None,
     project_dir: str | Path | None = None,
     log_fn: Callable[[str], None] | None = None,
+    preserve_structured: bool = False,
 ) -> dict:
     if not os.path.exists(path):
         if required:
@@ -1712,6 +1722,7 @@ def read_json_for_runtime(
         translate_provider=translate_provider,
         project_dir=project_dir,
         log_fn=log_fn,
+        preserve_structured=preserve_structured,
     )
     if changed and persist_updates:
         _write_json_file(path, stored)
