@@ -1444,7 +1444,14 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
         # Clean entire combined folder when processing all scenes (lock-tolerant)
         _safe_clean_combined_dir(combined_dir, delete_all=True)
     
-    scenes = sorted([d for d in os.listdir(API_PRODUCTION) if d.startswith('scene_')], key=_scene_sort_key)
+    scenes = sorted(
+        [
+            d
+            for d in os.listdir(API_PRODUCTION)
+            if d.startswith('scene_') and os.path.isdir(os.path.join(API_PRODUCTION, d))
+        ],
+        key=_scene_sort_key,
+    )
     if specific_scenes:
         scenes = [s for s in scenes if s in specific_scenes]
     failed_scenes = []
