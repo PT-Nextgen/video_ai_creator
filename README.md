@@ -1257,12 +1257,15 @@ Fungsi:
   - Compose All memakai satu video final terbaru untuk scene MiniMax H3, sehingga file stage T2V tidak tergabung ulang bersama hasil T2V-I2V
   - scene type lain: mix speech ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
+- dari setiap nomor scene, hanya video output terbaru yang dipakai untuk proses merge; file output scene lama tidak ikut digabungkan
 - jika `project_settings.caption.generate_caption=true`, caption timing setiap scene dikumpulkan setelah video scene siap, lalu caption dibakar sekali ke `combined_all.mp4` setelah merge, background music, dan upscale final
 - ukuran master compose selalu diambil dari `project_settings.json.video_size`, bukan dari resolusi video scene pertama
+- FPS master compose dipilih dari FPS tertinggi seluruh video scene terbaru yang akan digabungkan; scene dengan FPS lebih rendah dinormalisasi ke FPS tersebut
 - setiap video scene dinormalisasi ke ukuran master project menggunakan `scale + pad`; aspect ratio dipertahankan dan video sumber tidak ditimpa
 - sebelum merge dengan `-c copy`, parameter audio utama (codec, sample rate, jumlah channel, dan layout) dibandingkan; jika berbeda antar-scene, setiap video dinormalisasi ke AAC stereo `44100 Hz` agar konfigurasi AAC tidak berubah di tengah `combined_all.mp4`
 - jika `--compose-song` aktif, semua video scene selalu dinormalisasi dan di-re-encode sebelum penggabungan, walaupun fps, resolusi, dan signature audio awalnya sama; hal ini mencegah encoder padding membuat celah audio di batas scene
 - opsi `--compose-song` menjadikan audio `speech_chunk_*` dari setiap scene sebagai master timeline: semua chunk didekode, di-resample ke `44100 Hz` stereo, timestamp di-reset, lalu digabung tanpa jeda; setiap video scene dipotong/diatur mengikuti durasi chunk audionya
+- pada `--compose-song`, video scene dinormalisasi ke FPS master tertinggi sebelum retime audio; hasil concat video-only dipaksa kembali ke FPS master tersebut sebelum audio Lagu di-mux
 - pada `--compose-song`, trim empat frame ekstra hanya diterapkan pada `wan22_s2v`; `minimax-h3_s2v` tidak menjalankan trim empat frame tersebut
 - pada mode `--compose-song`, audio scene bawaan video tidak dipakai sebagai timeline akhir; video scene digabung tanpa audio, kemudian master audio Lagu di-mux sebagai AAC `192 kbps`, `44100 Hz`, stereo
 - pada merge akhir bisa menambahkan background music opsional:

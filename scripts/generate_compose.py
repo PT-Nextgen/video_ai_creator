@@ -413,31 +413,47 @@ def concat_videos(video_files, out_path):
             pass
 
 
-def concat_videos_reencode(video_files, out_path):
+def concat_videos_reencode(video_files, out_path, fps=None):
     """Concat audio/video through the concat filter to reset per-file timestamps."""
     if not video_files:
         raise ValueError("Minimal satu video diperlukan untuk concat.")
     inputs = " ".join(f'-i "{path}"' for path in video_files)
     streams = "".join(f"[{index}:v:0][{index}:a:0]" for index in range(len(video_files)))
-    filter_complex = f'{streams}concat=n={len(video_files)}:v=1:a=1[v][a]'
+    if fps and float(fps) > 0:
+        filter_complex = (
+            f'{streams}concat=n={len(video_files)}:v=1:a=1[concat_v][a];'
+            f'[concat_v]fps={float(fps):.6f}[v]'
+        )
+        fps_mode = '-fps_mode:v cfr '
+    else:
+        filter_complex = f'{streams}concat=n={len(video_files)}:v=1:a=1[v][a]'
+        fps_mode = ''
     run(
         f'ffmpeg -y {inputs} -filter_complex "{filter_complex}" '
         f'-map "[v]" -map "[a]" -c:v libx264 -preset fast -pix_fmt yuv420p '
-        f'-c:a aac -b:a 192k -ac 2 -ar 44100 -movflags +faststart "{out_path}"'
+        f'{fps_mode}-c:a aac -b:a 192k -ac 2 -ar 44100 -movflags +faststart "{out_path}"'
     )
 
 
-def concat_videos_only_reencode(video_files, out_path):
+def concat_videos_only_reencode(video_files, out_path, fps=None):
     """Concat video streams only; audio is supplied separately by Compose Lagu."""
     if not video_files:
         raise ValueError("Minimal satu video diperlukan untuk concat.")
     inputs = " ".join(f'-i "{path}"' for path in video_files)
     streams = "".join(f"[{index}:v:0]" for index in range(len(video_files)))
-    filter_complex = f'{streams}concat=n={len(video_files)}:v=1:a=0[v]'
+    if fps and float(fps) > 0:
+        filter_complex = (
+            f'{streams}concat=n={len(video_files)}:v=1:a=0[concat_v];'
+            f'[concat_v]fps={float(fps):.6f}[v]'
+        )
+        fps_mode = '-fps_mode:v cfr '
+    else:
+        filter_complex = f'{streams}concat=n={len(video_files)}:v=1:a=0[v]'
+        fps_mode = '-fps_mode:v vfr '
     run(
         f'ffmpeg -y {inputs} -filter_complex "{filter_complex}" '
         f'-map "[v]" -an -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p '
-        f'-fps_mode:v vfr -enc_time_base:v 1:1000000 -video_track_timescale 1000000 '
+        f'{fps_mode}-enc_time_base:v 1:1000000 -video_track_timescale 1000000 '
         f'-movflags +faststart "{out_path}"'
     )
 
@@ -1138,8 +1154,8 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         logger.warning('Combined directory not found: %s', combined_dir)
         return None
     files = sorted(os.listdir(combined_dir))
-    # Only include per-scene outputs to avoid re-merging previous combined outputs
-    videos = [
+    # Only include per-scene outputs to avoid re-merging previous combined outputs.
+    video_candidates = [
         os.path.join(combined_dir, f)
         for f in files
         if f.lower().endswith(VIDEO_EXTS) and f.startswith('Scene_')
@@ -1147,12 +1163,29 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
     if selected_scene_nums:
         selected = {str(n) for n in selected_scene_nums}
         filtered = []
-        for vp in videos:
+        for vp in video_candidates:
             bn = os.path.basename(vp)
             parts = bn.split('_')
             if len(parts) >= 2 and parts[1] in selected:
                 filtered.append(vp)
-        videos = filtered
+        video_candidates = filtered
+
+    # A normal run exports one latest root-scene video per scene. If an older
+    # combined file remains (for example because it was locked), keep only the
+    # newest combined output for each scene before probing FPS or merging.
+    latest_by_scene = {}
+    unnumbered_candidates = []
+    for video_path in video_candidates:
+        parts = os.path.basename(video_path).split('_')
+        try:
+            scene_num = int(parts[1])
+        except (IndexError, ValueError):
+            unnumbered_candidates.append(video_path)
+            continue
+        previous = latest_by_scene.get(scene_num)
+        if previous is None or os.path.getmtime(video_path) >= os.path.getmtime(previous):
+            latest_by_scene[scene_num] = video_path
+    videos = list(latest_by_scene.values()) + unnumbered_candidates
     if not videos:
         logger.warning('No videos in combined to merge.')
         return None
@@ -1188,8 +1221,12 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
 
     caption_entries = []
     with tempfile.TemporaryDirectory(prefix='merge_') as td:
-        # Master fps and size from first video
-        master_fps = ffprobe_fps(videos[0])
+        # The videos list contains one latest per-scene output selected for
+        # this merge. Use the highest FPS among those videos as the master so
+        # lower-FPS scenes are normalized upward instead of lowering the
+        # final video's frame rate based on scene order.
+        scene_fps = {video_path: ffprobe_fps(video_path) for video_path in videos}
+        master_fps = max(scene_fps.values())
         if isinstance(project_video_size, (tuple, list)) and len(project_video_size) == 2:
             try:
                 master_w, master_h = int(project_video_size[0]), int(project_video_size[1])
@@ -1213,7 +1250,7 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         master_audio_signature = ffprobe_audio_signature(videos[0])
         for v in videos[1:]:
             if (
-                ffprobe_fps(v) != master_fps
+                scene_fps[v] != master_fps
                 or ffprobe_size(v) != (master_w, master_h)
                 or ffprobe_audio_signature(v) != master_audio_signature
             ):
@@ -1300,7 +1337,7 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
             )
 
             song_video = os.path.join(td, 'song_video_only.mp4')
-            concat_videos_only_reencode(song_video_paths, song_video)
+            concat_videos_only_reencode(song_video_paths, song_video, fps=master_fps)
             song_duration = ffprobe_duration(song_audio)
             video_gap = song_duration - ffprobe_duration(song_video)
             if video_gap > 0.001:
@@ -1321,7 +1358,7 @@ def merge_combined_videos(selected_scene_nums=None, music_file=None, music_volum
         elif compose_song:
             # Keep the prior compose-song path for projects that do not use
             # the standard scene_N/speech_chunk_NN layout.
-            concat_videos_reencode(norm_paths, final_out)
+            concat_videos_reencode(norm_paths, final_out, fps=master_fps)
         elif all_same:
             try:
                 run(
