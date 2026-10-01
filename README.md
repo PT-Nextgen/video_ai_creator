@@ -1724,11 +1724,11 @@ Mapping ukuran scene MiniMax H3 ke `ResolutionSelector`:
 | Ukuran | `aspect_ratio` | `megapixels` |
 | --- | --- | ---: |
 | `368x640` | `9:16 (Portrait Widescreen)` | `0.2` |
-| `480x848` | `9:16 (Portrait Widescreen)` | `0.3` |
-| `720x1280` | `9:16 (Portrait Widescreen)` | `0.4` |
+| `480x848` | `9:16 (Portrait Widescreen)` | `0.4` |
+| `720x1280` | `9:16 (Portrait Widescreen)` | `0.9` |
 | `640x368` | `16:9 (Widescreen)` | `0.2` |
-| `848x480` | `16:9 (Widescreen)` | `0.3` |
-| `1280x720` | `16:9 (Widescreen)` | `0.4` |
+| `848x480` | `16:9 (Widescreen)` | `0.4` |
+| `1280x720` | `16:9 (Widescreen)` | `0.9` |
 
 Semua mapping memakai `multiple=32`. Karena itu, output aktual node `ResolutionSelector` MiniMax dapat dibulatkan ke ukuran kompatibel terdekat yang lebih kecil, misalnya target UI/project `368x640` dapat menghasilkan raw output MiniMax `352x608`. Final Compose kemudian menormalkan kembali video ke ukuran `project_settings.json.video_size` menggunakan `scale + pad`.
 
