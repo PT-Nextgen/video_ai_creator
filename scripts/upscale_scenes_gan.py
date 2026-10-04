@@ -82,6 +82,17 @@ def _build_workflow(uploaded_name: str) -> dict:
     return workflow
 
 
+def _output_node_ids(workflow: dict) -> tuple[str, ...]:
+    node_ids = tuple(
+        str(node_id)
+        for node_id, node in workflow.items()
+        if isinstance(node, dict) and node.get("class_type") == "SaveVideo"
+    )
+    if not node_ids:
+        raise ValueError("Template GAN tidak memiliki node SaveVideo sebagai output")
+    return node_ids
+
+
 def _output_filename(video_output: dict) -> str:
     if not isinstance(video_output, dict):
         return ""
@@ -114,6 +125,7 @@ def upscale_scene(scene_dir: Path, server: str) -> bool:
     try:
         uploaded_name = _upload_video(server, source)
         workflow = _build_workflow(uploaded_name)
+        output_node_ids = _output_node_ids(workflow)
         result = comfyui_api.post_workflow_api(workflow, server)
         prompt_id = result.get("prompt_id") or result.get("id") if isinstance(result, dict) else None
         write_log(f"[gan-upscale] {scene_dir.name}: workflow dikirim, prompt_id={prompt_id}")
@@ -126,10 +138,17 @@ def upscale_scene(scene_dir: Path, server: str) -> bool:
             output_type="video",
             timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
             interval=COMFYUI_POLL_INTERVAL_SECONDS,
+            output_node_ids=output_node_ids,
+            require_output_type=True,
         )
         output_name = _output_filename(video_output)
         if not output_name:
             raise RuntimeError("Output video GAN tidak ditemukan")
+        write_log(
+            f"[gan-upscale] {scene_dir.name}: output ComfyUI="
+            f"{output_name}, subfolder={video_output.get('subfolder')}, "
+            f"type={video_output.get('type')}, node={video_output.get('node_id')}"
+        )
         video_url = comfyui_api.get_file_url(
             server,
             output_name,
