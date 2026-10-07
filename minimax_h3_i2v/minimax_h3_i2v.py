@@ -68,6 +68,7 @@ DEFAULT_PROMPT = {
     "height": 640,
     "fps": 24,
     "remove_sound": False,
+    "fast_mode": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }

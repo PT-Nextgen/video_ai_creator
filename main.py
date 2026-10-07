@@ -54,10 +54,18 @@ from minimax_h3_t2v.minimax_h3_t2v import (
     build_minimax_h3_t2v_workflow,
     send_workflow as send_minimax_h3_t2v_workflow,
 )
+from minimax_h3_t2v.minimax_h3fast_t2v import (
+    build_minimax_h3fast_t2v_workflow,
+    send_workflow as send_minimax_h3fast_t2v_workflow,
+)
 from minimax_h3_i2v.minimax_h3_i2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_I2V_PROMPT,
     build_minimax_h3_i2v_workflow,
     send_workflow as send_minimax_h3_i2v_workflow,
+)
+from minimax_h3_i2v.minimax_h3fast_i2v import (
+    build_minimax_h3fast_i2v_workflow,
+    send_workflow as send_minimax_h3fast_i2v_workflow,
 )
 from minimax_h3.minimax_h3_i2v_panjang import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_I2V_PANJANG_PROMPT,
@@ -498,8 +506,17 @@ def _validate_minimax_h3_i2v_workflow_frame_contract(
     include_last_frame: bool,
 ):
     """Ensure the serialized prompt and ComfyUI graph agree about frame inputs."""
-    node = workflow.get("133") if isinstance(workflow, dict) else None
-    inputs = node.get("inputs") if isinstance(node, dict) else None
+    prompt_node_id = None
+    inputs = None
+    if isinstance(workflow, dict):
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict) or node.get("class_type") != "MiniMaxH3ImageToVideo":
+                continue
+            candidate_inputs = node.get("inputs")
+            if isinstance(candidate_inputs, dict) and "prompt" in candidate_inputs:
+                prompt_node_id = str(node_id)
+                inputs = candidate_inputs
+                break
     if not isinstance(inputs, dict):
         raise ValueError("Node MiniMax H3 I2V tidak memiliki input yang valid.")
     prompt_text = str(inputs.get("prompt", ""))
@@ -510,8 +527,14 @@ def _validate_minimax_h3_i2v_workflow_frame_contract(
         expected = f"At {float(duration):.2f} seconds, <Picture 2> is the last frame of the video"
         if expected.lower() not in prompt_text.lower():
             raise ValueError("Kalimat last frame I2VA tidak ditemukan pada prompt workflow.")
-        if not last_input or "139" not in str(last_input):
-            raise ValueError("Input last_frame belum terhubung pada workflow MiniMax H3 I2V.")
+        last_node_id = None
+        if isinstance(last_input, (list, tuple)) and last_input:
+            last_node_id = str(last_input[0])
+        last_node = workflow.get(last_node_id) if last_node_id else None
+        if not isinstance(last_node, dict) or last_node.get("class_type") != "LoadImage":
+            raise ValueError(
+                f"Input last_frame belum terhubung pada workflow MiniMax H3 I2V (node {prompt_node_id})."
+            )
     else:
         if last_input is not None:
             raise ValueError("Workflow I2V tanpa image akhir tidak boleh memiliki input last_frame.")
@@ -1004,8 +1027,19 @@ def process_scene(scene_dir, server):
             return False
 
         t2v_duration = scene_duration if scene_duration <= 15 else 15
+        use_fast_t2v = bool(t2v_prompt.get("fast_mode", False))
+        t2v_build_workflow = (
+            build_minimax_h3fast_t2v_workflow
+            if use_fast_t2v
+            else build_minimax_h3_t2v_workflow
+        )
+        t2v_send_workflow = (
+            send_minimax_h3fast_t2v_workflow
+            if use_fast_t2v
+            else send_minimax_h3_t2v_workflow
+        )
         try:
-            t2v_workflow = build_minimax_h3_t2v_workflow(
+            t2v_workflow = t2v_build_workflow(
                 t2v_prompt,
                 scene_meta,
                 duration_override=t2v_duration,
@@ -1015,7 +1049,7 @@ def process_scene(scene_dir, server):
             write_log(f"Failed to build MiniMax H3 T2V workflow for {scene_dir}: {e}")
             return False
 
-        t2v_result = send_minimax_h3_t2v_workflow(
+        t2v_result = t2v_send_workflow(
             t2v_workflow,
             server,
             log_file=LOG_FILE,
@@ -1097,13 +1131,24 @@ def process_scene(scene_dir, server):
             return False
 
         i2v_duration = scene_duration - 15
+        use_fast_i2v = bool(i2v_prompt.get("fast_mode", False))
+        i2v_build_workflow = (
+            build_minimax_h3fast_i2v_workflow
+            if use_fast_i2v
+            else build_minimax_h3_i2v_workflow
+        )
+        i2v_send_workflow = (
+            send_minimax_h3fast_i2v_workflow
+            if use_fast_i2v
+            else send_minimax_h3_i2v_workflow
+        )
         try:
             i2v_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
                 i2v_prompt,
                 i2v_duration,
                 include_last_frame=False,
             )
-            i2v_workflow = build_minimax_h3_i2v_workflow(
+            i2v_workflow = i2v_build_workflow(
                 i2v_prompt,
                 scene_meta,
                 uploaded_name=uploaded_name,
@@ -1119,7 +1164,7 @@ def process_scene(scene_dir, server):
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
             return False
 
-        i2v_result = send_minimax_h3_i2v_workflow(
+        i2v_result = i2v_send_workflow(
             i2v_workflow,
             uploaded_name,
             server,
@@ -1247,6 +1292,17 @@ def process_scene(scene_dir, server):
             return False
 
         remove_sound = bool(chained_prompt.get('remove_sound', False))
+        use_fast_i2v = bool(chained_prompt.get("fast_mode", False))
+        i2v_build_workflow = (
+            build_minimax_h3fast_i2v_workflow
+            if use_fast_i2v
+            else build_minimax_h3_i2v_workflow
+        )
+        i2v_send_workflow = (
+            send_minimax_h3fast_i2v_workflow
+            if use_fast_i2v
+            else send_minimax_h3_i2v_workflow
+        )
         segment_paths = []
         active_stage_count = continuation_count + 1
         try:
@@ -1461,7 +1517,7 @@ def process_scene(scene_dir, server):
                     scene_duration,
                     include_last_frame=bool(last_path),
                 )
-                i2v_workflow = build_minimax_h3_i2v_workflow(
+                i2v_workflow = i2v_build_workflow(
                     stage_prompt,
                     scene_meta,
                     uploaded_name=uploaded_name,
@@ -1477,7 +1533,7 @@ def process_scene(scene_dir, server):
             except Exception as e:
                 write_log(f"Failed to build MiniMax H3 I2V panjang stage {stage_index + 1}: {e}")
                 return False
-            i2v_result = send_minimax_h3_i2v_workflow(
+            i2v_result = i2v_send_workflow(
                 i2v_workflow,
                 uploaded_name,
                 server,
@@ -1627,7 +1683,13 @@ def process_scene(scene_dir, server):
                 scene_duration,
                 include_last_frame=False,
             )
-            i2v_workflow = build_minimax_h3_i2v_workflow(
+            use_fast_i2v = bool(i2v_prompt.get("fast_mode", False))
+            i2v_build_workflow = (
+                build_minimax_h3fast_i2v_workflow
+                if use_fast_i2v
+                else build_minimax_h3_i2v_workflow
+            )
+            i2v_workflow = i2v_build_workflow(
                 i2v_prompt,
                 scene_meta,
                 uploaded_name=uploaded_name,
@@ -1642,7 +1704,12 @@ def process_scene(scene_dir, server):
         except Exception as e:
             write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
             return False
-        i2v_result = send_minimax_h3_i2v_workflow(
+        i2v_send_workflow = (
+            send_minimax_h3fast_i2v_workflow
+            if bool(i2v_prompt.get("fast_mode", False))
+            else send_minimax_h3_i2v_workflow
+        )
+        i2v_result = i2v_send_workflow(
             i2v_workflow,
             uploaded_name,
             server,

@@ -2705,6 +2705,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_t2v_tab = None
         self.minimax_h3_i2v_tab = None
         self.minimax_h3_r2v_tab = None
+        self.minimax_h3_t2v_h3_cache_group = None
+        self.minimax_h3_i2v_h3_cache_group = None
         self.minimax_h3_s2v_h3_cache_group = None
         self.s2v_tab = None
         self.web_tab = None
@@ -2931,6 +2933,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_t2v_remove_sound_input = QCheckBox("Hapus Sound")
         self.minimax_h3_i2v_remove_sound_input = QCheckBox("Hapus Sound")
+        self.minimax_h3_t2v_fast_mode_input = QCheckBox("Mode Cepat")
+        self.minimax_h3_i2v_fast_mode_input = QCheckBox("Mode Cepat")
         self.minimax_h3_t2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_T2V_CACHE)
         self.minimax_h3_i2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_I2V_CACHE)
         self.minimax_h3_t2v_positive_input = QTextEdit()
@@ -3238,6 +3242,8 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_r2v_size_input.currentTextChanged,
             self.minimax_h3_t2v_remove_sound_input.checkStateChanged,
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
+            self.minimax_h3_t2v_fast_mode_input.checkStateChanged,
+            self.minimax_h3_i2v_fast_mode_input.checkStateChanged,
             self.minimax_h3_s2v_replace_speech_input.checkStateChanged,
             self.scene_upscale_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
@@ -3298,6 +3304,12 @@ class SceneEditorWindow(QMainWindow):
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_tabs)
         self.scene_type_combo.currentTextChanged.connect(self.update_scene_type_specific_fields)
         self.scene_type_combo.currentTextChanged.connect(self.update_run_action_buttons_state)
+        self.minimax_h3_t2v_fast_mode_input.toggled.connect(
+            self.update_minimax_h3_fast_mode_controls
+        )
+        self.minimax_h3_i2v_fast_mode_input.toggled.connect(
+            self.update_minimax_h3_fast_mode_controls
+        )
         self.minimax_h3_t2v_size_input.currentTextChanged.connect(
             self._sync_minimax_t2v_i2v_size
         )
@@ -3495,11 +3507,13 @@ class SceneEditorWindow(QMainWindow):
         minimax_t2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_2_input, 2, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 3, 1)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_fast_mode_input, 3, 2)
         minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 3, 3, Qt.AlignLeft)
         minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 4, 1, 1, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_generate_prompt_button, 5, 1, 1, 3, Qt.AlignLeft)
-        minimax_t2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_t2v_h3_cache_inputs), 6, 0, 1, 4)
+        self.minimax_h3_t2v_h3_cache_group = self._h3_cache_group(self.minimax_h3_t2v_h3_cache_inputs)
+        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_h3_cache_group, 6, 0, 1, 4)
         tabs.addTab(self.minimax_h3_t2v_tab, "MINIMAX-H3_T2V")
 
         self.minimax_h3_i2v_tab = QWidget()
@@ -3567,7 +3581,8 @@ class SceneEditorWindow(QMainWindow):
                 page_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
                 page_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 2, 3)
                 page_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 3, 1)
-                page_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 3, 2, 1, 2, Qt.AlignLeft)
+                page_layout.addWidget(self.minimax_h3_i2v_fast_mode_input, 3, 2)
+                page_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 3, 3, Qt.AlignLeft)
                 build_reference_box(stage_index, page_layout, 4)
                 prompt_row = 5
                 self.minimax_h3_i2v_prompt_label = QLabel("Prompt Positif")
@@ -3580,7 +3595,8 @@ class SceneEditorWindow(QMainWindow):
                 page_layout.addWidget(self.minimax_h3_i2v_prompt_label, prompt_row, 0)
                 page_layout.addWidget(self.minimax_h3_i2v_positive_input, prompt_row, 1, 1, 3)
                 page_layout.addWidget(self.minimax_h3_i2v_generate_prompt_button, prompt_row + 1, 1, 1, 3, Qt.AlignLeft)
-                page_layout.addWidget(self._h3_cache_group(self.minimax_h3_i2v_h3_cache_inputs), 9, 0, 1, 4)
+                self.minimax_h3_i2v_h3_cache_group = self._h3_cache_group(self.minimax_h3_i2v_h3_cache_inputs)
+                page_layout.addWidget(self.minimax_h3_i2v_h3_cache_group, 9, 0, 1, 4)
             else:
                 build_reference_box(stage_index, page_layout, 0)
                 prompt_input = self.minimax_h3_i2v_panjang_prompt_inputs[stage_index - 1]
@@ -3742,6 +3758,23 @@ class SceneEditorWindow(QMainWindow):
         tabs.addTab(self.agentic_tab, "Agentic")
         return tabs
 
+    def update_minimax_h3_fast_mode_controls(self, *_args):
+        scene_type = self.scene_type_combo.currentText().strip()
+        is_t2v_scene = scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
+        is_i2v_scene = scene_type in {
+            MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_SCENE_TYPE,
+            MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
+        }
+        if self.minimax_h3_t2v_h3_cache_group is not None:
+            self.minimax_h3_t2v_h3_cache_group.setVisible(
+                is_t2v_scene and not self.minimax_h3_t2v_fast_mode_input.isChecked()
+            )
+        if self.minimax_h3_i2v_h3_cache_group is not None:
+            self.minimax_h3_i2v_h3_cache_group.setVisible(
+                is_i2v_scene and not self.minimax_h3_i2v_fast_mode_input.isChecked()
+            )
+
     def update_scene_type_tabs(self):
         if self.editor_tabs is None:
             return
@@ -3827,6 +3860,7 @@ class SceneEditorWindow(QMainWindow):
                 self.editor_tabs.setTabVisible(index, visible)
         if current_widget and not visible_map.get(current_widget, True):
             self.editor_tabs.setCurrentWidget(self.meta_tab)
+        self.update_minimax_h3_fast_mode_controls()
         self.update_minimax_h3_i2v_panjang_prompt_enabled()
 
     def update_minimax_h3_i2v_panjang_prompt_enabled(self, *_args):
@@ -4618,7 +4652,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_t2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "fast_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
@@ -4633,7 +4667,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_i2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "fast_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 I2V",
         )
@@ -6446,6 +6480,12 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_remove_sound_input.setChecked(
                 bool(minimax_h3_i2v_prompt.get("remove_sound", False))
             )
+            self.minimax_h3_t2v_fast_mode_input.setChecked(
+                bool(minimax_h3_t2v_prompt.get("fast_mode", False))
+            )
+            self.minimax_h3_i2v_fast_mode_input.setChecked(
+                bool(minimax_h3_i2v_prompt.get("fast_mode", False))
+            )
             self._load_h3_cache_fields(
                 self.minimax_h3_t2v_h3_cache_inputs,
                 minimax_h3_t2v_prompt,
@@ -6736,6 +6776,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_name_2": t2v_lora_name_2,
             "lora_strength_2": t2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
+            "fast_mode": bool(self.minimax_h3_t2v_fast_mode_input.isChecked()),
             "h3_cache_enabled": (
                 self.minimax_h3_t2v_h3_cache_inputs["enabled"].isChecked()
                 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
@@ -6756,6 +6797,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_name_2": i2v_lora_name_2,
             "lora_strength_2": i2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
+            "fast_mode": bool(self.minimax_h3_i2v_fast_mode_input.isChecked()),
             "h3_cache_enabled": (
                 self.minimax_h3_i2v_h3_cache_inputs["enabled"].isChecked()
                 if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE}

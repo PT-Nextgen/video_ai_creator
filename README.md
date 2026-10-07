@@ -1371,6 +1371,15 @@ Setiap tab MiniMax H3 memiliki group `H3 Cache` di bawah prompt. Konfigurasi ini
 
 Checkbox `H3 Cache` disimpan sebagai `h3_cache_enabled` dan default-nya `true`. Jika dicentang, workflow memakai node `UC_MiniMaxH3Cache` dari API saat ini. Jika tidak dicentang, node Cache dihapus dari workflow in-memory sebelum dikirim ke ComfyUI; template API di disk tetap tidak berubah.
 
+#### Mode Cepat FastH3
+
+Tab MiniMax H3 T2V dan I2V menyediakan checkbox `Mode Cepat`. Nilainya disimpan sebagai `fast_mode` pada file prompt. Jika aktif, runtime memilih template FastH3 berikut:
+
+- T2V: `api_template/minimax_fasth3_t2v_api.json` melalui `minimax_h3_t2v/minimax_h3fast_t2v.py`;
+- I2V: `api_template/minimax_fasth3_i2v_api.json` melalui `minimax_h3_i2v/minimax_h3fast_i2v.py`.
+
+Mode ini hanya mengekspos prompt, durasi, resolusi, LoRA 1, dan LoRA 2. FastH3 selalu memakai 8 step dan FPS `24`; pengaturan jumlah step serta H3 Cache tidak digunakan dan group Cache disembunyikan di UI ketika Mode Cepat aktif. Untuk `minimax-h3_i2v-panjang`, satu `fast_mode` pada prompt root berlaku seragam untuk seluruh empat stage dan setiap `last_frame` tetap diinjeksi oleh runtime ke node `LoadImage` FastH3 pada stage berikutnya.
+
 Saat Cache dinonaktifkan, koneksi wajib tetap melewati LoRA 2:
 
 ```text
@@ -1455,12 +1464,13 @@ Scene type: `minimax-h3_i2v`
 - ukuran scene pada prompt JSON diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`; untuk `minimax-h3_t2v_i2v`, ukuran pada tab T2V menjadi sumber ukuran kedua stage
 - FPS workflow ditetapkan `24`; nilai FPS diterapkan ke node `132` dan expression frame node `134`
 - tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
+- checkbox `Mode Cepat` memilih workflow FastH3 tanpa mengubah schema prompt; FastH3 tetap memakai prompt bilingual dan dua LoRA yang sama
 
 ## MiniMax H3 I2V Panjang Workflow
 
 Scene type: `minimax-h3_i2v-panjang`
 
-- workflow dasar setiap stage memakai `api_template/minimax_h3_i2v_api.json`
+- workflow dasar setiap stage memakai `api_template/minimax_h3_i2v_api.json`; jika `fast_mode` aktif, semua stage memakai `api_template/minimax_fasth3_i2v_api.json`
 - input awal berasal dari gambar terbaru di root scene
 - setelah stage selesai, frame terakhir diekstrak dan di-upload kembali sebagai input stage berikutnya
 - jumlah stage adalah `continuations + 1`, dengan maksimum 4 stage
@@ -1488,6 +1498,7 @@ Scene type: `minimax-h3_i2v-panjang`
 - untuk partial run, segment video dari proses sebelum `run_start_stage` harus sudah ada; file frame terakhir akan digunakan jika ada atau dibuat ulang dari segment tersebut
 - setiap proses yang selesai selalu menyimpan frame terakhirnya agar dapat dipakai sebagai referensi pada run berikutnya
 - setiap item memakai schema I2VA dan `mode: "I2VA"`
+- FastH3 I2V tetap menginjeksi `last_frame` secara dinamis pada setiap stage lanjutan; FastH3 memakai 8 step, tanpa H3 Cache atau pengaturan Steps
 - setiap prompt lanjutan diterjemahkan secara runtime jika `id_new` berbeda dari `id_old` atau `en` belum valid
 - semua segment yang tersedia digabung berurutan menjadi `minimax_h3_i2v_panjang_final.mp4`, terlepas dari nilai `continuations` atau `run_start_stage`
 - color match dilakukan setelah seluruh stage digabung, menggunakan frame pertama video gabungan sebagai referensi
