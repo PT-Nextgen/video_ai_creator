@@ -39,6 +39,7 @@ AUDIO_EXTS = ('.m4a', '.wav', '.mp3')
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
 COMFY_AUDIO_SOURCE_DIRNAME = '.comfy_audio_source'
 COMFY_AUDIO_SOURCE_FILENAME = 'audio.wav'
+AUDIO_COMPOSED_MARKER_FILENAME = 'audio_composed.json'
 
 # Background music volume for final merged video (0.0 to 1.0)
 BACKGROUND_MUSIC_VOLUME = 0.3
@@ -68,6 +69,68 @@ def _load_scene_meta_runtime(scene_dir: str) -> dict:
             return resolved_meta
         except Exception:
             return {}
+
+
+def _audio_composed_marker_path(scene_dir: str) -> str:
+    return os.path.join(str(scene_dir), AUDIO_COMPOSED_MARKER_FILENAME)
+
+
+def load_audio_composed_marker(scene_dir: str) -> dict:
+    """Load the durable per-scene audio marker outside scene_meta.json."""
+    marker_path = _audio_composed_marker_path(scene_dir)
+    if not os.path.isfile(marker_path):
+        return {}
+    try:
+        with open(marker_path, 'r', encoding='utf-8-sig') as marker_file:
+            data = json.load(marker_file)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.warning('Failed to read audio-composed marker %s: %s', marker_path, exc)
+        return {}
+
+
+def is_audio_composed_for_video(scene_dir: str, video_path: str | None) -> bool:
+    """Return true only when the marker belongs to the selected latest video."""
+    if not video_path or not os.path.isfile(video_path):
+        return False
+    marker = load_audio_composed_marker(scene_dir)
+    if marker.get('audio_composed') is not True:
+        return False
+    marked_video = str(marker.get('audio_composed_video', '') or '').strip()
+    return bool(marked_video) and marked_video == os.path.basename(video_path)
+
+
+def write_audio_composed_marker(scene_dir: str, video_path: str, components=None) -> str:
+    """Atomically record that one specific scene video already contains its mix."""
+    marker_path = _audio_composed_marker_path(scene_dir)
+    temp_path = f'{marker_path}.tmp'
+    payload = {
+        'audio_composed': True,
+        'audio_composed_video': os.path.basename(video_path),
+        'audio_composed_components': list(components or [
+            'comfyui_audio_if_preserved',
+            'scene_voice',
+        ]),
+    }
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as marker_file:
+            json.dump(payload, marker_file, ensure_ascii=False, indent=2)
+            marker_file.write('\n')
+        os.replace(temp_path, marker_path)
+    finally:
+        if os.path.isfile(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+    return marker_path
+
+
+def clear_audio_composed_marker(scene_dir: str) -> None:
+    """Remove a marker before a newly generated video is finalized."""
+    marker_path = _audio_composed_marker_path(scene_dir)
+    if os.path.isfile(marker_path):
+        os.remove(marker_path)
 
 
 def _safe_filename_segment(text: str) -> str:
@@ -1480,9 +1543,8 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 'minimax-h3_i2v-panjang',
                 'minimax-h3_t2v_i2v',
             }
-            audio_composed = bool(scene_meta.get('audio_composed', False))
-
             latest_video = _get_latest_scene_video(scene_dir)
+            audio_composed = is_audio_composed_for_video(scene_dir, latest_video)
 
             # Per-scene mode always uses one latest root video. It never
             # concatenates older generations or creates combined_all.mp4.

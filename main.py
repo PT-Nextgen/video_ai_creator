@@ -81,14 +81,17 @@ from minimax_h3_r2v.minimax_h3_r2v import (
 )
 from logging_config import setup_logging, get_logger, write_log, RUN_ID
 from scripts.generate_compose import (
+    AUDIO_COMPOSED_MARKER_FILENAME,
     COMFY_AUDIO_SOURCE_DIRNAME,
     COMFY_AUDIO_SOURCE_FILENAME,
+    clear_audio_composed_marker,
     compose_scene,
     ffprobe_duration,
     ffprobe_fps,
     ffprobe_has_audio,
     ffprobe_size,
     run as run_ffmpeg,
+    write_audio_composed_marker,
 )
 from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
@@ -460,6 +463,13 @@ def _invalidate_comfy_audio_source(scene_dir: str):
             write_log(f"Invalidated stale ComfyUI audio source: {source_path}")
         except OSError as e:
             raise RuntimeError(f"Failed to invalidate ComfyUI audio source: {source_path}: {e}")
+    marker_path = os.path.join(str(scene_dir), AUDIO_COMPOSED_MARKER_FILENAME)
+    if os.path.isfile(marker_path):
+        try:
+            clear_audio_composed_marker(scene_dir)
+            write_log(f"Invalidated stale audio-composed marker: {marker_path}")
+        except OSError as e:
+            raise RuntimeError(f"Failed to invalidate audio-composed marker: {marker_path}: {e}")
 
 
 def _prepare_minimax_h3_i2v_prompt_for_run(prompt: dict, duration: float, *, include_last_frame: bool = False) -> dict:
@@ -582,9 +592,8 @@ def process_scene(scene_dir, server):
             preserve_comfy_audio=preserve_comfy_audio,
         ):
             return False
-        # The four audio/video scene types below are fully mixed here.  Keep a
-        # durable marker so the later project-level compose step can preserve
-        # this audio instead of mixing the same scene files a second time.
+        # These audio/video scene types are fully mixed here. Keep the marker
+        # in a separate file so UI saves of scene_meta.json cannot erase it.
         if compose_audio and scene_type in {
             'wan22',
             'wan22_i2v',
@@ -595,22 +604,17 @@ def process_scene(scene_dir, server):
             'minimax-h3_t2v_i2v',
         }:
             try:
-                meta_path = os.path.join(scene_dir, 'scene_meta.json')
-                with open(meta_path, 'r', encoding='utf-8') as meta_file:
-                    current_meta = json.load(meta_file)
-                current_meta['audio_composed'] = True
-                current_meta['audio_composed_video'] = os.path.basename(video_path)
-                current_meta['audio_composed_components'] = [
-                    'comfyui_audio_if_preserved',
-                    'scene_voice',
-                ]
-                temp_meta_path = f'{meta_path}.__audio_composed_tmp__'
-                with open(temp_meta_path, 'w', encoding='utf-8') as meta_file:
-                    json.dump(current_meta, meta_file, ensure_ascii=False, indent=2)
-                    meta_file.write('\n')
-                os.replace(temp_meta_path, meta_path)
+                marker_path = write_audio_composed_marker(
+                    scene_dir,
+                    video_path,
+                    components=[
+                        'comfyui_audio_if_preserved',
+                        'scene_voice',
+                    ],
+                )
+                write_log(f"Marked scene audio as composed: {marker_path}")
             except Exception as e:
-                write_log(f"Failed to mark composed scene audio for {scene_dir}: {e}")
+                write_log(f"Failed to write composed scene audio marker for {scene_dir}: {e}")
                 return False
         # Caption is intentionally deferred until project-level final compose,
         # after all scenes are merged and the optional final upscale is done.
