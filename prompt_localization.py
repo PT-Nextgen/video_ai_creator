@@ -1,5 +1,7 @@
 import copy
+import base64
 import json
+import mimetypes
 import os
 import ast
 import logging
@@ -70,6 +72,26 @@ RUNTIME_PROMPTS_BY_SCENE_TYPE = {
 
 LOGGER = logging.getLogger(__name__)
 
+QWEN_IMAGE_EDIT_SYSTEM_PROMPT_URL = (
+    "https://github.com/QwenLM/Qwen-Image-2.1/blob/main/prompt_rewrite/prompts/system_prompt_edit.txt"
+)
+QWEN_IMAGE_EDIT_SYSTEM_PROMPT_PATH = (
+    Path(__file__).resolve().parent / "qwen_image_edit" / "system_prompt_edit.txt"
+)
+
+
+def _load_qwen_image_edit_system_prompt() -> str:
+    try:
+        prompt = QWEN_IMAGE_EDIT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(
+            "System prompt Qwen Image Edit tidak ditemukan: "
+            f"{QWEN_IMAGE_EDIT_SYSTEM_PROMPT_PATH}"
+        ) from exc
+    if not prompt:
+        raise RuntimeError("System prompt Qwen Image Edit kosong.")
+    return prompt
+
 _MINIMAX_DIALOGUE_BLOCK_PATTERN = re.compile(r"<d>.*?</d>", re.IGNORECASE | re.DOTALL)
 
 
@@ -134,6 +156,7 @@ def format_llm_runtime_log(
 
 PROMPT_TOP_LEVEL_FIELDS = {
     "z_image_prompt.json": ["positive_prompt", "negative_prompt"],
+    "qwen_image_edit_prompt.json": ["positive_prompt", "negative_prompt"],
     "wan22_i2v_prompt.json": [
         "positive_prompt_one",
         "negative_prompt_one",
@@ -232,6 +255,7 @@ class GeminiPromptTranslator:
         text: str,
         timeout: int = LLM_CALL_TIMEOUT_SECONDS,
         phase: str = "call",
+        image_parts: list[dict] | None = None,
     ) -> str:
         if not self.api_key:
             raise RuntimeError(
@@ -242,13 +266,15 @@ class GeminiPromptTranslator:
             f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             f"?key={self.api_key}"
         )
+        parts = [
+            {"text": instruction},
+            {"text": text},
+        ]
+        parts.extend(image_parts or [])
         payload = {
             "contents": [
                 {
-                    "parts": [
-                        {"text": instruction},
-                        {"text": text},
-                    ]
+                    "parts": parts,
                 }
             ],
             "generationConfig": {},
@@ -415,6 +441,25 @@ class GeminiPromptTranslator:
         )
         return translated or text
 
+def _load_qwen_multimodal_image_payloads(image_paths: list[str | Path]) -> list[dict]:
+    payloads = []
+    for index, raw_path in enumerate(image_paths, start=1):
+        path = Path(raw_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Gambar referensi Qwen tidak ditemukan: {path}")
+        mime_type = mimetypes.guess_type(path.name)[0] or ""
+        if not mime_type.startswith("image/"):
+            raise ValueError(f"File referensi Qwen bukan gambar: {path.name}")
+        payloads.append(
+            {
+                "label": f"<image{index}>",
+                "name": path.name,
+                "mime_type": mime_type,
+                "base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            }
+        )
+    return payloads
+
 
 class PromptTranslator:
     def __init__(
@@ -461,6 +506,7 @@ class PromptTranslator:
         prompt_text: str,
         timeout: int = LOCAL_LLM_TIMEOUT_SECONDS,
         phase: str = "generate_prompt_to_english",
+        image_parts: list[dict] | None = None,
     ) -> str:
         ensure_llama(reason=f"prompt localization phase={phase}")
         host = self.prompt_generation_host
@@ -468,9 +514,12 @@ class PromptTranslator:
         base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
         server_base_url = f"{base_url.rstrip('/')}:{port}"
         is_translation_phase = str(phase or "").strip().lower().startswith("translate")
+        message_content = prompt_text
+        if image_parts:
+            message_content = [{"type": "text", "text": prompt_text}, *image_parts]
         chat_payload = {
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt_text}],
+            "messages": [{"role": "user", "content": message_content}],
             "stream": False,
             "reasoning_effort": (
                 LOCAL_TRANSLATE_REASONING_EFFORT
@@ -478,7 +527,11 @@ class PromptTranslator:
                 else LOCAL_PROMPT_REASONING_EFFORT
             ),
         }
-        if phase in {"generate_prompt_multilang", "translate_minimax_json"}:
+        if phase in {
+            "generate_prompt_multilang",
+            "generate_qwen_image_edit_prompt_multimodal",
+            "translate_minimax_json",
+        }:
             chat_payload["response_format"] = {"type": "json_object"}
         url = f"{server_base_url}/v1/chat/completions"
         start_time = time.perf_counter()
@@ -488,7 +541,11 @@ class PromptTranslator:
             if response.status_code >= 400:
                 raise RuntimeError(f"HTTP {response.status_code}: {response.text[:400]}")
             response_payload = response.json()
-            prefer_json = phase in {"generate_prompt_multilang", "translate_minimax_json"}
+            prefer_json = phase in {
+                "generate_prompt_multilang",
+                "generate_qwen_image_edit_prompt_multimodal",
+                "translate_minimax_json",
+            }
             generated_text = _extract_best_openai_compatible_text(
                 response_payload,
                 prefer_json=prefer_json,
@@ -545,6 +602,106 @@ class PromptTranslator:
             )
         )
         return generated_text
+
+    def generate_qwen_image_edit_prompt_multimodal(
+        self,
+        prompt_text: str,
+        image_paths: list[str | Path],
+    ) -> dict:
+        """Generate the Qwen Image Edit positive prompt from ordered images.
+
+        This is intentionally a dedicated multimodal path. Existing prompt
+        generation methods remain text-only and keep their current payloads.
+        """
+        prompt_text = _clean_text(prompt_text)
+        if not prompt_text:
+            raise ValueError("Instruksi prompt Qwen Image Edit tidak boleh kosong.")
+        references = _load_qwen_multimodal_image_payloads(image_paths)
+        if not references:
+            raise ValueError("Minimal satu gambar referensi Qwen harus dipilih.")
+
+        qwen_system_prompt = _load_qwen_image_edit_system_prompt()
+        manifest = "\n".join(
+            f"{item['label']} = {item['name']} (attached image {index + 1})"
+            for index, item in enumerate(references)
+        )
+        output_contract = (
+            "APPLICATION OUTPUT CONTRACT — this contract is authoritative for this integration.\n"
+            "Apply all image-analysis, preservation, multi-image labeling, and editing rules from the Qwen system prompt above.\n"
+            "Override only its original output field names and output-size metadata for this call.\n"
+            "Do not return `rewritten_prompt`, `wh_ratio`, or `ratio_follow`.\n"
+            "Return a valid JSON object with exactly these three string keys and no other keys:\n"
+            "{\"en\":\"...\",\"id_new\":\"...\",\"id_old\":\"...\"}\n"
+            "`en` must contain the complete rewritten editing instruction in natural English.\n"
+            "`id_new` must contain the complete equivalent rewritten editing instruction in natural Indonesian.\n"
+            "`id_old` must be an exact copy of `id_new`; this is a newly generated prompt record, so both Indonesian fields start synchronized.\n"
+            "Keep every valid `<imageN>` label exactly as assigned in the ordered image manifest.\n"
+            "Output JSON only: no markdown fences, explanations, or text outside the JSON object."
+        )
+        user_payload = (
+            "ORDERED IMAGE MANIFEST:\n"
+            f"{manifest}\n\n"
+            "USER INSTRUCTION FROM UI:\n"
+            f"{prompt_text}"
+        )
+        model_instruction = f"{qwen_system_prompt}\n\n{output_contract}"
+        if self.prompt_generation_provider == "gemini":
+            image_parts = [
+                {
+                    "inline_data": {
+                        "mime_type": item["mime_type"],
+                        "data": item["base64"],
+                    }
+                }
+                for item in references
+            ]
+            response_text = self._gemini._call_text_model(
+                self.prompt_generation_model_name,
+                model_instruction,
+                user_payload,
+                timeout=LLM_CALL_TIMEOUT_SECONDS,
+                phase="generate_qwen_image_edit_prompt_multimodal",
+                image_parts=image_parts,
+            )
+            self.last_call_metrics = self._gemini.last_call_metrics
+        else:
+            image_parts = [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{item['mime_type']};base64,{item['base64']}"
+                    },
+                }
+                for item in references
+            ]
+            response_text = self._call_local_text_model(
+                self.prompt_generation_model_name,
+                f"{model_instruction}\n\n{user_payload}",
+                timeout=LOCAL_LLM_TIMEOUT_SECONDS,
+                phase="generate_qwen_image_edit_prompt_multimodal",
+                image_parts=image_parts,
+            )
+
+        parsed = _parse_qwen_image_edit_prompt_response(response_text)
+        english = _clean_text(parsed.get("en"))
+        indonesian = _clean_text(parsed.get("id_new"))
+        old_indonesian = _clean_text(parsed.get("id_old"))
+        if not english or not indonesian or not old_indonesian:
+            raise RuntimeError(
+                "LLM tidak mengembalikan JSON Qwen lengkap dengan `en`, `id_new`, dan `id_old`."
+            )
+        allowed_labels = {item["label"] for item in references}
+        for value in (english, indonesian, old_indonesian):
+            used_labels = set(re.findall(r"<image\d+>", value, flags=re.IGNORECASE))
+            invalid_labels = used_labels - allowed_labels
+            if invalid_labels:
+                raise RuntimeError(
+                    "LLM menggunakan label gambar yang tidak tersedia: "
+                    + ", ".join(sorted(invalid_labels))
+                )
+        if old_indonesian != indonesian:
+            raise RuntimeError("LLM mengembalikan `id_old` yang berbeda dari `id_new` Qwen.")
+        return {"en": english, "id_new": indonesian, "id_old": old_indonesian}
 
     def translate_to_english(self, text: str, context: str = "") -> str:
         text = _clean_text(text)
@@ -1034,6 +1191,25 @@ def _parse_json_object_response(text: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _parse_qwen_image_edit_prompt_response(text: str) -> dict:
+    payload = _parse_json_object_response(text)
+    if not payload:
+        return {"en": "", "id_new": "", "id_old": ""}
+
+    # `rewritten_prompt` is accepted only as a compatibility fallback if a
+    # model follows the upstream Qwen schema instead of this pipeline's
+    # multilingual schema. The request still explicitly requires en/id_new/
+    # id_old, and the caller validates the required values below.
+    english = _clean_text(payload.get("en") or payload.get("rewritten_prompt"))
+    indonesian = _clean_text(payload.get("id_new") or payload.get("id"))
+    old_indonesian = _clean_text(payload.get("id_old")) or indonesian
+    return {
+        "en": english,
+        "id_new": indonesian,
+        "id_old": old_indonesian,
+    }
+
+
 def _extract_json_text_candidate(text: str) -> str:
     raw = _strip_markdown_code_fences(text)
     if not raw:
@@ -1283,10 +1459,84 @@ def _normalize_prompt_entry(value) -> I18NPrompt:
 
 
 def _prompt_entry_for_save(existing_value, new_value) -> dict:
-    existing = _normalize_prompt_entry(existing_value)
     new_text = _normalize_prompt_entry(new_value).id_new
-    old_text = existing.id_old if existing.id_old else new_text
-    return {"id_old": old_text, "id_new": new_text, "en": existing.en}
+    is_structured = isinstance(existing_value, dict) and any(
+        key in existing_value for key in ("id_old", "id_new", "en")
+    )
+    if not is_structured:
+        return {"id_old": "", "id_new": new_text, "en": ""}
+
+    return {
+        "id_old": copy.deepcopy(existing_value.get("id_old", "")),
+        "id_new": new_text,
+        "en": copy.deepcopy(existing_value.get("en", "")),
+    }
+
+
+def _qwen_prompt_entry_for_save(existing_value, new_value) -> dict:
+    """Preserve Qwen translation markers without inventing id_old on first save."""
+    new_value = new_value if isinstance(new_value, dict) else str(new_value or "")
+    if isinstance(new_value, dict):
+        new_text = _clean_text(
+            new_value.get("id_new")
+            or new_value.get("id_old")
+            or new_value.get("en")
+            or ""
+        )
+    else:
+        new_text = _clean_text(new_value)
+
+    if isinstance(existing_value, dict) and any(
+        key in existing_value for key in ("id_old", "id_new", "en")
+    ):
+        old_text = _clean_text(existing_value.get("id_old", ""))
+        english_text = _clean_text(existing_value.get("en", ""))
+    else:
+        # A new Qwen prompt must enter localization as id_new-only.  The
+        # runtime will then translate it because id_old is empty and en is
+        # empty.
+        old_text = ""
+        english_text = ""
+    return {"id_old": old_text, "id_new": new_text, "en": english_text}
+
+
+def _qwen_prompt_entry_for_runtime(
+    existing_value,
+    translate_fn: Callable[[str], str] | None,
+    log_fn: Callable[[str], None] | None = None,
+) -> tuple[dict, str, bool]:
+    """Resolve Qwen prompts without backfilling empty translation markers."""
+    if isinstance(existing_value, dict) and any(
+        key in existing_value for key in ("id_old", "id_new", "en")
+    ):
+        old_text = _clean_text(existing_value.get("id_old", ""))
+        new_text = _clean_text(existing_value.get("id_new", ""))
+        english_text = _clean_text(existing_value.get("en", ""))
+    else:
+        new_text = _clean_text(existing_value)
+        old_text = ""
+        english_text = ""
+
+    should_translate = bool(new_text) and (old_text != new_text or not english_text)
+    if should_translate:
+        try:
+            if translate_fn is None:
+                translate_fn = get_prompt_translator().translate_to_english
+            english_text = _clean_text(translate_fn(new_text))
+            old_text = new_text
+            changed = True
+        except Exception as exc:
+            if log_fn:
+                log_fn(f"Gagal translate prompt Qwen: {exc}")
+            changed = False
+    else:
+        changed = False
+
+    normalized = {"id_old": old_text, "id_new": new_text, "en": english_text}
+    if isinstance(existing_value, dict) and existing_value != normalized:
+        changed = True
+    runtime_text = english_text or new_text
+    return normalized, runtime_text, changed
 
 
 def _prompt_entry_for_runtime(
@@ -1294,8 +1544,22 @@ def _prompt_entry_for_runtime(
     translate_fn: Callable[[str], str] | None,
     log_fn: Callable[[str], None] | None = None,
 ) -> tuple[dict, str, bool]:
-    existing = _normalize_prompt_entry(existing_value)
-    changed = not isinstance(existing_value, dict)
+    is_structured = isinstance(existing_value, dict) and any(
+        key in existing_value for key in ("id_old", "id_new", "en")
+    )
+    if is_structured:
+        existing = I18NPrompt(
+            id_old=_clean_text(existing_value.get("id_old", "")),
+            id_new=_clean_text(existing_value.get("id_new", "")),
+            en=_clean_text(existing_value.get("en", "")),
+        )
+    else:
+        existing = I18NPrompt(
+            id_old="",
+            id_new=_clean_text(existing_value),
+            en="",
+        )
+    changed = not is_structured
     should_translate = bool(existing.id_new) and (existing.id_old != existing.id_new or not existing.en)
     if should_translate:
         try:
@@ -1493,6 +1757,14 @@ def prepare_prompt_payload_for_save(filename: str, data: dict, existing_data: di
             result = normalize_minimax_prompt_payload(result, mode)
         return result
 
+    if filename == "qwen_image_edit_prompt.json":
+        for key in _top_level_fields_for(filename):
+            result[key] = _qwen_prompt_entry_for_save(
+                existing.get(key),
+                result.get(key),
+            )
+        return result
+
     for key in _top_level_fields_for(filename):
         result[key] = _prompt_entry_for_save(existing.get(key), result.get(key))
 
@@ -1651,9 +1923,18 @@ def resolve_prompt_payload_for_runtime(
             stored["positive_prompt"] = structured
             return resolved, stored, changed
 
+    runtime_entry_resolver = (
+        _qwen_prompt_entry_for_runtime
+        if filename == "qwen_image_edit_prompt.json"
+        else _prompt_entry_for_runtime
+    )
     for key in _top_level_fields_for(filename):
         entry_value = source.get(key)
-        stored_entry, runtime_text, entry_changed = _prompt_entry_for_runtime(entry_value, file_translate_fn, log_fn=log_fn)
+        stored_entry, runtime_text, entry_changed = runtime_entry_resolver(
+            entry_value,
+            file_translate_fn,
+            log_fn=log_fn,
+        )
         stored[key] = stored_entry
         resolved[key] = runtime_text
         changed = changed or entry_changed

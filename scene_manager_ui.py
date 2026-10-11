@@ -29,7 +29,7 @@ from wan22_s2v.wan22_s2v import DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT
 from wan22_s2v.wan22_s2v import MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION
 from wan22_s2v.wan22_s2v import SIZE_OPTIONS as WAN22_S2V_SIZE_OPTIONS
 from wan22_s2v.wan22_s2v import get_audio_duration as get_wan22_s2v_audio_duration
-from flux2.flux2 import MODEL_FLUX2, MODEL_FLUX2_K9
+from flux2.flux2 import MODEL_FLUX2
 from z_image.z_image import IMAGE_MODEL_OPTIONS, MODEL_Z_IMAGE_TURBO
 from z_image.z_image import DEFAULT_PROMPT as DEFAULT_Z_IMAGE_PROMPT
 from z_image.z_image import SIZE_OPTIONS as Z_IMAGE_SIZES
@@ -37,6 +37,11 @@ from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
+from qwen_image_edit.qwen_image_edit import (
+    DEFAULT_PROMPT as QWEN_IMAGE_EDIT_DEFAULT_PROMPT,
+    MAX_REFERENCE_IMAGES as QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES,
+    SIZE_OPTIONS as QWEN_IMAGE_EDIT_SIZE_OPTIONS,
+)
 from gemini.gemini_tts import (
     GEMINI_TTS_MODEL_ID_EXTENDED,
     GEMINI_TTS_MODEL_OPTIONS,
@@ -64,6 +69,7 @@ from minimax_h3_r2v.minimax_h3_r2v import (
     DEFAULT_R2V_PROMPT as DEFAULT_MINIMAX_H3_R2V_PROMPT,
     DEFAULT_H3_CACHE as DEFAULT_MINIMAX_H3_R2V_CACHE,
     MAX_AUDIO_DURATION as MINIMAX_H3_S2V_MAX_AUDIO_DURATION,
+    MAX_IMAGE_REFERENCES as MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES,
     MAX_DURATION as MINIMAX_H3_R2V_MAX_DURATION,
     SIZE_OPTIONS as MINIMAX_H3_S2V_SIZE_OPTIONS,
     get_audio_duration as get_minimax_h3_s2v_audio_duration,
@@ -120,6 +126,7 @@ MUSIC_DIR = ROOT / "music"
 MAIN_SCRIPT = ROOT / "main.py"
 INITIAL_IMAGE_SCRIPT = ROOT / "scripts" / "generate_initial_image.py"
 IMAGE_EDIT_SCRIPT = ROOT / "scripts" / "generate_image_edit.py"
+QWEN_IMAGE_EDIT_SCRIPT = ROOT / "scripts" / "generate_qwen_image_edit.py"
 VOICE_SCRIPT = ROOT / "scripts" / "generate_voice.py"
 CAPTION_SCRIPT = ROOT / "scripts" / "generate_caption.py"
 COMPOSE_SCRIPT = ROOT / "scripts" / "generate_compose.py"
@@ -184,6 +191,7 @@ DEFAULT_IMAGE_EDIT_PROMPT = {
         {"source_image": "", "prompt": ""},
     ],
 }
+DEFAULT_QWEN_IMAGE_EDIT_PROMPT = copy.deepcopy(QWEN_IMAGE_EDIT_DEFAULT_PROMPT)
 DEFAULT_Z_IMAGE_EXTRA_PROMPTS = {
     "groups": [
         {"positive_prompt": "", "negative_prompt": ""},
@@ -201,7 +209,6 @@ DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS = {
 
 LORA_PREFIX_Z_IMAGE = "Z-IMAGE"
 LORA_PREFIX_FLUX2 = "FLUX.2"
-LORA_PREFIX_FLUX2_K9 = "FLUX.2.K9"
 LORA_PREFIX_WAN_HIGH = "WAN2.2/HIGH"
 LORA_PREFIX_WAN_LOW = "WAN2.2/LOW"
 LORA_PREFIX_MINIMAX_H3 = "MINIMAX-H3"
@@ -412,12 +419,6 @@ def _collect_scene_lora_defaults(server: str, z_prompt: dict, wan_t2v_prompt: di
     z_model = str(z_prompt.get("image_model", MODEL_Z_IMAGE_TURBO)).strip().lower()
     if z_model == MODEL_GEMINI_IMAGE:
         z_prompt["lora_name"] = ""
-    elif z_model == MODEL_FLUX2_K9:
-        z_prompt["lora_name"] = choose_lora_value(
-            get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2_K9),
-            z_prompt.get("lora_name", ""),
-            str(z_prompt.get("lora_name", "")),
-        )
     elif z_model == MODEL_FLUX2:
         z_prompt["lora_name"] = choose_lora_value(
             get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2),
@@ -701,6 +702,7 @@ def create_scene_files(
     minimax_h3_s2v_prompt=None,
     minimax_h3_r2v_prompt=None,
     minimax_h3_i2v_panjang_prompt=None,
+    qwen_image_edit_prompt=None,
 ):
     scene_dir.mkdir(parents=True, exist_ok=True)
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
@@ -720,6 +722,7 @@ def create_scene_files(
         image_zoom_prompt=image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT,
         web_search_prompt=web_search_prompt or DEFAULT_WEB_SEARCH_PROMPT,
         image_edit_prompt=image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT,
+        qwen_image_edit_prompt=qwen_image_edit_prompt or DEFAULT_QWEN_IMAGE_EDIT_PROMPT,
         z_image_extra_prompts=z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS,
         t2v_batch_extra_prompts=t2v_batch_extra_prompts or DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS,
         minimax_h3_t2v_prompt=minimax_h3_t2v_prompt or DEFAULT_MINIMAX_H3_T2V_PROMPT,
@@ -759,6 +762,7 @@ def sync_scene_prompt_files(
     minimax_h3_s2v_prompt: dict | None = None,
     minimax_h3_r2v_prompt: dict | None = None,
     minimax_h3_i2v_panjang_prompt: dict | None = None,
+    qwen_image_edit_prompt: dict | None = None,
 ):
     """Ensure prompt JSON files exist according to selected scene type.
 
@@ -777,6 +781,10 @@ def sync_scene_prompt_files(
     write_prompt_json(scene_dir / "image_zoom_prompt.json", image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT)
     write_prompt_json(scene_dir / "web_search_prompt.json", web_search_prompt or DEFAULT_WEB_SEARCH_PROMPT)
     write_prompt_json(scene_dir / "image_edit_prompt.json", image_edit_prompt or DEFAULT_IMAGE_EDIT_PROMPT)
+    write_prompt_json(
+        scene_dir / "qwen_image_edit_prompt.json",
+        qwen_image_edit_prompt or DEFAULT_QWEN_IMAGE_EDIT_PROMPT,
+    )
     write_prompt_json(scene_dir / "z_image_extra_prompts.json", z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
     write_prompt_json(scene_dir / "wan22_t2v_batch_extra_prompts.json", t2v_batch_extra_prompts or DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS)
     write_prompt_json(
@@ -906,12 +914,6 @@ def create_project_on_disk(
         cover_model = str(cover_data.get("image_model", MODEL_Z_IMAGE_TURBO)).strip().lower()
         if cover_model == MODEL_GEMINI_IMAGE:
             cover_data["lora_name"] = ""
-        elif cover_model == MODEL_FLUX2_K9:
-            cover_data["lora_name"] = choose_lora_value(
-                get_lora_options_by_prefix(comfyui_server, LORA_PREFIX_FLUX2_K9),
-                cover_data.get("lora_name", ""),
-                str(cover_data.get("lora_name", "")),
-            )
         elif cover_model == MODEL_FLUX2:
             cover_data["lora_name"] = choose_lora_value(
                 get_lora_options_by_prefix(comfyui_server, LORA_PREFIX_FLUX2),
@@ -1139,6 +1141,13 @@ def _prompt_text_for_validation(value) -> str:
     return str(value or "").strip()
 
 
+def _validate_minimax_mode_flags(prompt: dict | None, label: str, issues: list[str]):
+    if not isinstance(prompt, dict):
+        return
+    if bool(prompt.get("fast_mode", False)) and bool(prompt.get("special_mode", False)):
+        issues.append(f"{label}: Mode Cepat dan Mode Khusus tidak boleh aktif bersamaan.")
+
+
 def validate_scene_data(
     meta: dict,
     z_prompt: dict,
@@ -1198,6 +1207,8 @@ def validate_scene_data(
         if not str(wan_t2v_prompt.get("positive_prompt", "")).strip():
             issues.append("Prompt positif WAN22 T2V wajib diisi.")
     if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE:
+        _validate_minimax_mode_flags(minimax_h3_t2v_prompt, "MiniMax H3 T2V", issues)
+        _validate_minimax_mode_flags(minimax_h3_i2v_prompt, "MiniMax H3 I2V", issues)
         try:
             duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
@@ -1211,6 +1222,11 @@ def validate_scene_data(
         if duration_value > 15 and not _prompt_text_for_validation(minimax_h3_i2v_prompt.get("positive_prompt")):
             issues.append("Prompt positif MiniMax H3 I2V wajib diisi untuk durasi di atas 15 detik.")
     if scene_type in {MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE}:
+        _validate_minimax_mode_flags(
+            minimax_h3_i2v_panjang_prompt if scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE else minimax_h3_i2v_prompt,
+            "MiniMax H3 I2V-Panjang" if scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE else "MiniMax H3 I2V",
+            issues,
+        )
         try:
             duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
@@ -1286,6 +1302,7 @@ def validate_scene_data(
             if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
                 issues.append("Adegan MiniMax H3 I2V membutuhkan minimal satu gambar lokal di folder scene.")
     if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
+        _validate_minimax_mode_flags(minimax_h3_r2v_prompt, "MiniMax H3 R2V", issues)
         try:
             duration_value = float(meta.get("duration_seconds", 0))
         except Exception:
@@ -1303,8 +1320,10 @@ def validate_scene_data(
         images = [str(value).strip() for value in references.get("images", []) if str(value).strip()]
         audios = [str(value).strip() for value in references.get("audios", []) if str(value).strip()]
         video = str(references.get("video", "")).strip()
-        if len(images) > 3 or len(audios) > 3:
-            issues.append("Reference R2V melebihi batas: maksimal 3 image, 3 audio, dan 1 video.")
+        if len(images) > MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES or len(audios) > 3:
+            issues.append(
+                f"Reference R2V melebihi batas: maksimal {MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES} image, 3 audio, dan 1 video."
+            )
         if not images and not audios and not video:
             issues.append("Scene MiniMax H3 R2V membutuhkan minimal satu reference image, audio, atau video.")
         if scene_dir:
@@ -1345,6 +1364,7 @@ def validate_scene_data(
                 if duration >= WAN22_S2V_MAX_AUDIO_DURATION:
                     issues.append(f"Durasi audio speech WAN22 S2V harus kurang dari {WAN22_S2V_MAX_AUDIO_DURATION} detik.")
     if scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
+        _validate_minimax_mode_flags(s2v_prompt, "MiniMax H3 S2V", issues)
         if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
             issues.append("Adegan MiniMax H3 S2V membutuhkan minimal satu gambar di root folder scene.")
         speech_asset = find_latest_speech_asset(scene_dir) if scene_dir else None
@@ -1685,11 +1705,18 @@ class PromptGenerationWorker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, prompt_text: str, context_text: str, project_dir: str = ""):
+    def __init__(
+        self,
+        prompt_text: str,
+        context_text: str,
+        project_dir: str = "",
+        multimodal_image_paths: list[str] | None = None,
+    ):
         super().__init__()
         self.prompt_text = prompt_text
         self.context_text = context_text
         self.project_dir = str(project_dir or "").strip()
+        self.multimodal_image_paths = [str(path) for path in (multimodal_image_paths or [])]
 
     def run(self):
         translator = None
@@ -1702,13 +1729,20 @@ class PromptGenerationWorker(QObject):
             self.progress.emit(
                 f"Membuat prompt multibahasa via {provider_name}" + (f" ({model_name})..." if model_name else "...")
             )
-            result = translator.generate_prompt_multilang(self.prompt_text, context=self.context_text)
+            if self.multimodal_image_paths:
+                result = translator.generate_qwen_image_edit_prompt_multimodal(
+                    self.prompt_text,
+                    self.multimodal_image_paths,
+                )
+            else:
+                result = translator.generate_prompt_multilang(self.prompt_text, context=self.context_text)
             if isinstance(result, dict) and isinstance(result.get("en"), dict):
                 self.finished.emit({"structured": {"positive_prompt": result}})
             else:
                 self.finished.emit({
                     "en": str(result.get("en", "")).strip(),
                     "id_new": str(result.get("id_new", "")).strip(),
+                    "id_old": str(result.get("id_old", "")).strip(),
                 })
         except Exception as e:
             self.failed.emit(str(e))
@@ -2349,9 +2383,7 @@ class ProjectSettingsDialog(QDialog):
             )
             self.cover_lora_name_input.setEnabled(False)
             return
-        if model_key == MODEL_FLUX2_K9:
-            options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2_K9)
-        elif model_key == MODEL_FLUX2:
+        if model_key == MODEL_FLUX2:
             options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2)
         else:
             options = get_lora_options_by_prefix(server, LORA_PREFIX_Z_IMAGE)
@@ -2618,7 +2650,7 @@ class MediaPreviewLabel(QLabel):
 
 class SceneEditorWindow(QMainWindow):
     H3_CACHE_FIELDS = (
-        ("steps", "Steps", "int", 20, 50),
+        ("steps", "Steps", "int", 4, 50),
         ("reuse_threshold", "Reuse Threshold", "decimal", 0.0, 0.5),
         ("start_percent", "Start Percent", "decimal", 0.0, 1.0),
         ("end_percent", "End Percent", "decimal", 0.0, 1.0),
@@ -2712,6 +2744,7 @@ class SceneEditorWindow(QMainWindow):
         self.web_tab = None
         self.web_search_tab = None
         self.image_edit_tab = None
+        self.qwen_image_edit_tab = None
         self.t2v_batch_extra_tab = None
         self.agentic_tab = None
         self.assets_tab = None
@@ -2935,6 +2968,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_remove_sound_input = QCheckBox("Hapus Sound")
         self.minimax_h3_t2v_fast_mode_input = QCheckBox("Mode Cepat")
         self.minimax_h3_i2v_fast_mode_input = QCheckBox("Mode Cepat")
+        self.minimax_h3_t2v_special_mode_input = QCheckBox("Mode Khusus")
+        self.minimax_h3_i2v_special_mode_input = QCheckBox("Mode Khusus")
         self.minimax_h3_t2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_T2V_CACHE)
         self.minimax_h3_i2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_I2V_CACHE)
         self.minimax_h3_t2v_positive_input = QTextEdit()
@@ -3004,6 +3039,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_s2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_s2v_replace_speech_input = QCheckBox("Ganti Speech")
         self.minimax_h3_s2v_replace_speech_input.setChecked(False)
+        self.minimax_h3_s2v_special_mode_input = QCheckBox("Mode Khusus")
         self.minimax_h3_s2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.s2v_generate_positive_button = QToolButton()
         self.s2v_generate_positive_button.setText("Buat Prompt")
@@ -3029,6 +3065,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_r2v_lora_strength_input = QLineEdit()
         self.minimax_h3_r2v_lora_strength_2_input = QLineEdit()
+        self.minimax_h3_r2v_special_mode_input = QCheckBox("Mode Khusus")
         self.minimax_h3_r2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.minimax_h3_r2v_generate_prompt_button = QToolButton()
         self.minimax_h3_r2v_generate_prompt_button.setText("Buat Prompt")
@@ -3051,7 +3088,9 @@ class SceneEditorWindow(QMainWindow):
             widget.setSelectionMode(QAbstractItemView.NoSelection)
             widget.setMaximumHeight(120)
         self.minimax_h3_r2v_image_list.itemChanged.connect(
-            lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_image_list, 3)
+            lambda _item: self._limit_r2v_reference_selection(
+                self.minimax_h3_r2v_image_list, MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES
+            )
         )
         self.minimax_h3_r2v_audio_list.itemChanged.connect(
             lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_audio_list, 3)
@@ -3113,7 +3152,6 @@ class SceneEditorWindow(QMainWindow):
         self.web_search_run_button.clicked.connect(self.run_web_search_images)
         self.web_search_result_label = QLabel("Hasil akan langsung disimpan ke folder scene dan terlihat di tab Aset.")
         self.image_edit_model_input = QComboBox()
-        self.image_edit_model_input.addItem("Flux.2", MODEL_FLUX2)
         self.image_edit_model_input.addItem("Gemini", MODEL_GEMINI_IMAGE)
         self.image_edit_gemini_model_input = QComboBox()
         for model_id in self.z_gemini_model_ids:
@@ -3123,6 +3161,32 @@ class SceneEditorWindow(QMainWindow):
         self.image_edit_clipboard_buttons = []
         self.image_edit_generate_prompt_buttons = []
         self.image_edit_buttons = []
+        self.qwen_image_edit_image_inputs = []
+        self.qwen_image_edit_prompt_image_inputs = []
+        self.qwen_image_edit_size_input = QComboBox()
+        for label, width, height in QWEN_IMAGE_EDIT_SIZE_OPTIONS:
+            self.qwen_image_edit_size_input.addItem(label, (width, height))
+        self.qwen_image_edit_use_random_seed_input = QCheckBox("Random Seed")
+        self.qwen_image_edit_use_random_seed_input.setChecked(True)
+        self.qwen_image_edit_seed_input = QLineEdit()
+        self.qwen_image_edit_number_of_edits_input = QSpinBox()
+        self.qwen_image_edit_number_of_edits_input.setRange(1, 2_147_483_647)
+        self.qwen_image_edit_number_of_edits_input.setValue(1)
+        self.qwen_image_edit_prompt_instruction_input = QTextEdit()
+        self.qwen_image_edit_prompt_instruction_input.setFixedHeight(110)
+        self.qwen_image_edit_positive_input = QTextEdit()
+        self.qwen_image_edit_negative_input = QTextEdit()
+        self.qwen_image_edit_generate_prompt_button = QToolButton()
+        self.qwen_image_edit_generate_prompt_button.setText("Buat Prompt")
+        self.qwen_image_edit_generate_prompt_button.clicked.connect(
+            self.generate_qwen_image_edit_prompt_from_ui
+        )
+        self.qwen_image_edit_button = QToolButton()
+        self.qwen_image_edit_button.setText("Edit Gambar")
+        self.qwen_image_edit_button.clicked.connect(self.run_qwen_image_edit)
+        for _ in range(QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES):
+            self.qwen_image_edit_image_inputs.append(QComboBox())
+            self.qwen_image_edit_prompt_image_inputs.append(QComboBox())
         self.agentic_number_of_variations_input = QSpinBox()
         self.agentic_number_of_variations_input.setRange(0, 999)
         self.agentic_special_command_input = QTextEdit()
@@ -3244,6 +3308,10 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
             self.minimax_h3_t2v_fast_mode_input.checkStateChanged,
             self.minimax_h3_i2v_fast_mode_input.checkStateChanged,
+            self.minimax_h3_t2v_special_mode_input.checkStateChanged,
+            self.minimax_h3_i2v_special_mode_input.checkStateChanged,
+            self.minimax_h3_s2v_special_mode_input.checkStateChanged,
+            self.minimax_h3_r2v_special_mode_input.checkStateChanged,
             self.minimax_h3_s2v_replace_speech_input.checkStateChanged,
             self.scene_upscale_input.checkStateChanged,
             self.s2v_size_input.currentTextChanged, self.s2v_cfg_input.valueChanged, self.web_url_input.textChanged,
@@ -3258,6 +3326,11 @@ class SceneEditorWindow(QMainWindow):
             self.web_search_term_input.textChanged,
             self.image_edit_model_input.currentIndexChanged,
             self.image_edit_gemini_model_input.currentIndexChanged,
+            self.qwen_image_edit_size_input.currentTextChanged,
+            self.qwen_image_edit_use_random_seed_input.checkStateChanged,
+            *(widget.currentTextChanged for widget in self.qwen_image_edit_image_inputs),
+            self.qwen_image_edit_number_of_edits_input.valueChanged,
+            *(widget.currentTextChanged for widget in self.qwen_image_edit_prompt_image_inputs),
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
             self.agentic_number_of_variations_input.valueChanged,
             self.agentic_create_initial_image_input.checkStateChanged,
@@ -3268,6 +3341,8 @@ class SceneEditorWindow(QMainWindow):
         for widget in [
             self.scene_description_input, self.voice_text_input, self.z_positive_input,
             self.z_negative_input, self.z_seed_input, self.z_lora_name_input, self.z_lora_strength_input,
+            self.qwen_image_edit_seed_input, self.qwen_image_edit_positive_input,
+            self.qwen_image_edit_negative_input, self.qwen_image_edit_prompt_instruction_input,
             self.wan_lora_high_name_input, self.wan_lora_high_strength_input,
             self.wan_lora_low_name_input, self.wan_lora_low_strength_input,
             self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input,
@@ -3297,6 +3372,7 @@ class SceneEditorWindow(QMainWindow):
                 signal.connect(self.refresh_scene_status)
         self.z_use_lora_input.toggled.connect(self.update_lora_fields_enabled)
         self.z_use_random_seed_input.toggled.connect(self.update_seed_fields_enabled)
+        self.qwen_image_edit_use_random_seed_input.toggled.connect(self.update_qwen_image_edit_seed_fields_enabled)
         self.z_model_input.currentIndexChanged.connect(self.update_image_model_fields_enabled)
         self.z_model_input.currentIndexChanged.connect(self.sync_image_edit_model_from_initial_image)
         self.z_gemini_model_input.currentIndexChanged.connect(self.sync_image_edit_model_from_initial_image)
@@ -3309,6 +3385,34 @@ class SceneEditorWindow(QMainWindow):
         )
         self.minimax_h3_i2v_fast_mode_input.toggled.connect(
             self.update_minimax_h3_fast_mode_controls
+        )
+        self.minimax_h3_t2v_fast_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_t2v_fast_mode_input,
+                self.minimax_h3_t2v_special_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_t2v_special_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_t2v_special_mode_input,
+                self.minimax_h3_t2v_fast_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_i2v_fast_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_i2v_fast_mode_input,
+                self.minimax_h3_i2v_special_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_i2v_special_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_i2v_special_mode_input,
+                self.minimax_h3_i2v_fast_mode_input,
+                checked,
+            )
         )
         self.minimax_h3_t2v_size_input.currentTextChanged.connect(
             self._sync_minimax_t2v_i2v_size
@@ -3507,7 +3611,10 @@ class SceneEditorWindow(QMainWindow):
         minimax_t2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_lora_strength_2_input, 2, 3)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_remove_sound_input, 3, 1)
-        minimax_t2v_layout.addWidget(self.minimax_h3_t2v_fast_mode_input, 3, 2)
+        t2v_mode_layout = QHBoxLayout()
+        t2v_mode_layout.addWidget(self.minimax_h3_t2v_fast_mode_input)
+        t2v_mode_layout.addWidget(self.minimax_h3_t2v_special_mode_input)
+        minimax_t2v_layout.addLayout(t2v_mode_layout, 3, 2)
         minimax_t2v_layout.addWidget(self.copy_minimax_h3_t2v_variations_button, 3, 3, Qt.AlignLeft)
         minimax_t2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_positive_input, 4, 1, 1, 3)
@@ -3581,7 +3688,10 @@ class SceneEditorWindow(QMainWindow):
                 page_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
                 page_layout.addWidget(self.minimax_h3_i2v_lora_strength_2_input, 2, 3)
                 page_layout.addWidget(self.minimax_h3_i2v_remove_sound_input, 3, 1)
-                page_layout.addWidget(self.minimax_h3_i2v_fast_mode_input, 3, 2)
+                i2v_mode_layout = QHBoxLayout()
+                i2v_mode_layout.addWidget(self.minimax_h3_i2v_fast_mode_input)
+                i2v_mode_layout.addWidget(self.minimax_h3_i2v_special_mode_input)
+                page_layout.addLayout(i2v_mode_layout, 3, 2)
                 page_layout.addWidget(self.copy_minimax_h3_i2v_variations_button, 3, 3, Qt.AlignLeft)
                 build_reference_box(stage_index, page_layout, 4)
                 prompt_row = 5
@@ -3627,8 +3737,9 @@ class SceneEditorWindow(QMainWindow):
         r2v_layout.addWidget(self.minimax_h3_r2v_lora_name_2_input, 2, 1)
         r2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
         r2v_layout.addWidget(self.minimax_h3_r2v_lora_strength_2_input, 2, 3)
+        r2v_layout.addWidget(self.minimax_h3_r2v_special_mode_input, 3, 2)
         r2v_layout.addWidget(self.copy_minimax_h3_r2v_variations_button, 3, 3, Qt.AlignLeft)
-        r2v_layout.addWidget(QLabel("Gambar (maks. 3)"), 4, 0)
+        r2v_layout.addWidget(QLabel(f"Gambar (maks. {MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES})"), 4, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_image_list, 4, 1, 1, 3)
         r2v_layout.addWidget(QLabel("Video (maks. 1)"), 5, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_video_list, 5, 1, 1, 3)
@@ -3674,7 +3785,10 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_cfg_label = QLabel("CFG")
         s2v_layout.addWidget(self.s2v_cfg_label, 3, 0)
         s2v_layout.addWidget(self.s2v_cfg_input, 3, 1)
-        s2v_layout.addWidget(self.minimax_h3_s2v_replace_speech_input, 3, 2)
+        s2v_mode_layout = QHBoxLayout()
+        s2v_mode_layout.addWidget(self.minimax_h3_s2v_replace_speech_input)
+        s2v_mode_layout.addWidget(self.minimax_h3_s2v_special_mode_input)
+        s2v_layout.addLayout(s2v_mode_layout, 3, 2)
         s2v_layout.addWidget(self.copy_minimax_h3_s2v_variations_button, 3, 3, Qt.AlignLeft)
         s2v_layout.addWidget(QLabel("Prompt Positif"), 4, 0)
         s2v_layout.addWidget(self.s2v_positive_input, 4, 1, 1, 3)
@@ -3739,6 +3853,52 @@ class SceneEditorWindow(QMainWindow):
         image_edit_layout.addStretch(1)
         tabs.addTab(self.image_edit_tab, "Image Edit")
 
+        self.qwen_image_edit_tab = QWidget()
+        qwen_layout = QVBoxLayout(self.qwen_image_edit_tab)
+        qwen_form = QFormLayout()
+        qwen_form.addRow("Ukuran", self.qwen_image_edit_size_input)
+        qwen_form.addRow("", self.qwen_image_edit_use_random_seed_input)
+        qwen_form.addRow("Seed Statik", self.qwen_image_edit_seed_input)
+        qwen_layout.addLayout(qwen_form)
+
+        qwen_images_layout = QGridLayout()
+        qwen_images_layout.setHorizontalSpacing(12)
+        qwen_images_layout.setVerticalSpacing(4)
+        for column in range(3):
+            qwen_images_layout.setColumnStretch(column, 1)
+        for index, image_input in enumerate(self.qwen_image_edit_image_inputs, start=1):
+            column = 0 if index <= 4 else 1 if index <= 8 else 2
+            row = (index - 1) % 4
+            qwen_images_layout.addWidget(QLabel(f"Image {index}"), row * 2, column)
+            qwen_images_layout.addWidget(image_input, row * 2 + 1, column)
+        qwen_layout.addLayout(qwen_images_layout)
+        qwen_layout.addWidget(QLabel("Positive Prompt"))
+        qwen_layout.addWidget(self.qwen_image_edit_positive_input)
+        qwen_layout.addWidget(QLabel("Negative Prompt"))
+        qwen_layout.addWidget(self.qwen_image_edit_negative_input)
+        qwen_edit_count_form = QFormLayout()
+        qwen_edit_count_form.addRow("Jumlah Edit", self.qwen_image_edit_number_of_edits_input)
+        qwen_layout.addLayout(qwen_edit_count_form)
+        qwen_layout.addWidget(self.qwen_image_edit_button)
+
+        qwen_prompt_images_group = QGroupBox("Gambar Referensi untuk Buat Prompt")
+        qwen_prompt_images_layout = QGridLayout(qwen_prompt_images_group)
+        qwen_prompt_images_layout.setHorizontalSpacing(12)
+        qwen_prompt_images_layout.setVerticalSpacing(4)
+        for column in range(3):
+            qwen_prompt_images_layout.setColumnStretch(column, 1)
+        for index, image_input in enumerate(self.qwen_image_edit_prompt_image_inputs, start=1):
+            column = 0 if index <= 4 else 1 if index <= 8 else 2
+            row = (index - 1) % 4
+            qwen_prompt_images_layout.addWidget(QLabel(f"Image {index}"), row * 2, column)
+            qwen_prompt_images_layout.addWidget(image_input, row * 2 + 1, column)
+        qwen_layout.addWidget(qwen_prompt_images_group)
+        qwen_layout.addWidget(QLabel("Prompt"))
+        qwen_layout.addWidget(self.qwen_image_edit_prompt_instruction_input)
+        qwen_layout.addWidget(self.qwen_image_edit_generate_prompt_button)
+        qwen_layout.addStretch(1)
+        tabs.addTab(self.qwen_image_edit_tab, "Qwen Image Edit")
+
         self.assets_tab = QWidget()
         assets_layout = QVBoxLayout(self.assets_tab)
         assets_layout.addWidget(QLabel("Aset media dalam adegan. Klik ganda untuk membuka tampilan."))
@@ -3757,6 +3917,14 @@ class SceneEditorWindow(QMainWindow):
         agentic_layout.addRow("Perintah Khusus", self.agentic_special_command_input)
         tabs.addTab(self.agentic_tab, "Agentic")
         return tabs
+
+    def _handle_minimax_mode_toggle(self, selected: QCheckBox, other: QCheckBox, checked: bool):
+        if checked and other.isChecked():
+            other.blockSignals(True)
+            other.setChecked(False)
+            other.blockSignals(False)
+        self.update_minimax_h3_fast_mode_controls()
+        self.refresh_scene_status()
 
     def update_minimax_h3_fast_mode_controls(self, *_args):
         scene_type = self.scene_type_combo.currentText().strip()
@@ -3815,6 +3983,13 @@ class SceneEditorWindow(QMainWindow):
                 MINIMAX_H3_S2V_SCENE_TYPE,
                 MINIMAX_H3_R2V_SCENE_TYPE,
             } and not is_wan22_t2v and not is_t2v_batch,
+            self.qwen_image_edit_tab: scene_type not in {
+                "web_scroll",
+                "wan22_s2v",
+                MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+                MINIMAX_H3_S2V_SCENE_TYPE,
+                MINIMAX_H3_R2V_SCENE_TYPE,
+            } and not is_wan22_t2v and not is_t2v_batch,
             self.t2v_batch_extra_tab: is_t2v_batch,
             self.agentic_tab: scene_type != "web_scroll" and not is_minimax_h3_i2v_panjang,
             self.assets_tab: True,
@@ -3852,6 +4027,8 @@ class SceneEditorWindow(QMainWindow):
                 self._move_tab_after(self.image_edit_tab, self.z_tab)
                 self._move_tab_after(self.minimax_h3_i2v_tab, self.image_edit_tab)
                 self._move_tab_after(self.assets_tab, self.minimax_h3_i2v_tab)
+            if self.qwen_image_edit_tab is not None and self.image_edit_tab is not None:
+                self._move_tab_after(self.qwen_image_edit_tab, self.image_edit_tab)
         for widget, visible in visible_map.items():
             if widget is None:
                 continue
@@ -4078,6 +4255,7 @@ class SceneEditorWindow(QMainWindow):
             self.image_zoom_tab,
             self.web_search_tab,
             self.image_edit_tab,
+            self.qwen_image_edit_tab,
             self.assets_tab,
             self.agentic_tab,
         ]
@@ -4652,7 +4830,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_t2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "fast_mode", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "fast_mode", "special_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 T2V",
         )
@@ -4667,7 +4845,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=minimax_i2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "fast_mode", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "remove_sound", "fast_mode", "special_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 I2V",
         )
@@ -4682,7 +4860,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=s2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "replace_speech", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "replace_speech", "special_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 S2V",
         )
@@ -4697,7 +4875,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=r2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "special_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 R2V",
         )
@@ -5217,6 +5395,8 @@ class SceneEditorWindow(QMainWindow):
             self.current_scene_dir = None
             self.scene_list.clear()
             self.refresh_image_edit_source_options()
+            self.refresh_qwen_image_edit_source_options()
+            self.refresh_qwen_image_edit_prompt_source_options()
             self.status_label.setPlainText("Belum ada project yang dibuka.")
             self.viewer_info_label.setText("Buka project terlebih dahulu.")
             self.load_project_settings()
@@ -5821,9 +6001,7 @@ class SceneEditorWindow(QMainWindow):
             )
             self.z_lora_name_input.setEnabled(False)
             return
-        if model_key == MODEL_FLUX2_K9:
-            options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2_K9)
-        elif model_key == MODEL_FLUX2:
+        if model_key == MODEL_FLUX2:
             options = get_lora_options_by_prefix(server, LORA_PREFIX_FLUX2)
         else:
             options = get_lora_options_by_prefix(server, LORA_PREFIX_Z_IMAGE)
@@ -5971,6 +6149,11 @@ class SceneEditorWindow(QMainWindow):
     def update_seed_fields_enabled(self):
         self.z_seed_input.setEnabled(not self.z_use_random_seed_input.isChecked())
 
+    def update_qwen_image_edit_seed_fields_enabled(self):
+        self.qwen_image_edit_seed_input.setEnabled(
+            not self.qwen_image_edit_use_random_seed_input.isChecked()
+        )
+
     def update_image_model_fields_enabled(self):
         model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO)
         is_gemini = model_key == MODEL_GEMINI_IMAGE
@@ -6025,7 +6208,7 @@ class SceneEditorWindow(QMainWindow):
                 label.setVisible(visible)
 
     def update_image_edit_model_fields_enabled(self):
-        model_key = str(self.image_edit_model_input.currentData() or MODEL_FLUX2)
+        model_key = str(self.image_edit_model_input.currentData() or MODEL_GEMINI_IMAGE)
         is_gemini = model_key == MODEL_GEMINI_IMAGE
         self.image_edit_model_input.setEnabled(False)
         self.image_edit_gemini_model_input.setVisible(is_gemini)
@@ -6486,6 +6669,12 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_fast_mode_input.setChecked(
                 bool(minimax_h3_i2v_prompt.get("fast_mode", False))
             )
+            self.minimax_h3_t2v_special_mode_input.setChecked(
+                bool(minimax_h3_t2v_prompt.get("special_mode", False))
+            )
+            self.minimax_h3_i2v_special_mode_input.setChecked(
+                bool(minimax_h3_i2v_prompt.get("special_mode", False))
+            )
             self._load_h3_cache_fields(
                 self.minimax_h3_t2v_h3_cache_inputs,
                 minimax_h3_t2v_prompt,
@@ -6558,6 +6747,9 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_s2v_replace_speech_input.setChecked(
                 bool(s2v_prompt.get("replace_speech", False))
             )
+            self.minimax_h3_s2v_special_mode_input.setChecked(
+                bool(s2v_prompt.get("special_mode", False))
+            )
             self._load_h3_cache_fields(
                 self.minimax_h3_s2v_h3_cache_inputs,
                 s2v_prompt,
@@ -6587,6 +6779,9 @@ class SceneEditorWindow(QMainWindow):
                 self.minimax_h3_r2v_h3_cache_inputs,
                 minimax_h3_r2v_prompt,
                 DEFAULT_MINIMAX_H3_R2V_CACHE,
+            )
+            self.minimax_h3_r2v_special_mode_input.setChecked(
+                bool(minimax_h3_r2v_prompt.get("special_mode", False))
             )
             r2v_entry = minimax_h3_r2v_prompt.get("positive_prompt", {})
             r2v_id_new = r2v_entry.get("id_new", {}) if isinstance(r2v_entry, dict) else {}
@@ -6691,6 +6886,7 @@ class SceneEditorWindow(QMainWindow):
             self.web_search_result_label.setText("Hasil akan langsung disimpan ke folder scene dan terlihat di tab Aset.")
             self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_image_edit_into_ui(scene_dir)
+            self.load_qwen_image_edit_into_ui(scene_dir)
             self.load_agentic_config_into_ui(scene_dir)
             self.load_t2v_batch_extra_prompts_into_ui(scene_dir)
         finally:
@@ -6777,6 +6973,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_strength_2": t2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_t2v_remove_sound_input.isChecked()),
             "fast_mode": bool(self.minimax_h3_t2v_fast_mode_input.isChecked()),
+            "special_mode": bool(self.minimax_h3_t2v_special_mode_input.isChecked()),
             "h3_cache_enabled": (
                 self.minimax_h3_t2v_h3_cache_inputs["enabled"].isChecked()
                 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
@@ -6798,6 +6995,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_strength_2": i2v_lora_strength_2,
             "remove_sound": bool(self.minimax_h3_i2v_remove_sound_input.isChecked()),
             "fast_mode": bool(self.minimax_h3_i2v_fast_mode_input.isChecked()),
+            "special_mode": bool(self.minimax_h3_i2v_special_mode_input.isChecked()),
             "h3_cache_enabled": (
                 self.minimax_h3_i2v_h3_cache_inputs["enabled"].isChecked()
                 if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE}
@@ -7162,6 +7360,7 @@ class SceneEditorWindow(QMainWindow):
                 "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
                 "lora_strength_2": s2v_lora_strength_2,
                 "replace_speech": self.minimax_h3_s2v_replace_speech_input.isChecked(),
+                "special_mode": self.minimax_h3_s2v_special_mode_input.isChecked(),
                 "h3_cache_enabled": self.minimax_h3_s2v_h3_cache_inputs["enabled"].isChecked(),
                 "h3_cache": self._read_h3_cache_fields(self.minimax_h3_s2v_h3_cache_inputs, "MiniMax H3 S2V"),
             }
@@ -7509,6 +7708,20 @@ class SceneEditorWindow(QMainWindow):
             raise ValueError("Seed statik harus berupa bilangan bulat positif.")
         return parsed
 
+    def parse_qwen_image_edit_seed_value(self):
+        if self.qwen_image_edit_use_random_seed_input.isChecked():
+            return 1
+        value = self.qwen_image_edit_seed_input.text().strip()
+        if not value:
+            raise ValueError("Seed statik Qwen Image Edit wajib diisi saat Random Seed dimatikan.")
+        try:
+            parsed = int(value)
+        except ValueError:
+            raise ValueError("Seed statik Qwen Image Edit harus berupa bilangan bulat positif.")
+        if parsed <= 0:
+            raise ValueError("Seed statik Qwen Image Edit harus berupa bilangan bulat positif.")
+        return parsed
+
     def parse_wan_lora_strength_value(self, widget: QLineEdit, label: str):
         value = widget.text().strip()
         if not value:
@@ -7536,6 +7749,66 @@ class SceneEditorWindow(QMainWindow):
                 }
             )
         return {"groups": normalized_groups}
+
+    def load_qwen_image_edit_prompt(self, scene_dir: Path):
+        data = load_json(scene_dir / "qwen_image_edit_prompt.json", DEFAULT_QWEN_IMAGE_EDIT_PROMPT)
+        if not isinstance(data, dict):
+            data = copy.deepcopy(DEFAULT_QWEN_IMAGE_EDIT_PROMPT)
+
+        def prompt_text_for_ui(value):
+            if isinstance(value, dict):
+                return str(
+                    value.get("id_new")
+                    or value.get("en")
+                    or value.get("id_old")
+                    or ""
+                ).strip()
+            return str(value or "").strip()
+
+        images = data.get("images")
+        if not isinstance(images, list):
+            images = []
+        normalized_images = [
+            str(images[index] if index < len(images) else "").strip()
+            for index in range(QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES)
+        ]
+        prompt_images = data.get("prompt_images")
+        if not isinstance(prompt_images, list):
+            prompt_images = []
+        normalized_prompt_images = [
+            str(prompt_images[index] if index < len(prompt_images) else "").strip()
+            for index in range(QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES)
+        ]
+        try:
+            width = int(data.get("width", DEFAULT_QWEN_IMAGE_EDIT_PROMPT["width"]))
+        except (TypeError, ValueError):
+            width = int(DEFAULT_QWEN_IMAGE_EDIT_PROMPT["width"])
+        try:
+            height = int(data.get("height", DEFAULT_QWEN_IMAGE_EDIT_PROMPT["height"]))
+        except (TypeError, ValueError):
+            height = int(DEFAULT_QWEN_IMAGE_EDIT_PROMPT["height"])
+        try:
+            seed = int(data.get("seed", DEFAULT_QWEN_IMAGE_EDIT_PROMPT["seed"]))
+        except (TypeError, ValueError):
+            seed = int(DEFAULT_QWEN_IMAGE_EDIT_PROMPT["seed"])
+        try:
+            number_of_edits = int(
+                data.get("number_of_edits", DEFAULT_QWEN_IMAGE_EDIT_PROMPT["number_of_edits"])
+            )
+        except (TypeError, ValueError):
+            number_of_edits = int(DEFAULT_QWEN_IMAGE_EDIT_PROMPT["number_of_edits"])
+        return {
+            "images": normalized_images,
+            "width": width,
+            "height": height,
+            "use_random_seed": bool(data.get("use_random_seed", True)),
+            "seed": max(1, seed),
+            "number_of_edits": max(1, number_of_edits),
+            "prompt_images": normalized_prompt_images,
+            "prompt_instruction": str(data.get("prompt_instruction", "") or "").strip(),
+            "positive_prompt": prompt_text_for_ui(data.get("positive_prompt", "")),
+            "negative_prompt": prompt_text_for_ui(data.get("negative_prompt", "")),
+        }
 
     def load_z_image_extra_prompts(self, scene_dir: Path):
         data = load_json(scene_dir / "z_image_extra_prompts.json", DEFAULT_Z_IMAGE_EXTRA_PROMPTS)
@@ -7577,6 +7850,27 @@ class SceneEditorWindow(QMainWindow):
             )
         return {"groups": groups}
 
+    def gather_qwen_image_edit_prompt(self):
+        size = self.qwen_image_edit_size_input.currentData() or (368, 640)
+        return {
+            "images": [
+                str(widget.currentData() or "").strip()
+                for widget in self.qwen_image_edit_image_inputs
+            ],
+            "width": int(size[0]),
+            "height": int(size[1]),
+            "use_random_seed": bool(self.qwen_image_edit_use_random_seed_input.isChecked()),
+            "seed": self.parse_qwen_image_edit_seed_value(),
+            "number_of_edits": int(self.qwen_image_edit_number_of_edits_input.value()),
+            "prompt_images": [
+                str(widget.currentData() or "").strip()
+                for widget in self.qwen_image_edit_prompt_image_inputs
+            ],
+            "prompt_instruction": self.qwen_image_edit_prompt_instruction_input.toPlainText().strip(),
+            "positive_prompt": self.qwen_image_edit_positive_input.toPlainText().strip(),
+            "negative_prompt": self.qwen_image_edit_negative_input.toPlainText().strip(),
+        }
+
     def gather_t2v_batch_extra_prompts(self):
         groups = []
         for positive_input, negative_input in zip(self.t2v_batch_positive_inputs, self.t2v_batch_negative_inputs):
@@ -7614,6 +7908,43 @@ class SceneEditorWindow(QMainWindow):
                 combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
             combo.blockSignals(False)
 
+    def _refresh_qwen_image_source_options(self, combos, preferred_images=None):
+        preferred_images = preferred_images or [""] * QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES
+        image_names = []
+        scene_dir = self.active_scene_dir()
+        if scene_dir and scene_dir.exists():
+            image_names = sorted(
+                [
+                    path.name for path in scene_dir.iterdir()
+                    if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+                ],
+                key=lambda name: name.lower(),
+            )
+        for index, combo in enumerate(combos):
+            preferred = str(preferred_images[index] if index < len(preferred_images) else "").strip()
+            current_value = str(combo.currentData() or "").strip()
+            wanted = preferred or current_value
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("(Tanpa gambar)", "")
+            for image_name in image_names:
+                combo.addItem(image_name, image_name)
+            selected_index = combo.findData(wanted)
+            combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+            combo.blockSignals(False)
+
+    def refresh_qwen_image_edit_source_options(self, preferred_images=None):
+        self._refresh_qwen_image_source_options(
+            self.qwen_image_edit_image_inputs,
+            preferred_images=preferred_images,
+        )
+
+    def refresh_qwen_image_edit_prompt_source_options(self, preferred_images=None):
+        self._refresh_qwen_image_source_options(
+            self.qwen_image_edit_prompt_image_inputs,
+            preferred_images=preferred_images,
+        )
+
     def load_image_edit_into_ui(self, scene_dir: Path):
         data = self.load_image_edit_prompt(scene_dir)
         self.sync_image_edit_model_from_initial_image()
@@ -7625,10 +7956,38 @@ class SceneEditorWindow(QMainWindow):
             group_data = groups[index] if index < len(groups) else {}
             prompt_input.setPlainText(str(group_data.get("prompt", "")))
 
+    def load_qwen_image_edit_into_ui(self, scene_dir: Path):
+        data = self.load_qwen_image_edit_prompt(scene_dir)
+        preferred_images = data.get("images", [])
+        self.refresh_qwen_image_edit_source_options(preferred_images=preferred_images)
+        self.refresh_qwen_image_edit_prompt_source_options(
+            preferred_images=data.get("prompt_images", [])
+        )
+        size_value = (int(data.get("width", 368)), int(data.get("height", 640)))
+        # PySide6 does not reliably match tuple data through findData().
+        # Search the stored width/height pair explicitly so a saved size such
+        # as 848x480 is restored instead of falling back to the first option.
+        size_index = -1
+        for index in range(self.qwen_image_edit_size_input.count()):
+            item_data = self.qwen_image_edit_size_input.itemData(index)
+            try:
+                item_size = (int(item_data[0]), int(item_data[1]))
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            if item_size == size_value:
+                size_index = index
+                break
+        self.qwen_image_edit_size_input.setCurrentIndex(size_index if size_index >= 0 else 0)
+        self.qwen_image_edit_use_random_seed_input.setChecked(bool(data.get("use_random_seed", True)))
+        self.qwen_image_edit_seed_input.setText(str(data.get("seed", 1)))
+        self.qwen_image_edit_number_of_edits_input.setValue(max(1, int(data.get("number_of_edits", 1))))
+        self.qwen_image_edit_prompt_instruction_input.setPlainText(str(data.get("prompt_instruction", "")))
+        self.qwen_image_edit_positive_input.setPlainText(str(data.get("positive_prompt", "")))
+        self.qwen_image_edit_negative_input.setPlainText(str(data.get("negative_prompt", "")))
+        self.update_qwen_image_edit_seed_fields_enabled()
+
     def sync_image_edit_model_from_initial_image(self):
-        model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
-        model_index = self.image_edit_model_input.findData(model_key)
-        self.image_edit_model_input.setCurrentIndex(model_index if model_index >= 0 else 0)
+        self.image_edit_model_input.setCurrentIndex(0)
 
         selected_gemini_model = str(self.z_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
         gemini_index = self.image_edit_gemini_model_input.findData(selected_gemini_model)
@@ -7778,6 +8137,8 @@ class SceneEditorWindow(QMainWindow):
         scene_dir = self.active_scene_dir()
         if not scene_dir:
             self.refresh_image_edit_source_options()
+            self.refresh_qwen_image_edit_source_options()
+            self.refresh_qwen_image_edit_prompt_source_options()
             return
         self.clear_viewer()
         assets = sorted(
@@ -7794,6 +8155,8 @@ class SceneEditorWindow(QMainWindow):
             item.setData(Qt.UserRole, str(asset))
             self.asset_list.addItem(item)
         self.refresh_image_edit_source_options()
+        self.refresh_qwen_image_edit_source_options()
+        self.refresh_qwen_image_edit_prompt_source_options()
         self.refresh_r2v_reference_options()
         self.refresh_minimax_h3_i2v_panjang_reference_options()
         if not assets:
@@ -7843,7 +8206,10 @@ class SceneEditorWindow(QMainWindow):
             "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list),
         }
         self._set_r2v_reference_list(
-            self.minimax_h3_r2v_image_list, image_names, list(current.get("images", []))[:3], 3
+            self.minimax_h3_r2v_image_list,
+            image_names,
+            list(current.get("images", []))[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES],
+            MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES,
         )
         self._set_r2v_reference_list(
             self.minimax_h3_r2v_audio_list, audio_names, list(current.get("audios", []))[:3], 3
@@ -7864,7 +8230,7 @@ class SceneEditorWindow(QMainWindow):
         existing = load_json(self.current_scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME, DEFAULT_MINIMAX_H3_R2V_PROMPT)
         existing_entry = existing.get("positive_prompt", {}) if isinstance(existing, dict) else {}
         references = {
-            "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:3],
+            "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES],
             "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
             "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
         }
@@ -7886,6 +8252,7 @@ class SceneEditorWindow(QMainWindow):
             "lora_strength": r2v_lora_strength,
             "lora_name_2": self.minimax_h3_r2v_lora_name_2_input.currentText().strip(),
             "lora_strength_2": r2v_lora_strength_2,
+            "special_mode": self.minimax_h3_r2v_special_mode_input.isChecked(),
             "h3_cache_enabled": self.minimax_h3_r2v_h3_cache_inputs["enabled"].isChecked(),
             "h3_cache": (
                 self._read_h3_cache_fields(self.minimax_h3_r2v_h3_cache_inputs, "MiniMax H3 R2V")
@@ -7912,6 +8279,7 @@ class SceneEditorWindow(QMainWindow):
             return False
         try:
             meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, web_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
+            qwen_image_edit_prompt = self.gather_qwen_image_edit_prompt()
             minimax_h3_t2v_prompt, minimax_h3_i2v_prompt = self.gather_minimax_h3_prompts()
             minimax_h3_i2v_panjang_prompt = None
             r2v_prompt = self.gather_minimax_h3_r2v_prompt()
@@ -8003,6 +8371,7 @@ class SceneEditorWindow(QMainWindow):
             image_zoom_prompt=image_zoom_prompt,
             web_search_prompt=self.gather_web_search_prompt(),
             image_edit_prompt=image_edit_prompt,
+            qwen_image_edit_prompt=qwen_image_edit_prompt,
             z_image_extra_prompts=z_image_extra_prompts,
             t2v_batch_extra_prompts=t2v_batch_extra_prompts,
             minimax_h3_t2v_prompt=minimax_h3_t2v_prompt,
@@ -8372,7 +8741,7 @@ class SceneEditorWindow(QMainWindow):
             ])
         if stage == "r2v":
             if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
-                active_images = self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:3]
+                active_images = self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES]
                 active_audios = self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3]
                 active_video = bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list))
                 active_picture_tokens = ", ".join(f"<Picture {i + 1}>" for i, _ in enumerate(active_images)) or "none"
@@ -8447,7 +8816,7 @@ class SceneEditorWindow(QMainWindow):
                 f"Image size: {int(size_data[0])}x{int(size_data[1])}",
             ])
         elif prompt_kind == "image_edit":
-            edit_model = str(self.image_edit_model_input.currentData() or MODEL_FLUX2).strip()
+            edit_model = str(self.image_edit_model_input.currentData() or MODEL_GEMINI_IMAGE).strip()
             source_name = ""
             if slot_index is not None and 0 <= slot_index < len(self.image_edit_image_inputs):
                 source_name = str(self.image_edit_image_inputs[slot_index].currentData() or "").strip()
@@ -8455,6 +8824,22 @@ class SceneEditorWindow(QMainWindow):
                 f"Target: image edit prompt slot {slot_index + 1 if slot_index is not None else 1}",
                 f"Edit model: {edit_model}",
                 f"Source image: {source_name or '(none)'}",
+            ])
+        elif prompt_kind == "qwen_image_edit":
+            size_data = self.qwen_image_edit_size_input.currentData() or (368, 640)
+            references = [
+                str(widget.currentData() or "").strip()
+                for widget in self.qwen_image_edit_image_inputs
+            ]
+            lines.extend([
+                "Target: Qwen Image Edit positive prompt",
+                "Edit model: Qwen Image 2.1",
+                f"Image size: {int(size_data[0])}x{int(size_data[1])}",
+                "Reference images: " + ", ".join(
+                    f"Image {index + 1}={name or '(none)'}"
+                    for index, name in enumerate(references)
+                ),
+                "Only describe an edit compatible with the selected reference images; do not invent unavailable image references.",
             ])
         elif prompt_kind == "wan_t2v":
             size_data = self.wan_t2v_size_input.currentData() or (368, 640)
@@ -8513,7 +8898,7 @@ class SceneEditorWindow(QMainWindow):
         elif prompt_kind == "minimax_h3_r2v":
             size_data = self.minimax_h3_r2v_size_input.currentData() or (368, 640)
             references = {
-                "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:3],
+                "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES],
                 "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
                 "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
             }
@@ -8550,6 +8935,9 @@ class SceneEditorWindow(QMainWindow):
             return
         if prompt_kind == "image_edit" and slot_index is not None and 0 <= slot_index < len(self.image_edit_prompt_inputs):
             self.image_edit_prompt_inputs[slot_index].setPlainText(text)
+            return
+        if prompt_kind == "qwen_image_edit" and prompt_key == "positive_prompt":
+            self.qwen_image_edit_positive_input.setPlainText(text)
             return
         if prompt_kind == "wan_t2v":
             if prompt_key == "positive_prompt":
@@ -8595,6 +8983,8 @@ class SceneEditorWindow(QMainWindow):
             return self.current_scene_dir / "z_image_extra_prompts.json", "positive_prompt", None
         if prompt_kind == "image_edit":
             return self.current_scene_dir / "image_edit_prompt.json", "prompt", None
+        if prompt_kind == "qwen_image_edit":
+            return self.current_scene_dir / "qwen_image_edit_prompt.json", "positive_prompt", None
         if prompt_kind == "wan_t2v":
             return self.current_scene_dir / "wan22_t2v_prompt.json", str(prompt_key or "").strip(), None
         if prompt_kind == "t2v_batch":
@@ -8628,6 +9018,7 @@ class SceneEditorWindow(QMainWindow):
         slot_index: int | None,
         prompt_text: str,
         prompt_key: str | None = None,
+        multimodal_image_paths: list[Path] | None = None,
     ):
         if not self.ensure_project_selected():
             return
@@ -8646,7 +9037,7 @@ class SceneEditorWindow(QMainWindow):
             QMessageBox.warning(self, "Data Tidak Valid", "Prompt yang akan diproses tidak boleh kosong.")
             return
 
-        context_text = self._build_prompt_generation_context(
+        context_text = "" if multimodal_image_paths else self._build_prompt_generation_context(
             prompt_kind,
             slot_index=slot_index,
             prompt_key=prompt_key,
@@ -8656,6 +9047,8 @@ class SceneEditorWindow(QMainWindow):
             "z_image": "Gambar Awal",
             "z_extra": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
             "image_edit": f"Edit Gambar {slot_index + 1 if slot_index is not None else 1}",
+            "qwen_image_edit": "Qwen Image Edit",
+            "qwen_image_edit_multimodal": "Qwen Image Edit multimodal",
             "wan_t2v": f"WAN T2V ({prompt_key or 'prompt'})",
             "wan_i2v": f"WAN I2V ({prompt_key or 'prompt'})",
             "minimax_h3_t2v": "MiniMax H3 T2VA",
@@ -8696,6 +9089,7 @@ class SceneEditorWindow(QMainWindow):
             "slot_index": slot_index,
             "scene_dir": scene_dir,
             "prompt_key": str(prompt_key or "").strip(),
+            "multimodal_image_paths": [str(path) for path in (multimodal_image_paths or [])],
         }
 
         self.prompt_generation_thread = QThread(self)
@@ -8703,6 +9097,7 @@ class SceneEditorWindow(QMainWindow):
             prompt_text,
             context_text,
             project_dir=str(self.project_dir() or ""),
+            multimodal_image_paths=multimodal_image_paths,
         )
         self.prompt_generation_worker.moveToThread(self.prompt_generation_thread)
         self.prompt_generation_worker.progress.connect(self.append_log)
@@ -8740,6 +9135,41 @@ class SceneEditorWindow(QMainWindow):
             scene_dir = Path(self.current_scene_dir) if self.current_scene_dir else Path(".")
         if not isinstance(result, dict):
             self.append_log("[gagal] Hasil LLM tidak valid.")
+            return
+        if prompt_kind == "qwen_image_edit_multimodal":
+            english = str(result.get("en", "")).strip()
+            indonesian = str(result.get("id_new", "")).strip()
+            old_indonesian = str(result.get("id_old", "")).strip() or indonesian
+            if not english or not indonesian or not old_indonesian:
+                self.append_log("[gagal] LLM Qwen wajib mengembalikan `en`, `id_new`, dan `id_old`.")
+                self.statusBar().showMessage("Hasil prompt Qwen tidak lengkap.", 4000)
+                return
+            prompt_path = scene_dir / "qwen_image_edit_prompt.json"
+            try:
+                payload = json.loads(prompt_path.read_text(encoding="utf-8")) if prompt_path.exists() else {}
+                payload["positive_prompt"] = {
+                    "id_old": old_indonesian,
+                    "id_new": indonesian,
+                    "en": english,
+                }
+                # This is the explicit Buat Prompt path. Unlike ordinary Save
+                # Scene, it is allowed to commit the freshly generated en/id_new
+                # pair and synchronize id_old with the new Indonesian prompt.
+                write_json(prompt_path, payload)
+            except Exception as exc:
+                self.append_log(f"[gagal] Gagal menyimpan prompt positif Qwen: {exc}")
+                return
+            if self.current_scene_dir and self.current_scene_dir.resolve() == scene_dir.resolve():
+                self._set_prompt_widget_text(
+                    "qwen_image_edit",
+                    None,
+                    indonesian,
+                    prompt_key="positive_prompt",
+                )
+                self.save_current_scene(silent=True, reload_list=False)
+                self.refresh_scene_status()
+            self.append_log("[Qwen] Prompt positif multimodal disimpan ke en, id_new, dan id_old.")
+            self.statusBar().showMessage("Prompt Qwen berhasil dibuat.", 4000)
             return
         if prompt_kind in {"minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_i2v_standalone", "minimax_h3_s2v", "minimax_h3_r2v"} or prompt_kind.startswith("minimax_h3_i2v_panjang_"):
             structured = result.get("structured")
@@ -8884,6 +9314,43 @@ class SceneEditorWindow(QMainWindow):
             QMessageBox.information(self, "Belum Siap", "Slot edit gambar tidak valid.")
             return
         self._start_prompt_generation("image_edit", slot_index, self.image_edit_prompt_inputs[slot_index].toPlainText().strip())
+
+    def generate_qwen_image_edit_prompt_from_ui(self):
+        if not self.ensure_project_selected():
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        selected_paths = []
+        scene_root = Path(self.current_scene_dir).resolve()
+        for combo in self.qwen_image_edit_prompt_image_inputs:
+            image_name = str(combo.currentData() or "").strip()
+            if not image_name:
+                continue
+            image_path = (scene_root / image_name).resolve()
+            try:
+                image_path.relative_to(scene_root)
+            except ValueError:
+                QMessageBox.warning(self, "Data Tidak Valid", f"Path gambar tidak valid: {image_name}")
+                return
+            if not image_path.is_file():
+                QMessageBox.warning(self, "Data Tidak Valid", f"Gambar tidak ditemukan: {image_name}")
+                return
+            selected_paths.append(image_path)
+        if not selected_paths:
+            QMessageBox.warning(
+                self,
+                "Data Tidak Valid",
+                "Pilih minimal satu gambar untuk Buat Prompt Qwen.",
+            )
+            return
+        self._start_prompt_generation(
+            "qwen_image_edit_multimodal",
+            None,
+            self.qwen_image_edit_prompt_instruction_input.toPlainText().strip(),
+            prompt_key="positive_prompt",
+            multimodal_image_paths=selected_paths,
+        )
 
     def generate_wan_prompt_from_ui(self, prompt_key: str, prompt_kind: str = "wan_i2v"):
         key = str(prompt_key or "").strip()
@@ -9311,7 +9778,7 @@ class SceneEditorWindow(QMainWindow):
         except Exception as e:
             self.append_log(f"[warning] Gagal sinkronisasi prompt image edit runtime: {e}")
 
-        model_key = str(self.z_model_input.currentData() or MODEL_Z_IMAGE_TURBO).strip()
+        model_key = MODEL_GEMINI_IMAGE
         gemini_model_id = str(self.z_gemini_model_input.currentData() or MODEL_GEMINI_FLASH_05K).strip()
         args = [
             "--server", self.comfyui_server_address(),
@@ -9321,13 +9788,38 @@ class SceneEditorWindow(QMainWindow):
             "--source-image", source_image,
             "--prompt", prompt,
         ]
-        if model_key == MODEL_GEMINI_IMAGE and gemini_model_id:
+        if gemini_model_id:
             args.extend(["--gemini-model-id", gemini_model_id])
 
         self.start_process(
             IMAGE_EDIT_SCRIPT,
             args,
             f"Edit gambar {slot_index + 1} untuk {self.current_scene_dir.name}",
+            watch_dirs=[self.current_scene_dir],
+        )
+
+    def run_qwen_image_edit(self):
+        if not self.ensure_project_selected():
+            return
+        if not self.current_scene_dir:
+            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
+            return
+        if not self.save_current_scene():
+            return
+        prompt = self.qwen_image_edit_positive_input.toPlainText().strip()
+        if not prompt:
+            QMessageBox.warning(self, "Data Tidak Valid", "Positive Prompt Qwen Image Edit wajib diisi.")
+            return
+        self.start_process(
+            QWEN_IMAGE_EDIT_SCRIPT,
+            [
+                "--server", self.comfyui_server_address(),
+                "--project", self.current_project_name,
+                "--scene", self.current_scene_dir.name,
+                "--prompt-file", "qwen_image_edit_prompt.json",
+                "--number-of-edits", str(self.qwen_image_edit_number_of_edits_input.value()),
+            ],
+            f"Qwen Image Edit untuk {self.current_scene_dir.name}",
             watch_dirs=[self.current_scene_dir],
         )
 

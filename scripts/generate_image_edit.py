@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -10,38 +9,13 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in os.sys.path:
     os.sys.path.insert(0, PROJECT_ROOT)
 
-from flux2.flux2 import MODEL_FLUX2, build_flux2_edit_workflow
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image_edit
 from logging_config import setup_logging, write_log
 from prompt_localization import prepare_project_prompts_for_runtime, read_json_for_runtime
-from scripts import comfyui_api
-from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
+from scripts.runtime_service_controller import project_uses_llama
 from scripts.server_config import get_server_address
-from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-
-
-def _extract_uploaded_name(upload_info: dict, fallback_name: str) -> str:
-    for key in ("name", "filename", "file"):
-        value = str(upload_info.get(key, "")).strip()
-        if value:
-            return value
-    return fallback_name
-
-
-def _download_comfy_image(server: str, image_out: dict, output_dir: str) -> str:
-    image_filename = image_out.get("filename") or image_out.get("name") or image_out.get("file")
-    image_subfolder = image_out.get("subfolder")
-    image_type = image_out.get("type")
-    if not image_filename:
-        raise RuntimeError(f"Tidak bisa membaca filename output image: {json.dumps(image_out)}")
-    image_url = comfyui_api.get_file_url(server, image_filename, subfolder=image_subfolder, type_=image_type)
-    output_path = os.path.join(output_dir, image_filename)
-    comfyui_api.download_file_url(image_url, output_path)
-    if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
-        raise RuntimeError(f"File hasil download kosong/tidak ada: {output_path}")
-    return output_path
 
 
 def _resolve_source_image(scene_dir: str, source_image: str) -> str:
@@ -90,21 +64,6 @@ def _resolve_prompt_slot(scene_dir: str, prompt_file: str, prompt_index: int) ->
     return source_image, prompt_text, "", ""
 
 
-def _resolve_scene_image_model(scene_dir: str) -> tuple[str, str]:
-    """Resolve the shared scene image model from z_image_prompt.json."""
-    z_prompt_path = os.path.join(scene_dir, "z_image_prompt.json")
-    if not os.path.exists(z_prompt_path):
-        return MODEL_FLUX2, ""
-
-    payload = read_json_for_runtime(z_prompt_path, required=True, log_fn=write_log)
-    if not isinstance(payload, dict):
-        return MODEL_FLUX2, ""
-
-    model_name = str(payload.get("image_model", MODEL_FLUX2)).strip().lower() or MODEL_FLUX2
-    gemini_model_id = str(payload.get("gemini_model_id", "")).strip()
-    return model_name, gemini_model_id
-
-
 def process_scene(
     scene_dir: str,
     server: str,
@@ -123,38 +82,19 @@ def process_scene(
     if width <= 0 or height <= 0:
         raise RuntimeError("Ukuran gambar input tidak valid.")
 
-    model_key = str(model_name or MODEL_FLUX2).strip().lower()
-    if model_key == MODEL_GEMINI_IMAGE:
-        output_path = generate_scene_image_edit(
-            scene_dir=scene_dir,
-            source_image_path=source_path,
-            prompt=prompt_text,
-            target_width=width,
-            target_height=height,
-            gemini_model_id=gemini_model_id,
-        )
-        write_log(f"Gemini image edit selesai: {output_path}")
-        return output_path
+    model_key = str(model_name or MODEL_GEMINI_IMAGE).strip().lower()
+    if model_key != MODEL_GEMINI_IMAGE:
+        raise RuntimeError("Flux.2 Image Edit sudah dihapus; gunakan Gemini Image Edit atau Qwen Image Edit.")
 
-    upload_info = comfyui_api.upload_file(server, source_path, file_type="image")
-    uploaded_name = _extract_uploaded_name(upload_info, os.path.basename(source_path))
-    workflow = build_flux2_edit_workflow(
-        source_image_name=uploaded_name,
+    output_path = generate_scene_image_edit(
+        scene_dir=scene_dir,
+        source_image_path=source_path,
         prompt=prompt_text,
-        width=width,
-        height=height,
+        target_width=width,
+        target_height=height,
+        gemini_model_id=gemini_model_id,
     )
-    result = comfyui_api.post_workflow_api(workflow, server)
-    prompt_id = result.get("prompt_id") or result.get("id")
-    if not prompt_id:
-        raise RuntimeError(f"ComfyUI tidak mengembalikan prompt_id: {json.dumps(result)}")
-    write_log(f"Flux2 edit workflow terkirim, prompt_id={prompt_id}")
-
-    image_out = comfyui_api.wait_for_output(server, prompt_id, output_type="image", timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=SHORT_POLL_INTERVAL_SECONDS)
-    if not image_out:
-        raise RuntimeError(f"Output image tidak ditemukan (prompt_id={prompt_id})")
-    output_path = _download_comfy_image(server, image_out, scene_dir)
-    write_log(f"Flux2 image edit selesai: {output_path}")
+    write_log(f"Gemini image edit selesai: {output_path}")
     return output_path
 
 
@@ -164,7 +104,7 @@ def main():
     parser.add_argument("--server", "-s", default=get_server_address("comfyui"), help="ComfyUI server host:port")
     parser.add_argument("--project", "-p", required=True, help="Nama project di dalam folder api_production")
     parser.add_argument("--scene", "-S", required=True, help="Nama scene, contoh scene_1")
-    parser.add_argument("--model", "-m", default="", help="Model edit image: flux.2 atau gemini")
+    parser.add_argument("--model", "-m", default=MODEL_GEMINI_IMAGE, help="Model edit image: gemini")
     parser.add_argument("--gemini-model-id", default="", help="Model Gemini image spesifik (opsional)")
     parser.add_argument("--source-image", default="", help="Nama file gambar sumber di root folder scene")
     parser.add_argument("--prompt", default="", help="Prompt edit gambar")
@@ -186,7 +126,6 @@ def main():
             additional_filenames=["image_edit_prompt.json"],
             log_fn=write_log,
         )
-        ensure_comfyui(reason="image edit")
 
     try:
         source_image = str(args.source_image or "").strip()
@@ -210,9 +149,7 @@ def main():
                 gemini_model_id = slot_gemini_model_id
 
         if not model_name:
-            model_name, default_gemini_model_id = _resolve_scene_image_model(str(scene_dir))
-            if not gemini_model_id:
-                gemini_model_id = default_gemini_model_id
+            model_name = MODEL_GEMINI_IMAGE
         if not source_image:
             raise RuntimeError("Gambar awal belum dipilih.")
         if not prompt_text:

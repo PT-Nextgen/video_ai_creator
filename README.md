@@ -36,6 +36,7 @@ File utama:
 - `z_image_prompt.json`
 - `z_image_extra_prompts.json`
 - `image_edit_prompt.json`
+- `qwen_image_edit_prompt.json` (untuk tab `Qwen Image Edit`)
 - `wan22_t2v_prompt.json` (untuk `wan22_t2v_i2v` dan `wan22_t2v_batch`)
 - `wan22_t2v_batch_extra_prompts.json` (untuk `wan22_t2v_batch`)
 - `wan22_s2v_prompt.json`
@@ -77,6 +78,48 @@ Catatan format prompt:
 - jika JSON MiniMax di UI tidak valid, Save menampilkan error dan tidak merusak file prompt
 - `lora_trigger_words` disimpan sebagai text biasa dan tidak diterjemahkan
 - `lora_trigger_words` hanya disisipkan ke awal prompt positif versi Inggris saat runtime, bukan ditulis permanen ke field prompt
+
+### Qwen Image Edit
+
+Tab `Qwen Image Edit` muncul di sebelah tab `Image Edit` pada scene yang menyediakan fitur edit gambar. Semua pengaturan Qwen disimpan per scene, sehingga setiap scene dapat memiliki gambar referensi, ukuran, seed, dan prompt yang berbeda.
+
+#### Edit Gambar
+
+Qwen menggunakan satu panel `Edit Gambar`, berbeda dari tab `Image Edit` lama yang memiliki beberapa panel edit. Panel ini menyediakan:
+
+- pilihan ukuran `368x640`, `480x848`, `720x1280`, `640x368`, `848x480`, dan `1280x720`
+- `Random Seed` untuk menghasilkan variasi setiap kali proses dijalankan
+- seed tetap untuk mengulang proses dengan pengaturan acuan yang sama
+- sepuluh pilihan gambar referensi yang ditata dalam tiga kolom agar mudah digunakan
+- `Positive Prompt` untuk menjelaskan perubahan yang diinginkan
+- `Negative Prompt` untuk menjelaskan hal-hal yang tidak diinginkan
+- `Jumlah Edit` untuk menentukan jumlah gambar yang dibuat
+
+Sepuluh gambar referensi dapat diisi secara bebas dan tidak harus lengkap. Pilihan `(Tanpa gambar)` dapat digunakan pada slot yang tidak diperlukan. Contohnya, pengguna dapat mengisi hanya `Image 1` dan `Image 3` tanpa harus mengisi slot lainnya.
+
+Gambar yang dipilih akan dikirim sesuai urutan slot yang terisi. Jika hanya `Image 1` dan `Image 3` yang dipilih, keduanya menjadi referensi pertama dan kedua pada workflow; slot kosong tidak dikirim sebagai gambar palsu.
+
+`Jumlah Edit` bernilai `1` secara default dan harus lebih besar dari `0`. Jika diatur ke angka yang lebih besar, aplikasi mengirim workflow baru untuk setiap edit dan mengunduh hasil sebanyak angka tersebut. Saat `Random Seed` aktif, setiap workflow memakai seed acak yang berbeda agar hasilnya menjadi variasi; saat dinonaktifkan, semua edit menggunakan seed statik yang dipilih.
+
+#### Buat Prompt
+
+Bagian `Buat Prompt` memiliki sepuluh pilihan gambar tambahan dan satu kolom instruksi. Bagian ini adalah pipeline terpisah dari `Edit Gambar`: gambar yang dipilih untuk menyusun prompt tidak otomatis menjadi gambar referensi workflow edit.
+
+Gambar untuk `Buat Prompt` merupakan pilihan yang terpisah dari gambar untuk `Edit Gambar`. Gambar yang dikirim ke model bahasa tidak harus dipilih kembali sebagai gambar workflow. Dengan demikian, pengguna dapat memakai satu set gambar sebagai bahan analisis prompt, lalu memakai set gambar lain untuk proses edit akhir.
+
+Model memberi urutan pada gambar berdasarkan urutan gambar yang dipilih. Misalnya, apabila pengguna memilih gambar pada slot 1 dan slot 3, model akan menerima keduanya sebagai `<image1>` dan `<image2>`. Urutan ini membantu pengguna memberi instruksi seperti memindahkan subjek dari satu gambar ke gambar lain atau mempertahankan bagian tertentu dari referensi tertentu.
+
+Instruksi `Buat Prompt` dapat menjelaskan:
+
+- objek atau orang yang ingin diubah
+- gambar mana yang menjadi sumber subjek atau bahan referensi
+- bagian yang harus dipertahankan
+- perubahan pose, pakaian, warna, latar, komposisi, atau gaya
+- hubungan antara beberapa gambar referensi
+
+`Buat Prompt` menggunakan input gambar multimodal dan tersedia untuk provider Gemini maupun llama.cpp yang mendukung input gambar. Model menerima instruksi Qwen Image Edit 2.1 sebelum instruksi tambahan dari UI, sehingga prompt yang dihasilkan tetap mengikuti aturan edit gambar Qwen.
+
+LLM diminta mengembalikan JSON yang berisi `en`, `id_new`, dan `id_old`. Hasil tersebut dipakai untuk mengisi `Positive Prompt`; `Negative Prompt` tidak diubah oleh tombol `Buat Prompt`. Jika provider translasi menggunakan llama.cpp, translasi diselesaikan terlebih dahulu sebelum workflow Qwen dikirim ke ComfyUI.
 
 Aturan khusus MiniMax H3 untuk tombol `Buat Prompt` dan Agentic:
 - LLM hanya diminta menghasilkan `positive_prompt.en` dalam bentuk object JSON nested; LLM tidak diminta membuat `id_new` atau `id_old`
@@ -138,7 +181,6 @@ Field utama:
 Nilai `image_model` yang didukung:
 - `z-image turbo`
 - `flux.2`
-- `flux.2 klein 9b`
 - `gemini`
 - `wan22_i2v_prompt.json`
   - `duration_seconds` (`5` / `10`)
@@ -197,8 +239,6 @@ Nilai `image_model` yang didukung:
   - `focal_point` (`center`, `top_left`, `top_center`, `top_right`, `center_left`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`)
   - `zoom_strength` (`1.0` sampai `1.5`)
 - `image_edit_prompt.json`
-  - `image_model` (`flux.2` / `gemini`)
-  - `gemini_model_id` (khusus saat `image_model=gemini`)
   - `groups` (3 grup edit)
     - `source_image`
     - `prompt`  
@@ -244,6 +284,14 @@ Kebutuhan prompt per `scene_type`:
   - FPS MiniMax H3 ditetapkan `24`
   - workflow memakai `minimax_h3_r2v_api.json` secara in-memory dan menghapus referensi Picture 2, Picture 3, Video 1, Audio 2, dan Audio 3
   - Picture 1 berasal dari gambar root terbaru dan Audio 1 berasal dari audio speech root terbaru
+
+Mode MiniMax H3:
+- `Mode Cepat` tersedia pada tab T2V dan I2V. Pada `minimax-h3_i2v-panjang`, pilihan ini berlaku untuk seluruh stage I2V yang dijalankan.
+- `Mode Cepat` memakai workflow Fast MiniMax H3, tidak menggunakan H3 Cache, dan tidak menyediakan pengaturan jumlah step.
+- `Mode Khusus` tersedia pada seluruh tab MiniMax H3: T2V, I2V, I2V-Panjang, S2V, dan R2V. Mode ini memakai model MiniMax H3 turbo 8-step khusus.
+- `Mode Cepat` dan `Mode Khusus` tidak dapat aktif bersamaan. Jika salah satunya dipilih, mode yang lain otomatis dimatikan.
+- Jika kedua mode tidak dipilih, scene memakai workflow MiniMax H3 normal dan pengaturan H3 Cache yang tersedia pada tab tersebut tetap digunakan.
+
 - `wan22_t2v_batch`
   - membutuhkan `scene_meta.json`, `wan22_t2v_prompt.json`, dan `wan22_t2v_batch_extra_prompts.json`
   - durasi scene hanya `5` atau `10`
@@ -629,10 +677,8 @@ Fungsi utama:
 - pilih model image:
   - `Z-Image Turbo`
   - `Flux.2`
-  - `Flux.2 Klein 9B`
   - `Gemini`
 - pilih model image edit:
-  - `Flux.2`
   - `Gemini`
 - menampilkan aset media per scene
 - klik sekali pada aset membuka preview:
@@ -808,8 +854,8 @@ Perilaku UI:
   - `Prompt Negatif`
   - tombol `Buat Prompt` pada field `Prompt Positif` dan `Prompt Negatif` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en`, `id_new`, dan `id_old`
 - untuk `image_edit` (tab `Image Edit`):
-  - field `Model`: `Flux.2` / `Gemini`
-  - field `Model Gemini` ditampilkan saat model `Gemini` dipilih
+  - memakai `Gemini Image Edit`
+  - field `Model Gemini` tersedia untuk memilih model Gemini
   - tersedia 3 group edit:
     - dropdown `Gambar Awal` (diisi dari file gambar di root scene aktif)
     - input `Prompt`
@@ -817,9 +863,7 @@ Perilaku UI:
     - tombol `Buat Prompt` untuk menyusun ulang prompt lewat LLM lalu menyimpan `en` dan `id_new`
     - tombol `Edit Gambar`
   - input `Prompt` di UI selalu menampilkan `id_new`
-  - saat tombol `Edit Gambar` ditekan:
-    - model `Flux.2`: memakai template `api_template/flux2_edit_api.json`, input gambar di node `46`, ukuran mengikuti gambar input, seed selalu random
-    - model `Gemini`: prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris pakai Gemini, lalu hasilnya dipakai untuk edit
+  - saat tombol `Edit Gambar` ditekan, prompt runtime diambil dari `en` di JSON jika sudah sinkron; jika `id_old != id_new` atau `en` kosong, sistem translate `id_new` ke bahasa Inggris memakai provider prompt project, lalu gambar dikirim ke Gemini
   - isi dropdown `Gambar Awal` ikut diperbarui saat daftar aset dimuat ulang (`Muat Ulang`)
 - dialog multi-project agentic menampilkan daftar project dalam bentuk checkbox dan tombol `Agentic`
 - saat tombol `Agentic` dijalankan dari dialog itu, project terpilih diproses berurutan berdasarkan abjad dengan mode `Execute Agentic`
@@ -954,16 +998,6 @@ Model yang tersedia:
   - template normal: `api_template/flux2_api.json`
   - template Lora: `api_template/flux2_lora_api.json`
   - tidak memakai negative prompt
-- `Flux.2 Klein 9B`
-  - template normal: `api_template/flux2_k9_api.json`
-  - template Lora: `api_template/flux2_k9_lora_api.json`
-  - memakai positive dan negative prompt
-- `Flux.2 (Image Edit)`
-  - template edit: `api_template/flux2_edit_api.json`
-  - input gambar sumber di node `46`
-  - prompt positif dikirim dari group edit yang dipilih
-  - ukuran output mengikuti ukuran gambar input
-  - seed selalu random
 - `Gemini`
   - generate image via Gemini API (tanpa ComfyUI workflow)
   - model Gemini spesifik dipilih dari `gemini_model_id`
@@ -1101,27 +1135,17 @@ Contoh:
 Script: `scripts/generate_image_edit.py`
 
 Fungsi:
-- membaca konfigurasi model edit dari UI (`Flux.2` atau `Gemini`)
+- menjalankan image edit menggunakan Gemini
 - mengambil gambar sumber dari root folder scene sesuai pilihan dropdown
 - bisa dijalankan manual dengan `--source-image` + `--prompt`
 - bisa juga membaca slot prompt dari `image_edit_prompt.json` dengan `--prompt-file image_edit_prompt.json --prompt-index 1|2|3`
-- jika model `Flux.2`:
-  - upload gambar sumber ke ComfyUI
-  - membangun workflow dari `api_template/flux2_edit_api.json`
-  - set input gambar di node `46`
-  - set prompt dari group edit yang dipilih
-  - set ukuran output sama seperti ukuran gambar sumber
-  - set seed random
-  - download hasil edit ke root folder scene
-- jika model `Gemini`:
-  - kirim gambar sumber + prompt runtime ke Gemini API
-  - prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai model `project_settings.json.prompt_generation`
-  - request image size `1K`
-  - simpan hasil akhir ke root folder scene dengan ukuran mengikuti orientasi/ukuran gambar sumber
+- mengirim gambar sumber + prompt runtime ke Gemini API
+- prompt runtime diambil dari `en` bila tersedia; jika belum sinkron, `id_new` diterjemahkan dulu ke bahasa Inggris memakai provider `project_settings.json.prompt_generation`
+- request image size `1K`
+- menyimpan hasil akhir ke root folder scene dengan ukuran mengikuti orientasi/ukuran gambar sumber
 
 Contoh:
 ```powershell
-.\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --model flux.2 --source-image input.png --prompt "Tambahkan nuansa cinematic malam"
 .\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --model gemini --gemini-model-id gemini-3.1-flash-image-preview --source-image input.png --prompt "Ubah menjadi gaya watercolor"
 .\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --prompt-file image_edit_prompt.json --prompt-index 1
 .\.venv\Scripts\python.exe scripts\generate_image_edit.py --server 127.0.0.1:8188 --project demo_project --scene scene_1 --prompt-file image_edit_prompt.json --prompt-index 2
@@ -1380,6 +1404,12 @@ Tab MiniMax H3 T2V dan I2V menyediakan checkbox `Mode Cepat`. Nilainya disimpan 
 
 Mode ini hanya mengekspos prompt, durasi, resolusi, LoRA 1, dan LoRA 2. FastH3 selalu memakai 8 step dan FPS `24`; pengaturan jumlah step serta H3 Cache tidak digunakan dan group Cache disembunyikan di UI ketika Mode Cepat aktif. Untuk `minimax-h3_i2v-panjang`, satu `fast_mode` pada prompt root berlaku seragam untuk seluruh empat stage dan setiap `last_frame` tetap diinjeksi oleh runtime ke node `LoadImage` FastH3 pada stage berikutnya.
 
+#### Mode Khusus
+
+`Mode Khusus` tersedia pada tab MiniMax H3 T2V, I2V, I2V-Panjang, S2V, dan R2V. Mode ini memakai model turbo 8-step khusus. Pada `minimax-h3_i2v-panjang`, satu pilihan Mode Khusus berlaku untuk semua stage yang dijalankan dan input `last frame` tetap digunakan pada stage lanjutan.
+
+Mode Cepat dan Mode Khusus tidak dapat aktif bersamaan. Pada T2V dan I2V, memilih salah satunya akan mematikan pilihan lainnya. S2V dan R2V tidak memiliki Mode Cepat, sehingga hanya menampilkan Mode Khusus. Jika Mode Khusus dipilih, workflow memakai alur MiniMax H3 normal dengan model khusus; jika tidak, workflow normal tetap menggunakan model default dan H3 Cache sesuai pengaturan tab.
+
 Saat Cache dinonaktifkan, koneksi wajib tetap melewati LoRA 2:
 
 ```text
@@ -1388,7 +1418,7 @@ UNETLoader → LoRA 2 → LoRA 1 → BasicScheduler/BasicGuider
 
 LoRA 1 tidak boleh dihubungkan langsung ke `UNETLoader`, karena hal tersebut akan membypass LoRA 2.
 
-Validasi field H3 Cache: `Steps` integer `20`-`50`, `Reuse Threshold` `0.00`-`0.50`, `Start Percent` dan `End Percent` `0.00`-`1.00` dengan tepat dua desimal, serta `Max Steps` integer `1`-`3`. Semua field wajib diisi. Nilai default mengikuti API workflow MiniMax H3 dan konfigurasi ini ikut disalin oleh tombol `Edit Variasi`.
+Validasi field H3 Cache: `Steps` integer `4`-`50`, `Reuse Threshold` `0.00`-`0.50`, `Start Percent` dan `End Percent` `0.00`-`1.00` dengan tepat dua desimal, serta `Max Steps` integer `1`-`3`. Semua field wajib diisi. Nilai default mengikuti API workflow MiniMax H3 dan konfigurasi ini ikut disalin oleh tombol `Edit Variasi`.
 
 Aturan durasi:
 
@@ -1533,6 +1563,8 @@ Workflow ini memakai mode full-reference `Ref2VA` dari skill `MINIMAX-H3`. Forma
 
 Semua section ditulis dalam bahasa Inggris. Bahasa asli hanya dipertahankan untuk dialog, lirik, dan teks yang terlihat di dalam scene.
 
+Tab R2V dapat memilih maksimal 5 gambar, 3 audio, dan 1 video sebagai reference. Reference yang dipilih diberi nomor berurutan mulai dari `Picture 1`, `Audio 1`, atau `Video 1`; reference yang tidak dipilih tidak dikirim ke workflow.
+
 ### Pemetaan input R2V
 
 | Label prompt | Slot workflow |
@@ -1540,6 +1572,8 @@ Semua section ditulis dalam bahasa Inggris. Bahasa asli hanya dipertahankan untu
 | `<Picture 1>` | `ref_images.ref_image_0` |
 | `<Picture 2>` | `ref_images.ref_image_1` |
 | `<Picture 3>` | `ref_images.ref_image_2` |
+| `<Picture 4>` | `ref_images.ref_image_3` |
+| `<Picture 5>` | `ref_images.ref_image_4` |
 | `<Video 1>` | `ref_videos.ref_video_0` |
 | audio sinkron dari `<Video 1>` | `ref_video_audios.ref_video_audio_0` |
 | `<Audio 1>` | `ref_audios.ref_audio_0` |
@@ -1736,10 +1770,20 @@ Mapping ukuran scene MiniMax H3 ke `ResolutionSelector`:
 | --- | --- | ---: |
 | `368x640` | `9:16 (Portrait Widescreen)` | `0.2` |
 | `480x848` | `9:16 (Portrait Widescreen)` | `0.4` |
+| `544x960` | `9:16 (Portrait Widescreen)` | `0.5` |
+| `608x1056` | `9:16 (Portrait Widescreen)` | `0.6` |
+| `640x1152` | `9:16 (Portrait Widescreen)` | `0.7` |
+| `672x1216` | `9:16 (Portrait Widescreen)` | `0.8` |
 | `720x1280` | `9:16 (Portrait Widescreen)` | `0.9` |
+| `768x1344` | `9:16 (Portrait Widescreen)` | `0.98` |
 | `640x368` | `16:9 (Widescreen)` | `0.2` |
 | `848x480` | `16:9 (Widescreen)` | `0.4` |
+| `960x544` | `16:9 (Widescreen)` | `0.5` |
+| `1056x608` | `16:9 (Widescreen)` | `0.6` |
+| `1152x640` | `16:9 (Widescreen)` | `0.7` |
+| `1216x672` | `16:9 (Widescreen)` | `0.8` |
 | `1280x720` | `16:9 (Widescreen)` | `0.9` |
+| `1344x768` | `16:9 (Widescreen)` | `0.98` |
 
 Semua mapping memakai `multiple=32`. Karena itu, output aktual node `ResolutionSelector` MiniMax dapat dibulatkan ke ukuran kompatibel terdekat yang lebih kecil, misalnya target UI/project `368x640` dapat menghasilkan raw output MiniMax `352x608`. Final Compose kemudian menormalkan kembali video ke ukuran `project_settings.json.video_size` menggunakan `scale + pad`.
 
@@ -1785,7 +1829,7 @@ Dokumentasi ini menjadi ringkasan aturan terbaru untuk seluruh scene MiniMax H3.
 
 - File prompt scene yang didukung mencakup `minimax_h3_t2v_prompt.json`, `minimax_h3_i2v_prompt.json`, `minimax_h3_i2v_panjang_prompt.json`, `minimax_h3_s2v_prompt.json`, dan `minimax_h3_r2v_prompt.json`.
 - Referensi ringkas yang dikirim ke LLM untuk tombol `Buat Prompt` dan Agentic disesuaikan dengan scene: `SCENE-GENERAL.md` serta dokumen scene dan prompt khususnya. Aturan dialog bersama berasal dari `MINIMAX-H3-DIALOG.md`.
-- S2V hanya boleh memakai reference aktif `<Picture 1>` dan `<Audio 1>`. R2V memakai manifest reference aktif secara dinamis, dengan batas maksimal 3 Picture, 3 Audio, dan 1 Video. Token reference yang tidak aktif tidak boleh dikembalikan oleh LLM.
+- S2V hanya boleh memakai reference aktif `<Picture 1>` dan `<Audio 1>`. R2V memakai manifest reference aktif secara dinamis, dengan batas maksimal 5 Picture, 3 Audio, dan 1 Video. Token reference yang tidak aktif tidak boleh dikembalikan oleh LLM.
 - Struktur JSON keluaran harus mengikuti schema file scene, tetapi bagian `OUTPUT YANG DIHASILKAN` pada input Agentic tetap berupa schema kosong agar LLM mengisi konfigurasi berdasarkan scene/variasi yang diberikan.
 - Validasi saat save berfokus pada JSON `id_new` yang valid. Translasi `id_new` ke `en` dilakukan saat scene dijalankan; bila validasi runtime atau translasi gagal, eksekusi scene dihentikan.
 

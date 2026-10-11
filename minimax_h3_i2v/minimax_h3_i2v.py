@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
 TEMPLATE = "minimax_h3_i2v_api.json"
+SPECIAL_UNET_MODEL = "MINIMAX-H3/10eros_max_h3_8step_turbo_beta6_int8.safetensors"
 
 I2VA_FIRST_FRAME_PREFIX = (
     "For the target video, at 0.00 seconds into the target video, "
@@ -35,10 +36,20 @@ I2VA_REQUIRED_SECTION_LABELS = (
 SIZE_OPTIONS = [
     ("368x640", 368, 640),
     ("480x848", 480, 848),
+    ("544x960", 544, 960),
+    ("608x1056", 608, 1056),
+    ("640x1152", 640, 1152),
+    ("672x1216", 672, 1216),
     ("720x1280", 720, 1280),
+    ("768x1344", 768, 1344),
     ("640x368", 640, 368),
     ("848x480", 848, 480),
+    ("960x544", 960, 544),
+    ("1056x608", 1056, 608),
+    ("1152x640", 1152, 640),
+    ("1216x672", 1216, 672),
     ("1280x720", 1280, 720),
+    ("1344x768", 1344, 768),
 ]
 
 DEFAULT_H3_CACHE = {
@@ -69,6 +80,7 @@ DEFAULT_PROMPT = {
     "fps": 24,
     "remove_sound": False,
     "fast_mode": False,
+    "special_mode": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
@@ -79,7 +91,7 @@ def _h3_cache_values(prompt: dict) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     values = {}
     specs = {
-        "steps": (int, 20, 50),
+        "steps": (int, 4, 50),
         "reuse_threshold": (float, 0.0, 0.5),
         "start_percent": (float, 0.0, 1.0),
         "end_percent": (float, 0.0, 1.0),
@@ -184,10 +196,20 @@ def _set_resolution_selector(workflow: dict, width: int, height: int) -> bool:
     resolution_map = {
         (368, 640): ("9:16 (Portrait Widescreen)", 0.2),
         (480, 848): ("9:16 (Portrait Widescreen)", 0.4),
+        (544, 960): ("9:16 (Portrait Widescreen)", 0.5),
+        (608, 1056): ("9:16 (Portrait Widescreen)", 0.6),
+        (640, 1152): ("9:16 (Portrait Widescreen)", 0.7),
+        (672, 1216): ("9:16 (Portrait Widescreen)", 0.8),
         (720, 1280): ("9:16 (Portrait Widescreen)", 0.9),
+        (768, 1344): ("9:16 (Portrait Widescreen)", 0.98),
         (640, 368): ("16:9 (Widescreen)", 0.2),
         (848, 480): ("16:9 (Widescreen)", 0.4),
+        (960, 544): ("16:9 (Widescreen)", 0.5),
+        (1056, 608): ("16:9 (Widescreen)", 0.6),
+        (1152, 640): ("16:9 (Widescreen)", 0.7),
+        (1216, 672): ("16:9 (Widescreen)", 0.8),
         (1280, 720): ("16:9 (Widescreen)", 0.9),
+        (1344, 768): ("16:9 (Widescreen)", 0.98),
     }
     aspect_ratio, megapixels = resolution_map.get(
         (int(width), int(height)),
@@ -227,7 +249,11 @@ def build_workflow(
     last_frame_uploaded_name: str | None = None,
 ) -> dict:
     prompt = i2v_prompt if isinstance(i2v_prompt, dict) else {}
+    if bool(prompt.get("fast_mode", False)) and bool(prompt.get("special_mode", False)):
+        raise ValueError("Mode Cepat dan Mode Khusus MiniMax H3 tidak boleh aktif bersamaan.")
     workflow = copy.deepcopy(_load_template())
+    if bool(prompt.get("special_mode", False)):
+        _set_input(workflow, "129", "unet_name", SPECIAL_UNET_MODEL)
 
     try:
         width = int(prompt.get("width", DEFAULT_PROMPT["width"]))

@@ -6,7 +6,7 @@ Scene `minimax-h3_r2v` membuat video MiniMax H3 Reference-to-Video dengan refere
 
 Reference yang tersedia:
 
-- maksimal 3 Picture;
+- maksimal 5 Picture;
 - maksimal 3 Audio;
 - maksimal 1 Video;
 - minimal 1 reference dari salah satu kategori tersebut.
@@ -89,7 +89,7 @@ Ukuran video mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan 
 
 - `minimax_h3_r2v_prompt.json` tersedia dan JSON valid.
 - Minimal satu Picture, Audio, atau Video aktif.
-- Jumlah maksimal tidak melebihi 3 Picture, 3 Audio, dan 1 Video.
+- Jumlah maksimal tidak melebihi 5 Picture, 3 Audio, dan 1 Video.
 - Nomor token setiap kategori dimulai dari 1 dan berurutan.
 - Tidak ada token media yang tidak tersedia.
 - Keenam section Ref2VA tersedia dan urutannya benar.

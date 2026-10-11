@@ -4,12 +4,8 @@ import os
 import random
 
 MODEL_FLUX2 = "flux.2"
-MODEL_FLUX2_K9 = "flux.2 klein 9b"
 TEMPLATE_DEFAULT = "flux2_api.json"
 TEMPLATE_LORA = "flux2_lora_api.json"
-TEMPLATE_K9 = "flux2_k9_api.json"
-TEMPLATE_K9_LORA = "flux2_k9_lora_api.json"
-TEMPLATE_EDIT = "flux2_edit_api.json"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
@@ -39,38 +35,25 @@ def is_flux2_prompt(z_prompt: dict | None = None) -> bool:
     z_prompt = z_prompt or {}
     model = str(z_prompt.get("image_model", "")).strip().lower()
     json_api = str(z_prompt.get("json_api", "")).strip().lower()
-    return model in {MODEL_FLUX2, MODEL_FLUX2_K9} or json_api in {
-        TEMPLATE_DEFAULT,
-        TEMPLATE_LORA,
-        TEMPLATE_K9,
-        TEMPLATE_K9_LORA,
-    }
+    return model == MODEL_FLUX2 or json_api in {TEMPLATE_DEFAULT, TEMPLATE_LORA}
 
 
 def get_model_key(z_prompt: dict | None = None) -> str:
-    z_prompt = z_prompt or {}
-    model = str(z_prompt.get("image_model", "")).strip().lower()
-    json_api = str(z_prompt.get("json_api", "")).strip().lower()
-    if model == MODEL_FLUX2_K9 or json_api in {TEMPLATE_K9, TEMPLATE_K9_LORA}:
-        return MODEL_FLUX2_K9
     return MODEL_FLUX2
 
 
 def supports_negative_prompt(z_prompt: dict | None = None) -> bool:
-    return get_model_key(z_prompt) == MODEL_FLUX2_K9
+    return False
 
 
 def get_template_name(z_prompt: dict | None = None) -> str:
     z_prompt = z_prompt or {}
-    model = get_model_key(z_prompt)
-    if model == MODEL_FLUX2_K9:
-        return TEMPLATE_K9_LORA if z_prompt.get("use_lora") else TEMPLATE_K9
     return TEMPLATE_LORA if z_prompt.get("use_lora") else TEMPLATE_DEFAULT
 
 
 def _inject_seed(workflow: dict, z_prompt: dict | None = None):
     try:
-        seed_node = "93" if get_model_key(z_prompt) == MODEL_FLUX2_K9 else "25"
+        seed_node = "25"
         if seed_node not in workflow or not isinstance(workflow[seed_node], dict):
             workflow[seed_node] = {"inputs": {}}
         if "inputs" not in workflow[seed_node] or not isinstance(workflow[seed_node]["inputs"], dict):
@@ -87,13 +70,9 @@ def _inject_seed(workflow: dict, z_prompt: dict | None = None):
 
 def build_workflow(z_prompt: dict) -> dict:
     workflow = copy.deepcopy(_load_template(get_template_name(z_prompt)))
-    model = get_model_key(z_prompt)
     replace_map = {
         "positive_prompt": z_prompt.get("positive_prompt", ""),
     }
-    if supports_negative_prompt(z_prompt):
-        replace_map["negative_prompt"] = z_prompt.get("negative_prompt", "")
-        replace_map["positive_promt"] = z_prompt.get("positive_prompt", "")
     _traverse_and_replace(workflow, replace_map)
 
     try:
@@ -105,28 +84,18 @@ def build_workflow(z_prompt: dict) -> dict:
     except (TypeError, ValueError):
         height = 640
 
-    if model == MODEL_FLUX2_K9:
-        if "91" in workflow and isinstance(workflow["91"], dict):
-            inputs = workflow["91"].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["value"] = width
-        if "92" in workflow and isinstance(workflow["92"], dict):
-            inputs = workflow["92"].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["value"] = height
-    else:
-        if "47" in workflow and isinstance(workflow["47"], dict):
-            inputs = workflow["47"].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["width"] = width
-                inputs["height"] = height
-        if "48" in workflow and isinstance(workflow["48"], dict):
-            inputs = workflow["48"].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["width"] = width
-                inputs["height"] = height
+    if "47" in workflow and isinstance(workflow["47"], dict):
+        inputs = workflow["47"].get("inputs")
+        if isinstance(inputs, dict):
+            inputs["width"] = width
+            inputs["height"] = height
+    if "48" in workflow and isinstance(workflow["48"], dict):
+        inputs = workflow["48"].get("inputs")
+        if isinstance(inputs, dict):
+            inputs["width"] = width
+            inputs["height"] = height
 
-    lora_node = "106" if model == MODEL_FLUX2_K9 else "82"
+    lora_node = "82"
     if z_prompt.get("use_lora") and lora_node in workflow and isinstance(workflow[lora_node], dict):
         inputs = workflow[lora_node].get("inputs")
         if isinstance(inputs, dict):
@@ -142,40 +111,3 @@ def build_workflow(z_prompt: dict) -> dict:
 
 def build_flux2_workflow(z_prompt: dict) -> dict:
     return build_workflow(z_prompt)
-
-
-def build_edit_workflow(source_image_name: str, prompt: str, width: int, height: int) -> dict:
-    workflow = copy.deepcopy(_load_template(TEMPLATE_EDIT))
-    _traverse_and_replace(workflow, {"positive_prompt": str(prompt or "")})
-
-    if "46" in workflow and isinstance(workflow["46"], dict):
-        inputs = workflow["46"].get("inputs")
-        if isinstance(inputs, dict):
-            inputs["image"] = str(source_image_name or "")
-
-    try:
-        parsed_width = int(width)
-    except (TypeError, ValueError):
-        parsed_width = 368
-    try:
-        parsed_height = int(height)
-    except (TypeError, ValueError):
-        parsed_height = 640
-
-    for node_id in ("47", "48"):
-        if node_id in workflow and isinstance(workflow[node_id], dict):
-            inputs = workflow[node_id].get("inputs")
-            if isinstance(inputs, dict):
-                inputs["width"] = parsed_width
-                inputs["height"] = parsed_height
-
-    if "25" not in workflow or not isinstance(workflow["25"], dict):
-        workflow["25"] = {"inputs": {}}
-    if "inputs" not in workflow["25"] or not isinstance(workflow["25"]["inputs"], dict):
-        workflow["25"]["inputs"] = {}
-    workflow["25"]["inputs"]["noise_seed"] = random.randint(10**15, 10**16 - 1)
-    return workflow
-
-
-def build_flux2_edit_workflow(source_image_name: str, prompt: str, width: int, height: int) -> dict:
-    return build_edit_workflow(source_image_name, prompt, width, height)

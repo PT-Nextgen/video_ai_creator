@@ -75,6 +75,7 @@ from minimax_h3_r2v.minimax_h3_r2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_S2V_PROMPT,
     DEFAULT_R2V_PROMPT as DEFAULT_MINIMAX_H3_R2V_PROMPT,
     MAX_AUDIO_DURATION as MINIMAX_H3_S2V_MAX_AUDIO_DURATION,
+    MAX_IMAGE_REFERENCES as MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES,
     MAX_DURATION as MINIMAX_H3_R2V_MAX_DURATION,
     build_minimax_h3_r2v_workflow,
     send_workflow as send_minimax_h3_s2v_workflow,
@@ -1032,6 +1033,11 @@ def process_scene(scene_dir, server):
 
         t2v_duration = scene_duration if scene_duration <= 15 else 15
         use_fast_t2v = bool(t2v_prompt.get("fast_mode", False))
+        if use_fast_t2v and bool(t2v_prompt.get("special_mode", False)):
+            write_log(
+                f"MiniMax H3 T2V tidak boleh mengaktifkan Mode Cepat dan Mode Khusus bersamaan untuk {scene_dir}"
+            )
+            return False
         t2v_build_workflow = (
             build_minimax_h3fast_t2v_workflow
             if use_fast_t2v
@@ -1136,6 +1142,11 @@ def process_scene(scene_dir, server):
 
         i2v_duration = scene_duration - 15
         use_fast_i2v = bool(i2v_prompt.get("fast_mode", False))
+        if use_fast_i2v and bool(i2v_prompt.get("special_mode", False)):
+            write_log(
+                f"MiniMax H3 I2V tidak boleh mengaktifkan Mode Cepat dan Mode Khusus bersamaan untuk {scene_dir}"
+            )
+            return False
         i2v_build_workflow = (
             build_minimax_h3fast_i2v_workflow
             if use_fast_i2v
@@ -1297,6 +1308,11 @@ def process_scene(scene_dir, server):
 
         remove_sound = bool(chained_prompt.get('remove_sound', False))
         use_fast_i2v = bool(chained_prompt.get("fast_mode", False))
+        if use_fast_i2v and bool(chained_prompt.get("special_mode", False)):
+            write_log(
+                f"MiniMax H3 I2V-Panjang tidak boleh mengaktifkan Mode Cepat dan Mode Khusus bersamaan untuk {scene_dir}"
+            )
+            return False
         i2v_build_workflow = (
             build_minimax_h3fast_i2v_workflow
             if use_fast_i2v
@@ -1688,6 +1704,11 @@ def process_scene(scene_dir, server):
                 include_last_frame=False,
             )
             use_fast_i2v = bool(i2v_prompt.get("fast_mode", False))
+            if use_fast_i2v and bool(i2v_prompt.get("special_mode", False)):
+                write_log(
+                    f"MiniMax H3 I2V tidak boleh mengaktifkan Mode Cepat dan Mode Khusus bersamaan untuk {scene_dir}"
+                )
+                return False
             i2v_build_workflow = (
                 build_minimax_h3fast_i2v_workflow
                 if use_fast_i2v
@@ -2058,7 +2079,11 @@ def process_scene(scene_dir, server):
             r2v_prompt = _read_scene_json(scene_dir, 'minimax_h3_r2v_prompt.json', required=True)
             references = r2v_prompt.get('references', {}) if isinstance(r2v_prompt, dict) else {}
             references = references if isinstance(references, dict) else {}
-            image_names = [str(value).strip() for value in references.get('images', []) if str(value).strip()][:3]
+            image_names = [
+                str(value).strip()
+                for value in references.get('images', [])
+                if str(value).strip()
+            ][:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES]
             audio_names = [str(value).strip() for value in references.get('audios', []) if str(value).strip()][:3]
             video_name = str(references.get('video', '')).strip()
             if not image_names and not audio_names and not video_name:

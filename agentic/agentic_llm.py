@@ -13,6 +13,7 @@ from scripts.timeout_config import LLM_CALL_TIMEOUT_SECONDS
 from logging_config import write_log
 from gemini.gemini_image import find_gemini_key
 from minimax_h3_i2v.minimax_h3_i2v import is_valid_minimax_h3_i2v_prompt
+from minimax_h3_r2v.minimax_h3_r2v import MAX_IMAGE_REFERENCES as MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES
 from prompt_localization import get_prompt_translator, prepare_prompt_payload_for_save
 from minimax_h3.minimax_h3_prompt import (
     REF2VA_SECTION_KEYS,
@@ -970,7 +971,11 @@ def build_agentic_prompt(
         except Exception:
             r2v_references = {}
         r2v_references = r2v_references if isinstance(r2v_references, dict) else {}
-        active_images = [str(value).strip() for value in r2v_references.get("images", []) if str(value).strip()][:3]
+        active_images = [
+            str(value).strip()
+            for value in r2v_references.get("images", [])
+            if str(value).strip()
+        ][:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES]
         active_audios = [str(value).strip() for value in r2v_references.get("audios", []) if str(value).strip()][:3]
         active_video = str(r2v_references.get("video", "") or "").strip()
         append_md_group(
@@ -981,7 +986,7 @@ def build_agentic_prompt(
                 "MINIMAX-H3-R2V-PROMPT.md",
                 "MINIMAX-H3-DIALOG.md",
             ],
-            "CATATAN: scene R2V memakai kombinasi dinamis maksimal 3 Picture, 1 Video, dan 3 Audio. "
+            f"CATATAN: scene R2V memakai kombinasi dinamis maksimal {MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES} Picture, 1 Video, dan 3 Audio. "
             "Gunakan hanya token reference yang tercantum pada konfigurasi input, dengan penomoran tiap kategori berurutan. "
             "Minimal satu reference wajib dipakai. Durasi scene hanya 1, 5, 10, atau 15 detik. "
             "Jangan membuat atau mengubah image awal.",

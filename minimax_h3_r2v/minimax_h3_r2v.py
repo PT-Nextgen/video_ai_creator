@@ -23,9 +23,13 @@ from minimax_h3.minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_p
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
 TEMPLATE = "minimax_h3_r2v_api.json"
+SPECIAL_UNET_MODEL = "MINIMAX-H3/10eros_max_h3_8step_turbo_beta6_int8.safetensors"
 MAIN_NODE = "136"
 PICTURE_1_NODE = "143"
+PICTURE_NODE_IDS = ("143", "144", "151", "163", "164")
 AUDIO_1_NODE = "153"
+MAX_IMAGE_REFERENCES = 5
+MAX_AUDIO_REFERENCES = 3
 MAX_AUDIO_DURATION = 15.0
 MAX_DURATION = 15
 
@@ -40,19 +44,39 @@ DEFAULT_H3_CACHE = {
 SIZE_OPTIONS = [
     ("368x640", 368, 640),
     ("480x848", 480, 848),
+    ("544x960", 544, 960),
+    ("608x1056", 608, 1056),
+    ("640x1152", 640, 1152),
+    ("672x1216", 672, 1216),
     ("720x1280", 720, 1280),
+    ("768x1344", 768, 1344),
     ("640x368", 640, 368),
     ("848x480", 848, 480),
+    ("960x544", 960, 544),
+    ("1056x608", 1056, 608),
+    ("1152x640", 1152, 640),
+    ("1216x672", 1216, 672),
     ("1280x720", 1280, 720),
+    ("1344x768", 1344, 768),
 ]
 
 RESOLUTION_MAP = {
     (368, 640): ("9:16 (Portrait Widescreen)", 0.2),
     (480, 848): ("9:16 (Portrait Widescreen)", 0.4),
+    (544, 960): ("9:16 (Portrait Widescreen)", 0.5),
+    (608, 1056): ("9:16 (Portrait Widescreen)", 0.6),
+    (640, 1152): ("9:16 (Portrait Widescreen)", 0.7),
+    (672, 1216): ("9:16 (Portrait Widescreen)", 0.8),
     (720, 1280): ("9:16 (Portrait Widescreen)", 0.9),
+    (768, 1344): ("9:16 (Portrait Widescreen)", 0.98),
     (640, 368): ("16:9 (Widescreen)", 0.2),
     (848, 480): ("16:9 (Widescreen)", 0.4),
+    (960, 544): ("16:9 (Widescreen)", 0.5),
+    (1056, 608): ("16:9 (Widescreen)", 0.6),
+    (1152, 640): ("16:9 (Widescreen)", 0.7),
+    (1216, 672): ("16:9 (Widescreen)", 0.8),
     (1280, 720): ("16:9 (Widescreen)", 0.9),
+    (1344, 768): ("16:9 (Widescreen)", 0.98),
 }
 
 DEFAULT_S2V_ID_PROMPT = {
@@ -87,6 +111,7 @@ DEFAULT_PROMPT = {
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
     "replace_speech": False,
+    "special_mode": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
@@ -126,6 +151,7 @@ DEFAULT_R2V_PROMPT = {
     "lora_strength": 0,
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
+    "special_mode": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
 }
@@ -186,6 +212,20 @@ def remove_picture_3(workflow: dict) -> dict:
     return workflow
 
 
+def remove_picture_4(workflow: dict) -> dict:
+    """Remove Picture 4 node 163 and ``ref_image_3`` from node 136."""
+    _remove_node(workflow, "163")
+    _remove_input(workflow, MAIN_NODE, "ref_images.ref_image_3")
+    return workflow
+
+
+def remove_picture_5(workflow: dict) -> dict:
+    """Remove Picture 5 node 164 and ``ref_image_4`` from node 136."""
+    _remove_node(workflow, "164")
+    _remove_input(workflow, MAIN_NODE, "ref_images.ref_image_4")
+    return workflow
+
+
 def remove_video_1(workflow: dict) -> dict:
     """Remove Video 1 and both its video and synchronized-audio connections."""
     _remove_node(workflow, "152")
@@ -220,6 +260,8 @@ def remove_references(
     *,
     remove_picture_2_reference: bool = False,
     remove_picture_3_reference: bool = False,
+    remove_picture_4_reference: bool = False,
+    remove_picture_5_reference: bool = False,
     remove_video_1_reference: bool = False,
     remove_audio_1_reference: bool = False,
     remove_audio_2_reference: bool = False,
@@ -233,6 +275,10 @@ def remove_references(
         remove_picture_2(workflow)
     if remove_picture_3_reference:
         remove_picture_3(workflow)
+    if remove_picture_4_reference:
+        remove_picture_4(workflow)
+    if remove_picture_5_reference:
+        remove_picture_5(workflow)
     if remove_video_1_reference:
         remove_video_1(workflow)
     if remove_audio_1_reference:
@@ -347,7 +393,7 @@ def _h3_cache_values(prompt: dict) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     values = {}
     specs = {
-        "steps": (int, 20, 50),
+        "steps": (int, 4, 50),
         "reuse_threshold": (float, 0.0, 0.5),
         "start_percent": (float, 0.0, 1.0),
         "end_percent": (float, 0.0, 1.0),
@@ -409,6 +455,8 @@ def build_workflow(
         "remove_picture_1_reference",
         "remove_picture_2_reference",
         "remove_picture_3_reference",
+        "remove_picture_4_reference",
+        "remove_picture_5_reference",
         "remove_video_1_reference",
         "remove_audio_1_reference",
         "remove_audio_2_reference",
@@ -428,11 +476,23 @@ def build_workflow(
         image_names = [image_name] if image_name else []
     if audio_names is None:
         audio_names = [audio_name] if audio_name else []
-    image_names = [str(value).strip() for value in image_names[:3] if str(value or "").strip()]
-    audio_names = [str(value).strip() for value in audio_names[:3] if str(value or "").strip()]
+    image_names = [
+        str(value).strip()
+        for value in image_names[:MAX_IMAGE_REFERENCES]
+        if str(value or "").strip()
+    ]
+    audio_names = [
+        str(value).strip()
+        for value in audio_names[:MAX_AUDIO_REFERENCES]
+        if str(value or "").strip()
+    ]
     video_name = str(video_name or "").strip()
 
     source = prompt if isinstance(prompt, Mapping) else {}
+    if bool(source.get("fast_mode", False)) and bool(source.get("special_mode", False)):
+        raise ValueError("Mode Cepat dan Mode Khusus MiniMax H3 tidak boleh aktif bersamaan.")
+    if bool(source.get("special_mode", False)):
+        _set_input(workflow, "127", "unet_name", SPECIAL_UNET_MODEL)
     if width is None:
         width = source.get("width", 368) if isinstance(source, Mapping) else 368
     if height is None:
@@ -462,7 +522,7 @@ def build_workflow(
     )
     _set_input(workflow, "131", "expression", frame_expression)
 
-    picture_nodes = (PICTURE_1_NODE, "144", "151")
+    picture_nodes = PICTURE_NODE_IDS
     audio_nodes = (AUDIO_1_NODE, "154", "155")
     for index, node_id in enumerate(picture_nodes):
         if index < len(image_names):

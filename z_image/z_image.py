@@ -4,7 +4,6 @@ import os
 
 from flux2.flux2 import (
     MODEL_FLUX2,
-    MODEL_FLUX2_K9,
     build_flux2_workflow,
     get_model_key as get_flux_model_key,
     get_template_name as get_flux2_template_name,
@@ -23,7 +22,6 @@ MODEL_Z_IMAGE_TURBO = "z-image turbo"
 IMAGE_MODEL_OPTIONS = [
     (MODEL_Z_IMAGE_TURBO, "Z-Image Turbo"),
     (MODEL_FLUX2, "Flux.2"),
-    (MODEL_FLUX2_K9, "Flux.2 Klein 9B"),
     (MODEL_GEMINI_IMAGE, "Gemini"),
 ]
 TEMPLATE_DEFAULT = "z_image_api.json"
@@ -102,7 +100,7 @@ def get_template_name(z_prompt: dict | None = None) -> str:
     z_prompt = z_prompt or {}
     if get_model_key(z_prompt) == MODEL_GEMINI_IMAGE:
         return "gemini_flash_05k"
-    if get_model_key(z_prompt) in {MODEL_FLUX2, MODEL_FLUX2_K9}:
+    if get_model_key(z_prompt) == MODEL_FLUX2:
         return get_flux2_template_name(z_prompt)
     return TEMPLATE_LORA if z_prompt.get("use_lora") else TEMPLATE_DEFAULT
 
@@ -146,7 +144,7 @@ def build_workflow(z_prompt: dict) -> dict:
 def build_z_image_workflow(z_prompt: dict) -> dict:
     if get_model_key(z_prompt) == MODEL_GEMINI_IMAGE:
         raise RuntimeError("Gemini image model does not use ComfyUI workflow.")
-    if get_model_key(z_prompt) in {MODEL_FLUX2, MODEL_FLUX2_K9}:
+    if get_model_key(z_prompt) == MODEL_FLUX2:
         return build_flux2_workflow(z_prompt)
     return build_workflow(z_prompt)
 
