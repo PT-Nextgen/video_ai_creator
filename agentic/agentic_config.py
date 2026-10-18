@@ -15,7 +15,6 @@ DEFAULT_AGENERIC_CONFIG = {
 
 IMAGE_EXTRA_MODES = [
     ("Image Extra", "image_extra"),
-    ("Image Edit", "image_edit"),
     ("Tidak Pakai", "disabled"),
 ]
 
@@ -82,23 +81,19 @@ def _normalize_config(data: dict | None) -> dict:
         merged["create_initial_image"] = _parse_bool(data.get("create_initial_image", True), True)
         # image_extra_mode
         mode = str(data.get("image_extra_mode", "image_extra")).strip().lower()
-        if mode not in ("image_extra", "image_edit", "disabled"):
+        # Older scene configs could select the removed Gemini Image Edit
+        # mode. Preserve those configs without silently enabling Image Extra.
+        if mode == "image_edit":
+            mode = "disabled"
+        elif mode not in ("image_extra", "disabled"):
             mode = "image_extra"
         merged["image_extra_mode"] = mode
     return merged
 
 
 def get_image_extra_flags(config: dict) -> tuple[bool, bool]:
-    """Return (image_extra_enabled, image_edit_enabled) based on config.
-
-    - image_extra_mode == 'image_extra'  → (True, False)
-    - image_extra_mode == 'image_edit'   → (False, True)
-    - image_extra_mode == 'disabled'     → (False, False)
-    """
+    """Return (image_extra_enabled, reserved_legacy_flag) based on config."""
     mode = config.get("image_extra_mode", "image_extra")
     if mode == "image_extra":
         return (True, False)
-    elif mode == "image_edit":
-        return (False, True)
-    else:
-        return (False, False)
+    return (False, False)

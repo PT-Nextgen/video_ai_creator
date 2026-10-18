@@ -37,6 +37,6 @@ Audio 1 adalah audio yang dipakai oleh workflow. Jika audio hanya menjadi refere
 ## Input UI
 
 - Tab `Gambar Awal` tetap tersedia dan digunakan untuk membuat Picture 1.
-- Runtime mengambil gambar terbaru dari root scene, seperti WAN22 S2V.
-- Runtime mengambil audio speech terbaru dari root scene, seperti WAN22 S2V.
+- Runtime mengambil gambar terbaru dari root scene.
+- Runtime mengambil audio speech terbaru dari root scene.
 - Tab `MINIMAX-H3_S2V` hanya memiliki ukuran dan prompt positif; tidak ada CFG dan negative prompt.

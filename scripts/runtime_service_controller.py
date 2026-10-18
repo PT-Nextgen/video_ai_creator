@@ -65,7 +65,13 @@ class RuntimeServiceController:
         api_key = _load_api_key() or os.environ.get(key_env, "").strip()
         if not api_key:
             raise RuntimeServiceError(f"API key belum diisi di {KEY_FILE.name}")
-        write_log(f"[runtime] API request {method.upper()} {path}")
+        # The log viewer polls this endpoint every few seconds.  Logging each
+        # request/response pair makes the application log grow without adding
+        # useful information, so keep polling noise out while preserving
+        # warnings for failed requests below.
+        is_log_poll = path.rstrip("/").lower().startswith("/v1/runtime/logs/")
+        if not is_log_poll:
+            write_log(f"[runtime] API request {method.upper()} {path}")
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{base}/{path.lstrip('/')}",
@@ -80,7 +86,8 @@ class RuntimeServiceController:
         try:
             with urllib.request.urlopen(request, timeout=timeout or float(self.config.get("request_timeout_seconds", 30))) as response:
                 raw = response.read().decode("utf-8", errors="replace")
-                write_log(f"[runtime] API response {method.upper()} {path}: HTTP {response.status}")
+                if not is_log_poll:
+                    write_log(f"[runtime] API response {method.upper()} {path}: HTTP {response.status}")
                 return json.loads(raw) if raw else {}
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
             write_log(f"[runtime] API error {method.upper()} {path}: {exc}", level="warning")

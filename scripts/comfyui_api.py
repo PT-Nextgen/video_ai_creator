@@ -143,8 +143,20 @@ def get_history_for_prompt(server: str, prompt_id: str, timeout: int = COMFYUI_W
     last_json = None
     # Simpler behavior: only consider top-level 'outputs' key as a signal
     while time.time() < deadline:
-        resp = requests.get(url)
-        resp.raise_for_status()
+        # A temporary connection timeout must not fail the workflow outright:
+        # ComfyUI can continue processing the prompt while its history endpoint
+        # is briefly unreachable.  Bound each request so the outer workflow
+        # deadline remains authoritative, then retry on the next poll.
+        request_timeout = max(min(float(interval), 30.0), 0.1)
+        try:
+            resp = requests.get(url, timeout=request_timeout)
+            resp.raise_for_status()
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            logger.debug("Temporary ComfyUI history polling failure for %s: %s", prompt_id, exc)
+            remaining = deadline - time.time()
+            if remaining > 0:
+                time.sleep(min(max(float(interval), 0.1), remaining))
+            continue
         try:
             j = resp.json()
         except Exception:

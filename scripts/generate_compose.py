@@ -794,7 +794,6 @@ def compose_scene(
     include_scene_speech=None,
     embedded_audio_source=None,
     compose_song=False,
-    trim_s2v_extra_frames=False,
     project_video_size=None,
 ):
     files = sorted(os.listdir(scene_dir))
@@ -833,11 +832,6 @@ def compose_scene(
     max_video_dur = max(video_durations) if video_durations else 0
     max_audio_dur = max(audio_durations) if audio_durations else 0
     target_dur = max(max_video_dur, max_audio_dur)
-    if compose_song and trim_s2v_extra_frames and latest_speech:
-        # WAN22 S2V may contain up to four extra frames. Song compose uses
-        # the original speech chunk as the exact scene duration. MiniMax H3
-        # S2V already follows the audio duration and must not use this trim.
-        target_dur = ffprobe_duration(latest_speech)
     if target_dur < 0.1:
         logger.warning('No media duration found in %s, skipping', scene_dir)
         return None
@@ -854,10 +848,6 @@ def compose_scene(
             concat_path = os.path.join(tmpdir, 'concat.mp4')
             concat_videos(videos, concat_path)
             base_video = concat_path
-        if compose_song and trim_s2v_extra_frames and latest_speech and len(videos) == 1:
-            exact_path = os.path.join(tmpdir, 's2v_exact_duration.mp4')
-            trim_video_to_exact_duration(base_video, exact_path, target_dur, ffprobe_fps(base_video))
-            base_video = exact_path
         target_fps = ffprobe_fps(base_video)
         if isinstance(project_video_size, (tuple, list)) and len(project_video_size) == 2:
             try:
@@ -1536,8 +1526,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             # S2V keeps embedded speech and excludes standalone scene speech.
             # MiniMax H3 T2V/I2V keeps its original ComfyUI audio and combines
             # that source with standalone scene speech.
-            is_wan22_s2v = scene_type == 'wan22_s2v'
-            is_s2v = scene_type in {'wan22_s2v', 'minimax-h3_s2v', 'minimax-h3_r2v'}
+            is_s2v = scene_type in {'minimax-h3_s2v', 'minimax-h3_r2v'}
             is_minimax_h3_av = scene_type in {
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
@@ -1551,15 +1540,13 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             if compose_per_scene and not latest_video:
                 raise RuntimeError('No video found in scene folder.')
 
-            # WAN I2V/T2V and MiniMax H3 I2V/T2V-I2V already contain the
+            # WAN and MiniMax H3 audiovisual scene outputs already contain the
             # complete scene mix produced during scene execution.  Export the
             # existing video unchanged in normal final-compose mode; calling
             # compose_scene there would add the same voice and sound-effect
             # files for a second time.
             if not compose_per_scene and audio_composed and scene_type in {
                 'wan22',
-                'wan22_i2v',
-                'wan22_t2v_i2v',
                 'wan22_t2v',
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
@@ -1569,8 +1556,6 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 continue
             if compose_per_scene and audio_composed and scene_type in {
                 'wan22',
-                'wan22_i2v',
-                'wan22_t2v_i2v',
                 'wan22_t2v',
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
@@ -1628,7 +1613,6 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 include_scene_speech=include_scene_speech,
                 embedded_audio_source=embedded_audio_source,
                 compose_song=compose_song,
-                trim_s2v_extra_frames=is_wan22_s2v,
                 project_video_size=project_video_size,
             )
             if compose_per_scene:
@@ -1699,7 +1683,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--compose-song',
         action='store_true',
-        help='Use speech chunks as the song timeline; only WAN22 S2V discards its extra frames.',
+        help='Use speech chunks as the song timeline for speech-driven scenes.',
     )
     args = parser.parse_args()
     music_volume = max(0.0, min(2.0, float(args.music_volume)))

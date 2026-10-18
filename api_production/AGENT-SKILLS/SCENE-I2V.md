@@ -32,29 +32,8 @@ Ada dua tujuan scene ini apabila menggunakan beberapa gambar, pertama untuk visu
 5. Kemudian isikan versi bahasa inggris dalam field `en`
 6. Struktur penyusunan prompt positif dan negatif tetap mengikuti aturan pada `Petunjuk pembuatan prompt untuk membuat text menjadi image`
 
-#### Tujuan visualisasi flow atau alur
-1. Gambar-gambar dibuat dengan tujuan menunjukkan alur atau flow, misal flow lampu lalu lintas, gambar pertama terlihat lampu merah menyala, kemudian gambar kedua lampu kuning menyala, gambar terakhir lampu hijau menyala
-2. Gambar-gambar ini tidak berdiri sendiri tapi memakai gambar sebelumnya sebagai referensi
-3. Gunakan `image_edit_prompt.json` untuk menambahkan gambar selain gambar awal pertama untuk mengedit gambar awal pertama menjadi gambar kedua dst, sehingga membuat flow yang lengkap
-
-#### Tambahan gambar dengan menggunakan image_edit_prompt.json
-1. File yang dipakai adalah `image_edit_prompt.json`
-2. File ini dipakai untuk membuat gambar tambahan yang merupakan kelanjutan atau perubahan dari gambar sebelumnya
-3. File ini menyediakan total 3 slot edit
-4. Setiap slot memiliki:
-   - `source_image`
-   - `prompt`
-5. `source_image` adalah nama file gambar input yang akan diedit
-6. `prompt` adalah instruksi perubahan gambar, isikan dalam field `id_new` dan `id_old` dalam bahasa Indonesia, kemudian isikan versi bahasa inggris dalam field `en`
-7. Struktur prompt edit harus ringkas, spesifik dan konsisten dengan alur scene
-8. Struktur prompt edit harus fokus hanya pada bagian yang diedit saja
-9. Gunakan urutan slot secara logis:
-   - slot 1 mengedit gambar awal pertama menjadi gambar kedua
-   - slot 2 mengedit gambar kedua menjadi gambar ketiga
-   - slot 3 mengedit gambar ketiga menjadi gambar keempat
-
 ## Aturan jumlah image
 1. Apabila diminta membuat satu image saja, maka cukup isi `z_image_prompt.json`
-2. Apabila diminta membuat dua image, maka isi `z_image_prompt.json` dan satu slot tambahan di `z_image_extra_prompts.json` atau di `image_edit_prompt.json` 
-3. Apabila diminta membuat tiga image, maka isi `z_image_prompt.json` dan dua slot tambahan di `z_image_extra_prompts.json` atau di `image_edit_prompt.json` 
-4. Apabila diminta membuat empat image, maka isi `z_image_prompt.json` dan tiga slot tambahan di `z_image_extra_prompts.json` atau di `image_edit_prompt.json` 
+2. Apabila diminta membuat dua image, maka isi `z_image_prompt.json` dan satu slot tambahan di `z_image_extra_prompts.json`
+3. Apabila diminta membuat tiga image, maka isi `z_image_prompt.json` dan dua slot tambahan di `z_image_extra_prompts.json`
+4. Apabila diminta membuat empat image, maka isi `z_image_prompt.json` dan tiga slot tambahan di `z_image_extra_prompts.json`

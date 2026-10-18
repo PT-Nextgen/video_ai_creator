@@ -44,6 +44,7 @@ DEFAULT_H3_CACHE = {
 }
 
 DEFAULT_PROMPT = {
+    "prompt_instruction": "",
     "positive_prompt": structured_prompt_entry(
         "T2VA",
         id_new=default_structured_prompt("T2VA"),

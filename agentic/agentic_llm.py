@@ -22,6 +22,10 @@ from minimax_h3.minimax_h3_prompt import (
     validate_ref2va_reference_tokens,
     validate_structured_prompt,
 )
+from minimax_h3.minimax_h3_skill import (
+    build_minimax_h3_common_guidance,
+    is_minimax_h3_scene_type,
+)
 
 LOCAL_PROMPT_PROVIDER = "llama.cpp"
 LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
@@ -258,19 +262,13 @@ def _normalize_schema_template(filename: str, data: dict | None) -> dict | None:
     if not isinstance(data, dict):
         return data
     normalized = dict(data)
-    if filename == "image_edit_prompt.json":
-        normalized.pop("image_model", None)
-        normalized.pop("gemini_model_id", None)
     if filename in {
         "z_image_prompt.json",
-        "wan22_i2v_prompt.json",
         "wan22_t2v_prompt.json",
         "minimax_h3_t2v_prompt.json",
         "minimax_h3_i2v_prompt.json",
         "minimax_h3_s2v_prompt.json",
-        "wan22_s2v_prompt.json",
         "z_image_extra_prompts.json",
-        "wan22_t2v_batch_extra_prompts.json",
     }:
         # Older scene files may still contain plain prompt strings. Convert
         # them before constructing the Agentic schema so every generated
@@ -615,25 +613,13 @@ AGENT_SKILLS_DIR = Path(__file__).parent.parent / "api_production" / "AGENT-SKIL
 
 SCENE_TYPE_FILES = {
     # (json_files, md_files)
-    "wan22_i2v": (
-        ["z_image_prompt.json", "wan22_i2v_prompt.json"],
+    "wan22_t2v": (
+        ["wan22_t2v_prompt.json"],
         [
             "SCENE-GENERAL.md",
-            "SCENE-WAN22-I2V.md",
-            "TEXT-TO-IMAGE.md",
-            "IMAGE-TO-VIDEO.md",
-            "IMAGE-PROMPT.md",
-            "IMAGE-TO-VIDEO-PROMPT.md",
-        ],
-    ),
-    "wan22_t2v_i2v": (
-        ["wan22_t2v_prompt.json", "wan22_i2v_prompt.json"],
-        [
-            "SCENE-GENERAL.md",
-            "SCENE-WAN22-T2V-I2V.md",
+            "SCENE-WAN22-T2V.md",
             "TEXT-TO-VIDEO.md",
             "TEXT-TO-VIDEO-PROMPT.md",
-            "IMAGE-TO-VIDEO-PROMPT.md",
         ],
     ),
     "minimax-h3_i2v": (
@@ -675,26 +661,6 @@ SCENE_TYPE_FILES = {
             "MINIMAX-H3-DIALOG.md",
         ],
     ),
-    "wan22_t2v_batch": (
-        ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
-        [
-            "SCENE-GENERAL.md",
-            "SCENE-WAN22-T2V-BATCH.md",
-            "TEXT-TO-VIDEO-BATCH.md",
-            "TEXT-TO-VIDEO-PROMPT.md",
-        ],
-    ),
-    "wan22_s2v": (
-        ["wan22_s2v_prompt.json", "z_image_prompt.json"],
-        [
-            "SCENE-GENERAL.md",
-            "SCENE-WAN22-S2V.md",
-            "TEXT-TO-IMAGE.md",
-            "IMAGE-SOUND-TO-VIDEO.md",
-            "IMAGE-PROMPT.md",
-            "IMAGE-TO-VIDEO-PROMPT.md",
-        ],
-    ),
     "i2v": (
         ["z_image_prompt.json"],
         [
@@ -726,14 +692,11 @@ SCENE_TYPE_FILES = {
 
 # Output files that LLM should produce for each scene type
 SCENE_TYPE_OUTPUTS = {
-    "wan22_i2v": ["z_image_prompt.json", "wan22_i2v_prompt.json"],
-    "wan22_t2v_i2v": ["wan22_t2v_prompt.json", "wan22_i2v_prompt.json"],
+    "wan22_t2v": ["wan22_t2v_prompt.json"],
     "minimax-h3_i2v": ["z_image_prompt.json", "minimax_h3_i2v_prompt.json"],
     "minimax-h3_s2v": ["z_image_prompt.json", "minimax_h3_s2v_prompt.json"],
     "minimax-h3_r2v": ["minimax_h3_r2v_prompt.json"],
     "minimax-h3_t2v_i2v": ["minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"],
-    "wan22_t2v_batch": ["wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"],
-    "wan22_s2v": ["wan22_s2v_prompt.json", "z_image_prompt.json"],
     "i2v": ["z_image_prompt.json"],
     "image_pan": ["z_image_prompt.json"],
     "image_zoom": ["z_image_prompt.json"],
@@ -742,14 +705,12 @@ SCENE_TYPE_OUTPUTS = {
 PROMPT_VALUE_KEYS = {"id_old", "id_new", "en"}
 STRICT_NON_EMPTY_AGENTIC_PROMPT_FILES = {
     "wan22_t2v_prompt.json",
-    "wan22_i2v_prompt.json",
     "minimax_h3_t2v_prompt.json",
     "minimax_h3_i2v_prompt.json",
     "minimax_h3_s2v_prompt.json",
     "minimax_h3_r2v_prompt.json",
     "z_image_prompt.json",
     "z_image_extra_prompts.json",
-    "wan22_t2v_batch_extra_prompts.json",
 }
 
 
@@ -757,17 +718,11 @@ def _get_scene_type_outputs(scene_type: str, agentic_config: dict) -> list[str]:
     """Get the list of output JSON files for a scene type."""
     outputs = list(SCENE_TYPE_OUTPUTS.get(scene_type, []))
 
-    # wan22_s2v with create_initial_image=false → only wan22_s2v_prompt.json
-    if scene_type == "wan22_s2v" and not agentic_config.get("create_initial_image", True):
-        outputs = ["wan22_s2v_prompt.json"]
-
     # i2v with image_extra → add z_image_extra_prompts.json
     if scene_type == "i2v":
         mode = agentic_config.get("image_extra_mode", "image_extra")
         if mode == "image_extra":
             outputs.append("z_image_extra_prompts.json")
-        elif mode == "image_edit":
-            outputs.append("image_edit_prompt.json")
 
     return outputs
 
@@ -777,19 +732,12 @@ def _get_scene_type_input_files(scene_type: str, agentic_config: dict) -> list[s
     json_files, _ = SCENE_TYPE_FILES.get(scene_type, ([], []))
     json_files = list(json_files)
 
-    # wan22_s2v with create_initial_image=false → skip z_image_prompt.json
-    if scene_type == "wan22_s2v" and not agentic_config.get("create_initial_image", True):
-        json_files = [f for f in json_files if f != "z_image_prompt.json"]
-
-    # i2v with image_edit → replace z_image_extra_prompts.json with image_edit_prompt.json
+    # i2v with image_extra → add z_image_extra_prompts.json
     if scene_type == "i2v":
         mode = agentic_config.get("image_extra_mode", "image_extra")
         if mode == "image_extra":
             if "z_image_extra_prompts.json" not in json_files:
                 json_files.append("z_image_extra_prompts.json")
-        elif mode == "image_edit":
-            if "image_edit_prompt.json" not in json_files:
-                json_files.append("image_edit_prompt.json")
 
     return json_files
 
@@ -804,12 +752,6 @@ def _get_scene_type_md_files(scene_type: str, agentic_config: dict) -> list[str]
         mode = agentic_config.get("image_extra_mode", "image_extra")
         if mode == "image_extra":
             md_files.append("__NOTE_IMAGE_EXTRA__")
-        elif mode == "image_edit":
-            md_files.append("__NOTE_IMAGE_EDIT__")
-
-    # wan22_s2v with create_initial_image=false → add note
-    if scene_type == "wan22_s2v" and not agentic_config.get("create_initial_image", True):
-        md_files.append("__NOTE_NO_INITIAL_IMAGE__")
 
     return md_files
 
@@ -917,27 +859,14 @@ def build_agentic_prompt(
                 lines.append(f"REFERENCE MARKDOWN FILE: {mf}")
                 lines.append(content)
 
-    if scene_type == "wan22_i2v":
+    if scene_type == "wan22_t2v":
         append_md_group(
-            "1. Scene wan22_i2v",
+            "2. Scene wan22_t2v",
             [
                 "SCENE-GENERAL.md",
-                "SCENE-WAN22-I2V.md",
-                "TEXT-TO-IMAGE.md",
-                "IMAGE-TO-VIDEO.md",
-                "IMAGE-PROMPT.md",
-                "IMAGE-TO-VIDEO-PROMPT.md",
-            ],
-        )
-    elif scene_type == "wan22_t2v_i2v":
-        append_md_group(
-            "2. Scene wan22_t2v_i2v",
-            [
-                "SCENE-GENERAL.md",
-                "SCENE-WAN22-T2V-I2V.md",
+                "SCENE-WAN22-T2V.md",
                 "TEXT-TO-VIDEO.md",
                 "TEXT-TO-VIDEO-PROMPT.md",
-                "IMAGE-TO-VIDEO-PROMPT.md",
             ],
         )
     elif scene_type == "minimax-h3_t2v_i2v":
@@ -1013,41 +942,6 @@ def build_agentic_prompt(
                 "IMAGE-PROMPT.md",
             ],
         )
-    elif scene_type == "wan22_t2v_batch":
-        append_md_group(
-            "2. Scene wan22_t2v_batch",
-            [
-                "SCENE-GENERAL.md",
-                "SCENE-WAN22-T2V-BATCH.md",
-                "TEXT-TO-VIDEO-BATCH.md",
-                "TEXT-TO-VIDEO-PROMPT.md",
-            ],
-            "CATATAN: scene ini hanya memakai T2V utama dan 3 slot Prompt Tambahan; tidak ada tahap I2V.",
-        )
-    elif scene_type == "wan22_s2v":
-        if agentic_config.get("create_initial_image", True):
-            append_md_group(
-                "3. Scene wan22_s2v",
-                [
-                    "SCENE-GENERAL.md",
-                    "SCENE-WAN22-S2V.md",
-                    "TEXT-TO-IMAGE.md",
-                    "IMAGE-SOUND-TO-VIDEO.md",
-                    "IMAGE-PROMPT.md",
-                    "IMAGE-TO-VIDEO-PROMPT.md",
-                ],
-            )
-        else:
-            append_md_group(
-                "3. Scene wan22_s2v",
-                [
-                    "SCENE-GENERAL.md",
-                    "SCENE-WAN22-S2V.md",
-                    "IMAGE-SOUND-TO-VIDEO.md",
-                    "IMAGE-TO-VIDEO-PROMPT.md",
-                ],
-                "CATATAN: image awal tidak divariasikan.",
-            )
     elif scene_type == "i2v":
         image_extra_mode = str(agentic_config.get("image_extra_mode", "image_extra")).strip()
         if image_extra_mode == "image_extra":
@@ -1070,7 +964,6 @@ def build_agentic_prompt(
                     "TEXT-TO-IMAGE.md",
                     "IMAGE-PROMPT.md",
                 ],
-                "CATATAN: image awal tambahan dibuat dengan memakai metode image edit.",
             )
     elif scene_type == "image_pan":
         append_md_group(
@@ -1092,6 +985,15 @@ def build_agentic_prompt(
                 "IMAGE-PROMPT.md",
             ],
         )
+
+    if is_minimax_h3_scene_type(scene_type):
+        lines.append("")
+        lines.append("MINIMAX H3 COMMON GUIDANCE — SELF-CONTAINED PAYLOAD SECTIONS")
+        lines.append(
+            "The following three sections are the complete MiniMax H3 guidance for this request. "
+            "Apply their contents directly; do not attempt to read local files or resolve file paths."
+        )
+        lines.append(build_minimax_h3_common_guidance())
     lines.append("")
 
     # ---- Part 7: Existing Variation Outputs ----

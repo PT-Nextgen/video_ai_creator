@@ -17,17 +17,13 @@ from scene_manager_ui import (
 )
 
 SCENE_TYPE_CHOICES = [
-    "wan22_i2v",
-    "wan22_t2v_i2v",
+    "wan22_t2v",
     "minimax-h3_t2v_i2v",
     "minimax-h3_i2v",
     "minimax-h3_i2v-panjang",
     "minimax-h3_s2v",
     "minimax-h3_r2v",
-    "wan22_t2v_batch",
-    "wan22_s2v",
     "i2v",
-    "web_scroll",
     "image_pan",
     "image_zoom",
 ]

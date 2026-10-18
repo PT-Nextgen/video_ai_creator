@@ -98,6 +98,7 @@ DEFAULT_S2V_EN_PROMPT = {
 }
 
 DEFAULT_PROMPT = {
+    "prompt_instruction": "",
     "positive_prompt": {
         "id_old": copy.deepcopy(DEFAULT_S2V_ID_PROMPT),
         "id_new": copy.deepcopy(DEFAULT_S2V_ID_PROMPT),
@@ -117,6 +118,7 @@ DEFAULT_PROMPT = {
 }
 
 DEFAULT_R2V_PROMPT = {
+    "prompt_instruction": "",
     "positive_prompt": {
         "id_old": {
             "subject_definitions": "Adegan memiliki subjek utama yang menjadi fokus video.",

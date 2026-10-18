@@ -13,7 +13,6 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 import glob
-import math
 import imageio
 import subprocess
 from PIL import Image
@@ -38,16 +37,7 @@ from wan22_i2v.wan22_i2v import (
 from wan22_t2v.wan22_t2v import (
     DEFAULT_PROMPT as DEFAULT_WAN22_T2V_PROMPT,
     build_wan_t2v_workflow,
-    resolve_wan22_i2v_duration,
     send_workflow as send_wan22_t2v_workflow,
-)
-from wan22_s2v.wan22_s2v import (
-    DEFAULT_PROMPT as DEFAULT_WAN22_S2V_PROMPT,
-    MAX_AUDIO_DURATION as WAN22_S2V_MAX_AUDIO_DURATION,
-    build_wan22_s2v_workflow,
-    get_audio_duration as get_s2v_audio_duration,
-    send_workflow as send_s2v_workflow,
-    trim_video_to_speech_duration,
 )
 from minimax_h3_t2v.minimax_h3_t2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_T2V_PROMPT,
@@ -94,14 +84,11 @@ from scripts.generate_compose import (
     run as run_ffmpeg,
     write_audio_composed_marker,
 )
-from scripts.generate_web_scroll_video import generate_web_scroll_video
 from scripts.generate_image_pan_video import generate_image_pan_video
 from scripts.generate_image_zoom_video import generate_image_zoom_video
 from scripts.color_match_video import color_match_video
 from prompt_localization import (
-    LORA_TRIGGER_WORDS_FIELD,
     prepare_prompt_payload_for_save,
-    prepend_lora_trigger_words,
     read_json_for_runtime,
     resolve_prompt_payload_for_runtime,
     prepare_project_prompts_for_runtime,
@@ -111,23 +98,21 @@ from minimax_h3.minimax_h3_prompt import (
     ensure_i2va_frame_instructions,
     validate_i2va_frame_instructions,
 )
+from minimax_h3.minimax_h3_references import (
+    extract_first_frame_image as _shared_extract_first_frame_image,
+    extract_last_frame_image as _shared_extract_last_frame_image,
+    find_latest_root_image as _shared_find_latest_root_image,
+)
 
 
 API_PRODUCTION_ROOT = os.path.join(os.path.dirname(__file__), 'api_production')
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'content_creation.log')
 POLL_INTERVAL = COMFYUI_POLL_INTERVAL_SECONDS
 I2V_FPS = 16
-WEB_SCROLL_FPS = 16
+MINIMAX_H3_DURATION_MIN = 0.0
 MINIMAX_H3_DURATION_DECIMALS = 4
 MINIMAX_H3_I2V_PANJANG_SEGMENT_PREFIX = "minimax_h3_i2v_panjang_segment_"
 MINIMAX_H3_I2V_PANJANG_SEGMENT_SUFFIX = ".mp4"
-DEFAULT_WEB_SCROLL_PROMPT = {
-    "url": "",
-    "width": 368,
-    "height": 640,
-    "duration_seconds": 5.0,
-    "speed": 1,
-}
 DEFAULT_IMAGE_PAN_PROMPT = {
     "width": 480,
     "height": 848,
@@ -140,14 +125,6 @@ DEFAULT_IMAGE_ZOOM_PROMPT = {
     "focal_point": "center",
     "zoom_strength": 1.3,
 }
-DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS = {
-    "groups": [
-        {"positive_prompt": "", "negative_prompt": ""},
-        {"positive_prompt": "", "negative_prompt": ""},
-        {"positive_prompt": "", "negative_prompt": ""},
-    ],
-}
-
 # initialize logging for the process (idempotent)
 setup_logging()
 logger = get_logger(__name__)
@@ -227,20 +204,7 @@ def _ensure_scene_json(scene_dir, filename, default_data):
 
 
 def _extract_last_frame_image(video_path: str, output_path: str):
-    reader = imageio.get_reader(video_path)
-    last_frame = None
-    try:
-        for frame in reader:
-            last_frame = frame
-    finally:
-        try:
-            reader.close()
-        except Exception:
-            pass
-    if last_frame is None:
-        raise RuntimeError(f"Tidak ada frame yang bisa diekstrak dari video: {video_path}")
-    Image.fromarray(last_frame).convert("RGB").save(output_path)
-    return output_path
+    return _shared_extract_last_frame_image(video_path, output_path)
 
 
 def _concat_video_segments(segment_paths: list[str], output_path: str, *, preserve_audio: bool = False):
@@ -571,7 +535,7 @@ def process_scene(scene_dir, server):
         write_log(f"Failed to read scene_meta.json for {scene_dir}: {e}")
         return False
 
-    scene_type = scene_meta.get('scene_type', 'wan22_i2v')
+    scene_type = scene_meta.get('scene_type', 'wan22_t2v')
 
     def _safe_error_text(err):
         text = str(err)
@@ -597,8 +561,6 @@ def process_scene(scene_dir, server):
         # in a separate file so UI saves of scene_meta.json cannot erase it.
         if compose_audio and scene_type in {
             'wan22',
-            'wan22_i2v',
-            'wan22_t2v_i2v',
             'wan22_t2v',
             'minimax-h3_i2v',
             'minimax-h3_i2v-panjang',
@@ -711,15 +673,7 @@ def process_scene(scene_dir, server):
         return video_path
 
     def _find_latest_root_image(sd):
-        patterns = ['*.png', '*.jpg', '*.jpeg', '*.webp']
-        imgs = []
-        for p in patterns:
-            imgs.extend(glob.glob(os.path.join(sd, p)))
-        imgs = [os.path.abspath(i) for i in imgs if os.path.isfile(i)]
-        if not imgs:
-            return None
-        imgs.sort(key=lambda path: os.path.getmtime(path), reverse=True)
-        return imgs[0]
+        return _shared_find_latest_root_image(sd)
 
     def _find_latest_root_speech(sd):
         patterns = ['speech_*.mp3', 'speech_*.wav', 'speech_*.m4a', 'speech_*.aac', 'speech_*.flac', 'speech_*.ogg']
@@ -842,21 +796,28 @@ def process_scene(scene_dir, server):
             return None
 
     # Branch by scene_type
-    if scene_type == 'wan22_t2v_i2v':
+    if scene_type == 'wan22_t2v':
         try:
             scene_duration = int(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
         if scene_duration not in {5, 10, 15}:
-            write_log(f"wan22_t2v_i2v scene duration must be 5, 10, or 15 seconds: {scene_duration}")
+            write_log(f"wan22_t2v scene duration must be 5, 10, or 15 seconds: {scene_duration}")
             return False
 
         _ensure_scene_json(scene_dir, 'wan22_t2v_prompt.json', DEFAULT_WAN22_T2V_PROMPT)
-        _ensure_scene_json(scene_dir, 'wan22_i2v_prompt.json', DEFAULT_WAN_PROMPT)
 
         try:
             t2v_prompt = _read_scene_json(scene_dir, 'wan22_t2v_prompt.json', required=True)
-            t2v_workflow = build_wan_t2v_workflow(t2v_prompt, scene_meta)
+            # WAN's length input is expressed as frames at 16 fps. Keep the
+            # existing 5-second template value (81) and scale it for the
+            # scene's supported 10- and 15-second durations.
+            t2v_length = scene_duration * 16 + 1
+            t2v_workflow = build_wan_t2v_workflow(
+                t2v_prompt,
+                scene_meta,
+                length_override=t2v_length,
+            )
         except Exception as e:
             write_log(f"Failed to build wan22_t2v workflow for {scene_dir}: {e}")
             return False
@@ -900,91 +861,10 @@ def process_scene(scene_dir, server):
             write_log(f"Error checking downloaded T2V file {t2v_video_out_path}: {e}")
             return False
 
-        if scene_duration == 5:
-            return _finalize_scene_success(
-                t2v_video_out_path,
-                is_s2v=False,
-                success_message=f"Completed wan22_t2v_i2v T2V-only processing for {scene_dir}",
-            )
-
-        last_frame_path = os.path.join(scene_dir, 'wan22_t2v_last_frame.png')
-        try:
-            _extract_last_frame_image(t2v_video_out_path, last_frame_path)
-        except Exception as e:
-            write_log(f"Failed to extract last frame from T2V video for {scene_dir}: {e}")
-            return False
-
-        try:
-            wan_prompt = _read_scene_json(scene_dir, 'wan22_i2v_prompt.json', required=True)
-            wan_prompt = copy.deepcopy(wan_prompt) if isinstance(wan_prompt, dict) else {}
-            wan_prompt['duration_seconds'] = resolve_wan22_i2v_duration(scene_duration)
-        except Exception as e:
-            write_log(f"Failed to read wan22_i2v_prompt.json for {scene_dir}: {e}")
-            return False
-
-        uploaded_name = _upload_to_comfy(last_frame_path)
-        if not uploaded_name:
-            write_log(f"Failed to upload extracted last frame for {scene_dir}")
-            return False
-        try:
-            wan_workflow = build_wan_workflow(wan_prompt, scene_meta, uploaded_name=uploaded_name)
-        except Exception as e:
-            write_log(f"Failed to build wan22_i2v workflow for {scene_dir}: {e}")
-            return False
-        wan_result = send_wan_workflow(
-            wan_workflow,
-            uploaded_name,
-            server,
-            log_file=LOG_FILE,
-            source_label=os.path.join(scene_dir, 'wan22_i2v_prompt.json'),
-        )
-        if not wan_result:
-            write_log(f"send_wan_workflow failed for wan22_t2v_i2v in {scene_dir}")
-            return False
-        prompt_id = wan_result.get('prompt_id') or wan_result.get('id')
-        write_log(f"Posted wan22_i2v workflow for {scene_dir}, prompt_id={prompt_id}")
-        video_out = None
-        if prompt_id:
-            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
-        if not video_out:
-            write_log(f"No WAN22_I2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-            return False
-        write_log(f"WAN22_I2V video output info: {json.dumps(video_out)}")
-        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-        video_subfolder = video_out.get('subfolder')
-        video_type = video_out.get('type')
-        if not video_filename:
-            write_log(f"Cannot determine WAN22_I2V video filename from output: {json.dumps(video_out)}")
-            return False
-        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
-        i2v_video_out_path = os.path.join(scene_dir, video_filename)
-        try:
-            comfyui_api.download_file_url(video_url, i2v_video_out_path)
-        except Exception as e:
-            write_log(f"Failed to download WAN22_I2V video {video_filename} from {video_url}: {e}")
-            return False
-        try:
-            if not os.path.exists(i2v_video_out_path) or os.path.getsize(i2v_video_out_path) == 0:
-                write_log(f"Downloaded WAN22_I2V file missing or empty: {i2v_video_out_path}")
-                return False
-        except Exception as e:
-            write_log(f"Error checking downloaded WAN22_I2V file {i2v_video_out_path}: {e}")
-            return False
-        try:
-            concat_tmp_path = os.path.join(scene_dir, "__wan22_t2v_i2v_concat_tmp__.mp4")
-            _concat_video_segments([t2v_video_out_path, i2v_video_out_path], concat_tmp_path)
-            os.replace(concat_tmp_path, i2v_video_out_path)
-            write_log(
-                f"Combined wan22_t2v_i2v stages into final video: {i2v_video_out_path} "
-                f"(T2V {os.path.basename(t2v_video_out_path)} + I2V {os.path.basename(i2v_video_out_path)})"
-            )
-        except Exception as e:
-            write_log(f"Failed to concat WAN22_T2V + WAN22_I2V for {scene_dir}: {e}")
-            return False
         return _finalize_scene_success(
-            i2v_video_out_path,
+            t2v_video_out_path,
             is_s2v=False,
-            success_message=f"Completed processing {scene_dir}",
+            success_message=f"Completed wan22_t2v processing for {scene_dir}",
         )
 
     if scene_type == 'minimax-h3_t2v_i2v':
@@ -992,9 +872,9 @@ def process_scene(scene_dir, server):
             scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if not (1.0 <= scene_duration <= 30.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
+        if not (MINIMAX_H3_DURATION_MIN <= scene_duration <= 30.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
             write_log(
-                "minimax-h3_t2v_i2v scene duration must be between 1.0 and 30.0 seconds with at most 1 decimal: "
+                "minimax-h3_t2v_i2v scene duration must be between 0.0 and 30.0 seconds with at most 4 decimals: "
                 f"{scene_duration}"
             )
             return False
@@ -1275,9 +1155,9 @@ def process_scene(scene_dir, server):
             scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if not (1.0 <= scene_duration <= 15.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
+        if not (MINIMAX_H3_DURATION_MIN <= scene_duration <= 15.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
             write_log(
-                "minimax-h3_i2v-panjang scene duration must be between 1.0 and 15.0 seconds with at most 1 decimal: "
+                "minimax-h3_i2v-panjang scene duration must be between 0.0 and 15.0 seconds with at most 4 decimals: "
                 f"{scene_duration}"
             )
             return False
@@ -1670,9 +1550,9 @@ def process_scene(scene_dir, server):
             scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
-        if not (1.0 <= scene_duration <= 15.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
+        if not (MINIMAX_H3_DURATION_MIN <= scene_duration <= 15.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
             write_log(
-                "minimax-h3_i2v scene duration must be between 1.0 and 15.0 seconds with at most 1 decimal: "
+                "minimax-h3_i2v scene duration must be between 0.0 and 15.0 seconds with at most 4 decimals: "
                 f"{scene_duration}"
             )
             return False
@@ -1799,124 +1679,7 @@ def process_scene(scene_dir, server):
             success_message=f"Completed minimax-h3_i2v processing for {scene_dir}",
         )
 
-    if scene_type == 'wan22_t2v_batch':
-        try:
-            scene_duration = int(scene_meta.get('duration_seconds', 0))
-        except Exception:
-            scene_duration = 0
-        if scene_duration not in {5, 10}:
-            write_log(f"wan22_t2v_batch scene duration must be 5 or 10 seconds: {scene_duration}")
-            return False
-
-        _ensure_scene_json(scene_dir, 'wan22_t2v_prompt.json', DEFAULT_WAN22_T2V_PROMPT)
-        _ensure_scene_json(scene_dir, 'wan22_t2v_batch_extra_prompts.json', DEFAULT_WAN22_T2V_BATCH_EXTRA_PROMPTS)
-
-        try:
-            t2v_prompt = _read_scene_json(scene_dir, 'wan22_t2v_prompt.json', required=True)
-            extra_prompts_data = _read_scene_json(scene_dir, 'wan22_t2v_batch_extra_prompts.json', required=True)
-        except Exception as e:
-            write_log(f"Failed to read prompt files for {scene_dir}: {e}")
-            return False
-
-        # Build list of prompts: main + filled extras
-        prompts_to_process = [t2v_prompt]
-        groups = extra_prompts_data.get("groups", []) if isinstance(extra_prompts_data, dict) else []
-        for group in groups:
-            if isinstance(group, dict) and group.get("positive_prompt", "").strip():
-                prompts_to_process.append(group)
-
-        total_videos = len(prompts_to_process)
-        if total_videos < 1:
-            write_log(f"wan22_t2v_batch has no prompts to process in {scene_dir}")
-            return False
-
-        # Calculate frames per video: ceil((duration * 16) / total_videos)
-        frames_per_video = math.ceil((scene_duration * 16) / total_videos)
-        write_log(f"wan22_t2v_batch: {total_videos} videos, {frames_per_video} frames each (duration={scene_duration}s)")
-
-        # Process each prompt sequentially
-        video_paths = []
-        base_t2v_trigger_words = str(t2v_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")).strip()
-        for idx, prompt_data in enumerate(prompts_to_process):
-            write_log(f"Processing wan22_t2v_batch video {idx + 1}/{total_videos} for {scene_dir}")
-            try:
-                # Extra prompts only override the prompt text; inherit the base T2V config
-                # so LoRA, size, and other workflow inputs remain valid.
-                merged_prompt_data = copy.deepcopy(t2v_prompt)
-                if isinstance(prompt_data, dict):
-                    merged_prompt_data.update(prompt_data)
-                    if prompt_data is not t2v_prompt:
-                        merged_prompt_data["positive_prompt"] = prepend_lora_trigger_words(
-                            str(prompt_data.get("positive_prompt", "")).strip(),
-                            base_t2v_trigger_words,
-                        )
-                workflow = build_wan_t2v_workflow(merged_prompt_data, scene_meta, length_override=frames_per_video)
-            except Exception as e:
-                write_log(f"Failed to build wan22_t2v workflow for batch video {idx + 1} in {scene_dir}: {e}")
-                return False
-
-            result = send_wan22_t2v_workflow(
-                workflow,
-                server,
-                log_file=LOG_FILE,
-                source_label=os.path.join(scene_dir, f'batch_video_{idx + 1}'),
-            )
-            if not result:
-                write_log(f"send_wan22_t2v_workflow failed for batch video {idx + 1} in {scene_dir}")
-                return False
-
-            prompt_id = result.get('prompt_id') or result.get('id')
-            write_log(f"Posted wan22_t2v_batch video {idx + 1} for {scene_dir}, prompt_id={prompt_id}")
-
-            video_out = None
-            if prompt_id:
-                video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
-            if not video_out:
-                write_log(f"No video found for batch video {idx + 1} in {scene_dir} (prompt_id={prompt_id}); stopping run")
-                return False
-
-            video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-            video_subfolder = video_out.get('subfolder')
-            video_type = video_out.get('type')
-            if not video_filename:
-                write_log(f"Cannot determine video filename from output for batch video {idx + 1}: {json.dumps(video_out)}")
-                return False
-
-            video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
-            video_out_path = os.path.join(scene_dir, f'batch_video_{idx + 1}_{video_filename}')
-            try:
-                comfyui_api.download_file_url(video_url, video_out_path)
-            except Exception as e:
-                write_log(f"Failed to download video {video_filename} for batch video {idx + 1}: {e}")
-                return False
-
-            if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
-                write_log(f"Downloaded batch video missing or empty: {video_out_path}")
-                return False
-
-            video_paths.append(video_out_path)
-            write_log(f"Downloaded batch video {idx + 1}/{total_videos}: {video_out_path}")
-
-        # Concat all videos
-        final_video_path = os.path.join(scene_dir, "wan22_t2v_batch_final.mp4")
-        if len(video_paths) == 1:
-            final_video_path = video_paths[0]
-        else:
-            concat_tmp_path = os.path.join(scene_dir, "__wan22_t2v_batch_concat_tmp__.mp4")
-            try:
-                _concat_video_segments(video_paths, concat_tmp_path)
-                os.replace(concat_tmp_path, final_video_path)
-            except Exception as e:
-                write_log(f"Failed to concat wan22_t2v_batch videos for {scene_dir}: {e}")
-                return False
-
-        return _finalize_scene_success(
-            final_video_path,
-            is_s2v=False,
-            success_message=f"Completed wan22_t2v_batch processing for {scene_dir} ({total_videos} videos merged)",
-        )
-
-    if scene_type in {'wan22', 'wan22_i2v'}:
+    if scene_type == 'wan22':
         img_path = _find_latest_root_image(scene_dir)
         if not img_path:
             write_log(f"{scene_type} scene requires at least one input image in root folder {scene_dir}")
@@ -1977,102 +1740,6 @@ def process_scene(scene_dir, server):
             success_message=f"Completed processing {scene_dir}",
         )
 
-    if scene_type == 'wan22_s2v':
-        _ensure_scene_json(scene_dir, 'wan22_s2v_prompt.json', DEFAULT_WAN22_S2V_PROMPT)
-        img_path = _find_latest_root_image(scene_dir)
-        if not img_path:
-            write_log(f"wan22_s2v scene requires at least one input image in root folder {scene_dir}")
-            return False
-        speech_path = _find_latest_root_speech(scene_dir)
-        if not speech_path:
-            write_log(f"wan22_s2v scene requires at least one speech audio in root folder {scene_dir}")
-            return False
-        try:
-            audio_duration = get_s2v_audio_duration(speech_path)
-        except Exception as e:
-            write_log(f"Failed to read speech duration for {speech_path}: {e}")
-            return False
-        if audio_duration >= WAN22_S2V_MAX_AUDIO_DURATION:
-            write_log(
-                f"wan22_s2v speech duration must be less than {WAN22_S2V_MAX_AUDIO_DURATION} seconds: "
-                f"{speech_path} ({audio_duration:.2f}s)"
-            )
-            return False
-
-        uploaded_image_name = _upload_to_comfy(img_path)
-        if not uploaded_image_name:
-            write_log(f"Failed to upload image for wan22_s2v in {scene_dir}")
-            return False
-        uploaded_audio_name = _upload_to_comfy_audio(speech_path)
-        if not uploaded_audio_name:
-            write_log(f"Failed to upload speech audio for wan22_s2v in {scene_dir}")
-            return False
-        try:
-            s2v_prompt = _read_scene_json(scene_dir, 'wan22_s2v_prompt.json', required=True)
-            s2v_workflow = build_wan22_s2v_workflow(
-                s2v_prompt,
-                uploaded_image_name,
-                uploaded_audio_name,
-                audio_duration,
-            )
-        except Exception as e:
-            write_log(f"Failed to build wan22_s2v workflow for {scene_dir}: {e}")
-            return False
-        s2v_result = send_s2v_workflow(
-            s2v_workflow,
-            server,
-            log_file=LOG_FILE,
-            source_label=os.path.join(scene_dir, 'wan22_s2v_prompt.json'),
-        )
-        prompt_id = s2v_result.get('prompt_id') or s2v_result.get('id')
-        write_log(f"Posted wan22_s2v workflow for {scene_dir}, prompt_id={prompt_id}")
-        video_out = None
-        if prompt_id:
-            video_out = comfyui_api.wait_for_output(
-                server,
-                prompt_id,
-                output_type='video',
-                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
-                interval=POLL_INTERVAL,
-            )
-        if not video_out:
-            write_log(f"No video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-            return False
-        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-        video_subfolder = video_out.get('subfolder')
-        video_type = video_out.get('type')
-        if not video_filename:
-            write_log(f"Cannot determine video filename from output: {json.dumps(video_out)}")
-            return False
-        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
-        video_out_path = os.path.join(scene_dir, video_filename)
-        try:
-            comfyui_api.download_file_url(video_url, video_out_path)
-        except Exception as e:
-            write_log(f"Failed to download video {video_filename} from {video_url}: {e}")
-            return False
-        try:
-            if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
-                write_log(f"Downloaded file missing or empty: {video_out_path}")
-                return False
-        except Exception as e:
-            write_log(f"Error checking downloaded file {video_out_path}: {e}")
-            return False
-        try:
-            trimmed_duration = trim_video_to_speech_duration(video_out_path, audio_duration, max_extra_frames=4)
-            write_log(
-                f"Trimmed wan22_s2v video to speech duration for {scene_dir}: "
-                f"speech={audio_duration:.3f}s, output={trimmed_duration:.3f}s"
-            )
-        except Exception as e:
-            write_log(f"Failed to trim wan22_s2v video for {scene_dir}: {e}")
-            return False
-        return _finalize_scene_success(
-            video_out_path,
-            is_s2v=True,
-            success_message=f"Completed processing {scene_dir}",
-        )
-
     if scene_type == 'minimax-h3_r2v':
         _ensure_scene_json(scene_dir, 'minimax_h3_r2v_prompt.json', DEFAULT_MINIMAX_H3_R2V_PROMPT)
         try:
@@ -2089,8 +1756,8 @@ def process_scene(scene_dir, server):
             if not image_names and not audio_names and not video_name:
                 raise ValueError('minimal satu reference image, audio, atau video wajib dipilih')
             duration = float(scene_meta.get('duration_seconds', 0))
-            if not (1.0 <= duration <= 15.0 and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)):
-                raise ValueError('durasi R2V harus antara 1.0 dan 15.0 detik dengan maksimal 4 angka desimal')
+            if not (MINIMAX_H3_DURATION_MIN <= duration <= 15.0 and duration == round(duration, MINIMAX_H3_DURATION_DECIMALS)):
+                raise ValueError('durasi R2V harus antara 0.0 dan 15.0 detik dengan maksimal 4 angka desimal')
             image_paths = [os.path.join(scene_dir, name) for name in image_names]
             audio_paths = [os.path.join(scene_dir, name) for name in audio_names]
             video_path = os.path.join(scene_dir, video_name) if video_name else None
@@ -2150,11 +1817,29 @@ def process_scene(scene_dir, server):
         if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
             write_log(f"Downloaded file missing or empty: {video_out_path}")
             return False
-        return _finalize_scene_success(
+        if not _finalize_scene_success(
             video_out_path,
             is_s2v=True,
             success_message=f"Completed processing {scene_dir}",
-        )
+        ):
+            return False
+        video_stem = os.path.splitext(os.path.basename(video_out_path))[0]
+        r2v_first_frame_path = os.path.join(scene_dir, f'{video_stem}_first_frame.png')
+        r2v_last_frame_path = os.path.join(scene_dir, f'{video_stem}_last_frame.png')
+        try:
+            _shared_extract_first_frame_image(video_out_path, r2v_first_frame_path)
+            _extract_last_frame_image(video_out_path, r2v_last_frame_path)
+            write_log(
+                f"Extracted MiniMax H3 R2V first/last frames for {scene_dir}: "
+                f"{r2v_first_frame_path}, {r2v_last_frame_path}"
+            )
+        except Exception as e:
+            write_log(
+                f"Failed to extract MiniMax H3 R2V first/last frames for {scene_dir}: {e}",
+                level="error",
+            )
+            return False
+        return True
 
     if scene_type == 'minimax-h3_s2v':
         _ensure_scene_json(scene_dir, 'minimax_h3_s2v_prompt.json', DEFAULT_MINIMAX_H3_S2V_PROMPT)
@@ -2294,58 +1979,6 @@ def process_scene(scene_dir, server):
             composed,
             is_s2v=False,
             success_message=f"Completed i2v composition for {scene_dir}: {composed}",
-        )
-
-    if scene_type == 'web_scroll':
-        _ensure_scene_json(scene_dir, 'web_scroll_prompt.json', DEFAULT_WEB_SCROLL_PROMPT)
-        try:
-            web_prompt = _read_scene_json(scene_dir, 'web_scroll_prompt.json', required=True)
-        except Exception as e:
-            write_log(f"Failed to read web_scroll_prompt.json for {scene_dir}: {e}")
-            return False
-        web_url = str(web_prompt.get('url', '')).strip()
-        web_width = int(web_prompt.get('width', 368))
-        web_height = int(web_prompt.get('height', 640))
-        try:
-            web_duration = float(web_prompt.get('duration_seconds', 5.0))
-        except (TypeError, ValueError):
-            web_duration = 5.0
-        web_speed = int(web_prompt.get('speed', 1))
-        composed = None
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                composed = generate_web_scroll_video(
-                    scene_dir=scene_dir,
-                    url=web_url,
-                    width=web_width,
-                    height=web_height,
-                    duration_seconds=web_duration,
-                    speed=web_speed,
-                    fps=WEB_SCROLL_FPS,
-                    capture_mode='stable_pan',
-                )
-                last_error = None
-                break
-            except Exception as e:
-                last_error = e
-                write_log(f"web_scroll attempt {attempt}/3 failed for {scene_dir}: {_safe_error_text(e)}")
-                if attempt < 3:
-                    time.sleep(1.0 * attempt)
-        if last_error is not None or not composed:
-            write_log(f"Failed to generate web_scroll video for {scene_dir}: {_safe_error_text(last_error)}")
-            return False
-        try:
-            if not os.path.exists(composed) or os.path.getsize(composed) == 0:
-                write_log(f"Composed web_scroll video missing or empty: {composed}")
-                return False
-        except Exception as e:
-            write_log(f"Error checking composed web_scroll video {composed}: {e}")
-            return False
-        return _finalize_scene_success(
-            composed,
-            is_s2v=False,
-            success_message=f"Completed web_scroll composition for {scene_dir}: {composed}",
         )
 
     if scene_type == 'image_pan':

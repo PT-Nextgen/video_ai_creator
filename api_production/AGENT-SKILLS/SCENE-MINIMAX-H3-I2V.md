@@ -1,15 +1,14 @@
 ---
 name: scene-minimax-h3-i2v
-description: Create standalone MiniMax H3 I2V scenes with an optional generated initial image, optional image editing, and a MiniMax H3 I2VA video stage.
+description: Create standalone MiniMax H3 I2V scenes with an optional generated initial image and a MiniMax H3 I2VA video stage.
 ---
 
 # Scene minimax-h3_i2v
 
-Scene ini adalah workflow I2V mandiri dengan tiga kemungkinan tahap persiapan:
+Scene ini adalah workflow I2V mandiri dengan dua kemungkinan tahap persiapan:
 
 1. `Gambar Awal` membuat gambar awal dari `z_image_prompt.json` bila diperlukan.
-2. `Image Edit` dapat mengedit gambar awal dan menyimpan hasilnya ke root folder scene.
-3. Workflow MiniMax H3 I2VA memakai gambar terbaru di root folder scene sebagai `Picture 1`.
+2. Workflow MiniMax H3 I2VA memakai gambar terbaru di root folder scene sebagai `Picture 1`.
 
 Gunakan aturan umum scene, aturan I2V MiniMax H3, dan aturan khusus prompt I2V yang diberikan pada input Agentic.
 
@@ -129,9 +128,9 @@ Ketentuan:
 - Seluruh timing harus berada di dalam durasi 1, 5, 10, atau 15 detik.
 - Jangan memakai format T2VA, FL2VA, L2VA, atau Ref2VA.
 
-## Image Edit
+## Qwen Image Edit
 
-`Image Edit` adalah tahap opsional untuk menghasilkan gambar baru dari gambar root yang dipilih. Prompt edit mengikuti aturan `IMAGE-PROMPT.md` dan disimpan di `image_edit_prompt.json`. File ini tidak menjadi output prompt utama Agentic scene; Agentic hanya memvariasikan `z_image_prompt.json` dan `minimax_h3_i2v_prompt.json`.
+Jika perlu menyiapkan gambar referensi baru, gunakan tab `Qwen Image Edit`. Proses ini terpisah dari workflow video MiniMax dan tidak mengubah file output Agentic scene.
 
 ## Agentic
 

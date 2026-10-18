@@ -337,57 +337,6 @@ def _generate_extra_images(scene_dir: Path, project_name: str, server: str) -> b
     return True
 
 
-def _generate_image_edits(scene_dir: Path, project_name: str, server: str) -> bool:
-    script = Path(ROOT) / "scripts" / "generate_image_edit.py"
-    edit_path = scene_dir / "image_edit_prompt.json"
-    if not edit_path.exists():
-        write_log("[agentic] image_edit_prompt.json tidak ditemukan, skip image edits")
-        return True
-
-    try:
-        with edit_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        write_log("[agentic] Gagal baca image_edit_prompt.json, skip image edits")
-        return True
-
-    groups = data.get("groups", [])
-    if not groups:
-        return True
-
-    for idx, group in enumerate(groups, start=1):
-        prompt_val = group.get("prompt", "")
-        if isinstance(prompt_val, dict):
-            positive = str(prompt_val.get("id_new", "")).strip() or str(prompt_val.get("en", "")).strip()
-        else:
-            positive = str(prompt_val).strip()
-        if not positive:
-            write_log(f"[agentic] Slot edit {idx} kosong, skip")
-            continue
-
-        source_image = str(group.get("source_image", "")).strip()
-        if not source_image:
-            latest = _find_latest_image(scene_dir)
-            if latest:
-                source_image = os.path.basename(latest)
-            else:
-                write_log(f"[agentic] Tidak ada gambar untuk slot edit {idx}, skip")
-                continue
-
-        args = [
-            "--project", project_name,
-            "--scene", scene_dir.name,
-            "--server", server,
-            "--prompt-file", "image_edit_prompt.json",
-            "--prompt-index", str(idx),
-            "--source-image", source_image,
-        ]
-        if not _run_script(script, args, cwd=scene_dir):
-            write_log(f"[agentic] Image edit slot {idx} gagal", level="error")
-            return False
-    return True
-
-
 def _process_scene_with_main(scene_dir: Path, project_name: str, server: str) -> bool:
     main_script = Path(ROOT) / "main.py"
     args = ["--project", project_name, "--scene", scene_dir.name, "--server", server]
@@ -475,7 +424,7 @@ def generate_variation_configs_for_scene(
     scene_meta = _load_scene_meta(scene_dir)
     if scene_meta is None:
         return False
-    scene_type = str(scene_meta.get("scene_type", "wan22_i2v")).strip()
+    scene_type = str(scene_meta.get("scene_type", "wan22_t2v")).strip()
     if scene_type == "minimax-h3_i2v-panjang":
         write_log(
             f"[agentic] {scene_dir.name}: scene minimax-h3_i2v-panjang tidak mendukung Agentic/Generate Variasi",
@@ -573,7 +522,7 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
     if scene_meta is None:
         return False
 
-    scene_type = str(scene_meta.get("scene_type", "wan22_i2v")).strip()
+    scene_type = str(scene_meta.get("scene_type", "wan22_t2v")).strip()
     if scene_type == "minimax-h3_i2v-panjang":
         write_log(
             f"[agentic] {scene_dir.name}: scene minimax-h3_i2v-panjang tidak mendukung Agentic/Generate Variasi",
@@ -582,7 +531,7 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
         return False
     create_initial_image = bool(agentic_config.get("create_initial_image", True))
     image_extra_mode = str(agentic_config.get("image_extra_mode", "image_extra")).strip()
-    if scene_type in {"wan22_t2v_i2v", "minimax-h3_t2v_i2v", "minimax-h3_r2v"}:
+    if scene_type in {"wan22_t2v", "minimax-h3_t2v_i2v", "minimax-h3_r2v"}:
         create_initial_image = False
 
     pending_variations = _pending_variation_dirs(scene_dir)
@@ -644,10 +593,6 @@ def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str
             if image_extra_mode == "image_extra":
                 if not _generate_extra_images(scene_dir, project_name, server):
                     write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal generate extra images", level="error")
-                    return False
-            elif image_extra_mode == "image_edit":
-                if not _generate_image_edits(scene_dir, project_name, server):
-                    write_log(f"[agentic] {scene_dir.name}/{variation_dir.name}: Gagal generate image edits", level="error")
                     return False
 
         if not _process_scene_with_main(scene_dir, project_name, server):

@@ -1,4 +1,5 @@
 import copy
+import copy
 import json
 import os
 import random
@@ -115,16 +116,6 @@ def get_template_name(t2v_prompt: dict | None = None) -> str:
 
 def get_step_template_name(t2v_prompt: dict | None = None) -> str:
     return TEMPLATE_4
-
-
-def resolve_wan22_i2v_duration(scene_duration) -> int:
-    try:
-        value = int(float(scene_duration))
-    except (TypeError, ValueError):
-        value = 10
-    if value >= 15:
-        return 10
-    return 5
 
 
 def build_workflow(t2v_prompt: dict, scene_meta: dict | None = None, length_override: int | None = None) -> dict:

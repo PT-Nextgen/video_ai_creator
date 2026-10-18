@@ -48,24 +48,19 @@ Each scene directory contains JSON files. All prompt files are created upfront f
 | `scene_meta.json` | Scene title, description, type, duration, voice text, voice character |
 | `project_settings.json` | Project-level: video size, prompt generation config, voice provider, caption settings |
 
-### Prompt files (scene-type-dependent; always created)
+### Prompt files (scene-type-dependent)
 
 | File | Used by |
 |------|---------|
 | `z_image_prompt.json` | Initial image generation |
-| `wan22_i2v_prompt.json` | WAN image-to-video |
 | `wan22_t2v_prompt.json` | WAN text-to-video |
-| `wan22_s2v_prompt.json` | WAN speech-to-video |
-| `wan22_t2v_batch_extra_prompts.json` | WAN T2V batch variants |
 | `minimax_h3_t2v_prompt.json` | MiniMax H3 text-to-video |
 | `minimax_h3_i2v_prompt.json` | MiniMax H3 image-to-video |
 | `minimax_h3_i2v_panjang_prompt.json` | MiniMax H3 long I2V |
 | `minimax_h3_s2v_prompt.json` | MiniMax H3 speech-to-video |
 | `minimax_h3_r2v_prompt.json` | MiniMax H3 reference-to-video |
-| `image_edit_prompt.json` | Image editing |
 | `qwen_image_edit_prompt.json` | Qwen image editing |
 | `z_image_extra_prompts.json` | Extra image generations |
-| `web_scroll_prompt.json` | Web scroll video |
 | `image_pan_prompt.json` | Image pan video |
 | `image_zoom_prompt.json` | Image zoom video |
 | `web_search_prompt.json` | Web search video |
@@ -74,18 +69,13 @@ Each scene directory contains JSON files. All prompt files are created upfront f
 
 | `scene_type` | Description |
 |---|---|
-| `wan22_i2v` | Generate image → WAN image-to-video |
-| `wan22_t2v_i2v` | WAN text-to-video → last frame → WAN image-to-video (two-stage) |
 | `wan22_t2v` | WAN text-to-video only |
-| `wan22_s2v` | Generate image → WAN speech-to-video (lip-sync from audio) |
-| `wan22_t2v_batch` | WAN text-to-video with extra prompt variants |
 | `minimax-h3_t2v_i2v` | MiniMax H3 text-to-video → image-to-video |
 | `minimax-h3_i2v` | MiniMax H3 image-to-video |
 | `minimax-h3_i2v-panjang` | MiniMax H3 long image-to-video (multi-segment) |
 | `minimax-h3_s2v` | MiniMax H3 speech-to-video |
 | `minimax-h3_r2v` | MiniMax H3 reference-to-video |
 | `i2v` | Hold images as a simple video |
-| `web_scroll` | Scroll web page into video |
 | `image_pan` | Pan across an image |
 | `image_zoom` | Zoom into an image |
 
@@ -98,9 +88,7 @@ main.py (orchestrator)
 │   │   ├── z_image.py — Z-Image Turbo / Flux.2 workflows
 │   │   ├── gemini_image.py — Gemini direct API image generation
 │   │   └── flux2/ — Flux.2 workflow builder
-│   ├── wan22_i2v/ — WAN image-to-video
 │   ├── wan22_t2v/ — WAN text-to-video
-│   ├── wan22_s2v/ — WAN speech-to-video
 │   ├── minimax_h3_t2v/ — MiniMax H3 T2V
 │   ├── minimax_h3_i2v/ — MiniMax H3 I2V
 │   ├── minimax_h3_r2v/ — MiniMax H3 Reference-to-Video
@@ -108,7 +96,7 @@ main.py (orchestrator)
 │   ├── gemini/ — Gemini TTS
 │   ├── scripts/comfyui_api.py — ComfyUI HTTP client (upload, post, poll, download)
 │   ├── scripts/generate_compose.py — Audio/video composition via ffmpeg
-│   └── scripts/generate_web_scroll_video.py / generate_image_pan_video.py / generate_image_zoom_video.py
+│   └── scripts/generate_image_pan_video.py / generate_image_zoom_video.py
 ├── scene_manager_ui.py — PySide6 GUI
 ├── prompt_localization.py — bilingual prompt handling (id_old / id_new / en)
 └── logging_config.py — unified logging to content_creation.log
@@ -170,8 +158,7 @@ Always check the full attempt log if uploads fail.
 
 ### Scene duration constraints
 
-- `wan22_t2v_i2v`: duration must be exactly 5, 10, or 15 seconds
-- `wan22_s2v`: audio duration must be < 19.2 seconds (selects template B1-B4)
+- `wan22_t2v`: duration must be exactly 5, 10, or 15 seconds
 - `minimax-h3`: duration 1.0–30.0 seconds, up to 1 decimal place
 - `minimax-h3_r2v`: audio duration < 15.0 seconds, video max 15 seconds
 
@@ -185,7 +172,7 @@ After a scene video is produced, `write_audio_composed_marker()` records the com
 
 ### Speech file naming
 
-Speech files must match `speech_*` pattern (e.g., `speech_01.mp3`) for wan22_s2v scenes.
+Speech-driven scenes use the `speech_*` naming pattern (e.g., `speech_01.mp3`).
 
 ### Image extensions
 

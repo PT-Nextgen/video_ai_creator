@@ -34,16 +34,12 @@ from minimax_h3.minimax_h3_prompt import (
 
 RUNTIME_PROMPT_FILENAMES = (
     "z_image_prompt.json",
-    "image_edit_prompt.json",
     "wan22_t2v_prompt.json",
     "wan22_i2v_prompt.json",
-    "wan22_s2v_prompt.json",
-    "wan22_t2v_batch_extra_prompts.json",
     "minimax_h3_t2v_prompt.json",
     "minimax_h3_i2v_prompt.json",
     "minimax_h3_s2v_prompt.json",
     "minimax_h3_r2v_prompt.json",
-    "web_scroll_prompt.json",
     "image_pan_prompt.json",
     "image_zoom_prompt.json",
 )
@@ -53,12 +49,8 @@ RUNTIME_PROMPT_FILENAMES = (
 # operation (for example, an incomplete MiniMax T2V prompt blocking Flux
 # initial-image generation in a MiniMax I2V scene).
 RUNTIME_PROMPTS_BY_SCENE_TYPE = {
-    "wan22_t2v_i2v": ("wan22_t2v_prompt.json", "wan22_i2v_prompt.json"),
     "wan22_t2v": ("wan22_t2v_prompt.json",),
-    "wan22_i2v": ("z_image_prompt.json", "wan22_i2v_prompt.json"),
     "wan22": ("z_image_prompt.json", "wan22_i2v_prompt.json"),
-    "wan22_t2v_batch": ("wan22_t2v_prompt.json", "wan22_t2v_batch_extra_prompts.json"),
-    "wan22_s2v": ("wan22_s2v_prompt.json", "z_image_prompt.json"),
     "minimax-h3_t2v_i2v": ("minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"),
     "minimax-h3_i2v": ("z_image_prompt.json", "minimax_h3_i2v_prompt.json"),
     "minimax-h3_i2v-panjang": ("z_image_prompt.json", "minimax_h3_i2v_panjang_prompt.json"),
@@ -67,7 +59,6 @@ RUNTIME_PROMPTS_BY_SCENE_TYPE = {
     "i2v": ("z_image_prompt.json",),
     "image_pan": ("z_image_prompt.json", "image_pan_prompt.json"),
     "image_zoom": ("z_image_prompt.json", "image_zoom_prompt.json"),
-    "web_scroll": ("web_scroll_prompt.json",),
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -168,14 +159,11 @@ PROMPT_TOP_LEVEL_FIELDS = {
     "minimax_h3_i2v_prompt.json": ["positive_prompt"],
     "minimax_h3_s2v_prompt.json": ["positive_prompt"],
     "minimax_h3_r2v_prompt.json": ["positive_prompt"],
-    "wan22_s2v_prompt.json": ["positive_prompt", "negative_prompt"],
     "project_settings_cover.json": ["positive_prompt", "negative_prompt"],
 }
 
 GROUP_PROMPT_FIELDS = {
     "z_image_extra_prompts.json": ["positive_prompt", "negative_prompt"],
-    "image_edit_prompt.json": ["prompt"],
-    "wan22_t2v_batch_extra_prompts.json": ["positive_prompt", "negative_prompt"],
 }
 
 MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME = "minimax_h3_i2v_panjang_prompt.json"
@@ -187,7 +175,6 @@ TRIGGER_WORD_PROMPT_FIELDS = {
     "z_image_extra_prompts.json": ["positive_prompt"],
     "wan22_i2v_prompt.json": ["positive_prompt_one", "positive_prompt_two"],
     "wan22_t2v_prompt.json": ["positive_prompt"],
-    "wan22_t2v_batch_extra_prompts.json": ["positive_prompt"],
 }
 
 MINIMAX_H3_I2V_RUNTIME_CONTEXT = (
@@ -454,11 +441,64 @@ def _load_qwen_multimodal_image_payloads(image_paths: list[str | Path]) -> list[
             {
                 "label": f"<image{index}>",
                 "name": path.name,
+                "path": str(path),
                 "mime_type": mime_type,
                 "base64": base64.b64encode(path.read_bytes()).decode("ascii"),
             }
         )
     return payloads
+
+
+def _load_minimax_multimodal_image_payloads(image_paths: list[str | Path]) -> list[dict]:
+    """Load ordered MiniMax image attachments without exposing their bytes in logs."""
+    payloads = []
+    for index, raw_path in enumerate(image_paths, start=1):
+        path = Path(raw_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Gambar referensi MiniMax tidak ditemukan: {path}")
+        mime_type = mimetypes.guess_type(path.name)[0] or ""
+        if not mime_type.startswith("image/"):
+            raise ValueError(f"File referensi MiniMax bukan gambar: {path.name}")
+        payloads.append(
+            {
+                "label": f"<Picture {index}>",
+                "name": path.name,
+                "path": str(path),
+                "mime_type": mime_type,
+                "base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            }
+        )
+    return payloads
+
+
+def _log_llm_audit(
+    phase: str,
+    provider: str,
+    model: str,
+    instruction: str,
+    payload_text: str,
+    image_payloads: list[dict] | None = None,
+):
+    """Write the exact textual request and ordered image manifest for auditing."""
+    images = image_payloads or []
+    image_lines = [
+        f"{item.get('label', '(unlabeled)')} -> {item.get('path', item.get('name', '(unknown)'))}"
+        for item in images
+    ]
+    LOGGER.info(
+        "[LLM AUDIT] phase=%s provider=%s model=%s\n"
+        "--- INSTRUCTION SENT ---\n%s\n"
+        "--- TEXT PAYLOAD SENT ---\n%s\n"
+        "--- EFFECTIVE TEXT REQUEST ---\n%s\n"
+        "--- IMAGES SENT (ORDERED) ---\n%s",
+        str(phase or "call"),
+        str(provider or "unknown"),
+        str(model or "unknown"),
+        str(instruction or ""),
+        str(payload_text or ""),
+        f"{str(instruction or '').rstrip()}\n\n{str(payload_text or '').lstrip()}",
+        "\n".join(image_lines) if image_lines else "(none)",
+    )
 
 
 class PromptTranslator:
@@ -655,6 +695,14 @@ class PromptTranslator:
                 }
                 for item in references
             ]
+            _log_llm_audit(
+                "generate_qwen_image_edit_prompt_multimodal",
+                "gemini",
+                self.prompt_generation_model_name,
+                model_instruction,
+                user_payload,
+                references,
+            )
             response_text = self._gemini._call_text_model(
                 self.prompt_generation_model_name,
                 model_instruction,
@@ -674,6 +722,14 @@ class PromptTranslator:
                 }
                 for item in references
             ]
+            _log_llm_audit(
+                "generate_qwen_image_edit_prompt_multimodal",
+                LOCAL_PROMPT_PROVIDER,
+                self.prompt_generation_model_name,
+                model_instruction,
+                user_payload,
+                references,
+            )
             response_text = self._call_local_text_model(
                 self.prompt_generation_model_name,
                 f"{model_instruction}\n\n{user_payload}",
@@ -787,10 +843,23 @@ class PromptTranslator:
         )
         return generated or text
 
-    def generate_prompt_multilang(self, text: str, context: str = "") -> dict:
+    def generate_prompt_multilang(
+        self,
+        text: str,
+        context: str = "",
+        additional_instruction: str = "",
+        image_paths: list[str | Path] | None = None,
+    ) -> dict:
         text = _clean_text(text)
-        if not text:
+        additional_instruction = _clean_text(additional_instruction)
+        if not text and not additional_instruction and not image_paths:
             return {"en": "", "id_new": ""}
+        is_minimax = "MiniMax H3" in str(context or "")
+        references = _load_minimax_multimodal_image_payloads(image_paths or []) if is_minimax and image_paths else []
+        manifest = "\n".join(
+            f"{item['label']} = {item['name']} (attached image {index + 1})"
+            for index, item in enumerate(references)
+        )
         if "Active MiniMax H3 mode: Ref2VA" in str(context or ""):
             instruction = (
                 "You are a senior MiniMax H3 Ref2VA video prompt engineer.\n"
@@ -852,22 +921,64 @@ class PromptTranslator:
                 "Return JSON only with exactly these keys: "
                 '{"en":"...", "id_new":"..."}'
             )
-        payload_text = _compose_prompt_request_text(text, context)
+        payload_text = _compose_prompt_request_text(
+            text,
+            context,
+            additional_instruction=additional_instruction,
+            image_manifest=manifest,
+        )
         if self.prompt_generation_provider == "gemini":
+            image_parts = [
+                {
+                    "inline_data": {
+                        "mime_type": item["mime_type"],
+                        "data": item["base64"],
+                    }
+                }
+                for item in references
+            ]
+            _log_llm_audit(
+                "generate_prompt_multilang",
+                "gemini",
+                self.prompt_generation_model_name,
+                instruction,
+                payload_text,
+                references,
+            )
             response_text = self._gemini._call_text_model(
                 self.prompt_generation_model_name,
                 instruction,
                 payload_text,
                 timeout=LLM_CALL_TIMEOUT_SECONDS,
                 phase="generate_prompt_multilang",
+                image_parts=image_parts,
             )
             self.last_call_metrics = self._gemini.last_call_metrics
         else:
+            image_parts = [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{item['mime_type']};base64,{item['base64']}"
+                    },
+                }
+                for item in references
+            ]
+            local_payload = instruction + "\n\n" + payload_text
+            _log_llm_audit(
+                "generate_prompt_multilang",
+                LOCAL_PROMPT_PROVIDER,
+                self.prompt_generation_model_name,
+                instruction,
+                payload_text,
+                references,
+            )
             response_text = self._call_local_text_model(
                 self.prompt_generation_model_name,
-                instruction + "\n\n" + payload_text,
+                local_payload,
                 timeout=LOCAL_LLM_TIMEOUT_SECONDS,
                 phase="generate_prompt_multilang",
+                image_parts=image_parts,
             )
         if "Active MiniMax H3 mode: Ref2VA" in str(context or ""):
             raw_payload = _parse_json_object_response(response_text)
@@ -978,6 +1089,13 @@ class PromptTranslator:
         source_json = json.dumps(value, ensure_ascii=False, indent=2)
         phase = "translate_minimax_json"
         if self.translate_provider == "gemini":
+            _log_llm_audit(
+                phase,
+                "gemini",
+                self.translate_model_name,
+                instruction,
+                source_json,
+            )
             response_text = self._gemini._call_text_model(
                 self.translate_model_name,
                 instruction,
@@ -987,6 +1105,13 @@ class PromptTranslator:
             )
             self.last_call_metrics = self._gemini.last_call_metrics
         else:
+            _log_llm_audit(
+                phase,
+                LOCAL_PROMPT_PROVIDER,
+                self.translate_model_name,
+                instruction,
+                "INPUT JSON:\n" + source_json,
+            )
             response_text = self._call_local_text_model(
                 self.translate_model_name,
                 instruction + "\n\nINPUT JSON:\n" + source_json,
@@ -1231,12 +1356,30 @@ def _extract_json_text_candidate(text: str) -> str:
     return ""
 
 
-def _compose_prompt_request_text(prompt_text: str, context: str = "") -> str:
+def _compose_prompt_request_text(
+    prompt_text: str,
+    context: str = "",
+    additional_instruction: str = "",
+    image_manifest: str = "",
+) -> str:
     prompt_text = _clean_text(prompt_text)
     context = _clean_text(context)
+    additional_instruction = _clean_text(additional_instruction)
+    image_manifest = _clean_text(image_manifest)
+    if not additional_instruction and not image_manifest:
+        if context:
+            return f"Context:\n{context}\n\nPrompt:\n{prompt_text}" if prompt_text else f"Context:\n{context}"
+        return prompt_text
+    sections = []
     if context:
-        return f"Context:\n{context}\n\nPrompt:\n{prompt_text}"
-    return prompt_text
+        sections.append(f"Context:\n{context}")
+    if image_manifest:
+        sections.append(f"ORDERED PICTURE MANIFEST:\n{image_manifest}")
+    if prompt_text:
+        sections.append(f"Prompt:\n{prompt_text}")
+    if additional_instruction:
+        sections.append(f"ADDITIONAL INSTRUCTION FROM UI:\n{additional_instruction}")
+    return "\n\n".join(sections)
 
 
 def _maybe_parse_prompt_object_string(value):
@@ -2043,7 +2186,7 @@ def prepare_project_prompts_for_runtime(
     for scene_dir in scene_paths:
         if not scene_dir.is_dir():
             continue
-        scene_type = "wan22_i2v"
+        scene_type = "wan22_t2v"
         meta_path = scene_dir / "scene_meta.json"
         try:
             if meta_path.exists():
