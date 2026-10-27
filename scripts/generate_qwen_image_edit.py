@@ -16,7 +16,7 @@ from prompt_localization import (
     read_json_for_runtime,
 )
 from scripts import comfyui_api
-from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_hipfire
 from scripts.server_config import get_server_address
 from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
 
@@ -24,23 +24,23 @@ from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
-def _qwen_translation_uses_llama(project_dir: Path) -> bool:
-    """Return whether this Qwen run needs the Llama -> ComfyUI handoff.
+def _qwen_translation_uses_hipfire(project_dir: Path) -> bool:
+    """Return whether this Qwen run needs the Hipfire -> ComfyUI handoff.
 
-    ``project_uses_llama`` is the legacy workflow-level check.  Qwen must
+    ``project_uses_hipfire`` is the workflow-level check. Qwen must
     also inspect the translator itself because prompt generation and prompt
     translation can be configured independently in older project settings.
     This check is intentionally local to the Qwen entrypoint so other
     pipelines keep their existing runtime routing.
     """
-    if project_uses_llama(project_dir):
+    if project_uses_hipfire(project_dir):
         return True
     try:
         translator = get_prompt_translator(project_dir=project_dir)
     except Exception:
         return False
     provider = str(getattr(translator, "translate_provider", "")).strip().lower()
-    return provider in {"llama.cpp", "ollama"}
+    return provider in {"hipfire", "llama.cpp", "ollama"}
 
 
 def _extract_uploaded_name(upload_info: dict, fallback_name: str) -> str:
@@ -116,7 +116,7 @@ def _ensure_qwen_translation_ready(prompt: dict) -> None:
         english = str(value.get("en", "") or "").strip()
         if id_new and not english:
             raise RuntimeError(
-                f"Translasi Llama untuk {key} belum menghasilkan en; "
+                f"Translasi Hipfire untuk {key} belum menghasilkan en; "
                 "workflow ComfyUI tidak dijalankan."
             )
 
@@ -194,9 +194,9 @@ def main():
     try:
         if args.number_of_edits <= 0:
             raise RuntimeError("Jumlah Edit Qwen harus lebih besar dari 0.")
-        translation_uses_llama = _qwen_translation_uses_llama(scene_dir.parent)
-        if translation_uses_llama:
-            write_log("[Qwen] Menyelesaikan translasi Llama sebelum switch ke ComfyUI")
+        translation_uses_hipfire = _qwen_translation_uses_hipfire(scene_dir.parent)
+        if translation_uses_hipfire:
+            write_log("[Qwen] Menyelesaikan translasi Hipfire sebelum switch ke ComfyUI")
             prepare_project_prompts_for_runtime(
                 scene_dir.parent,
                 scene_dirs=[scene_dir],
@@ -204,7 +204,7 @@ def main():
                 log_fn=write_log,
             )
             # Read the already-localized file before the service handoff. This
-            # prevents a second read after the switch from calling Llama again.
+            # prevents a second read after the switch from calling Hipfire again.
             prompt = _load_prompt(scene_dir, args.prompt_file, resolve_runtime=False)
             _ensure_qwen_translation_ready(prompt)
             write_log("[Qwen] Translasi selesai; switch dan verifikasi ComfyUI dimulai")

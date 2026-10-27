@@ -61,11 +61,11 @@ Catatan format prompt:
 - `id_new` adalah JSON Bahasa Indonesia yang ditampilkan dan diedit di UI
 - prompt generation dan translate memakai konfigurasi yang sama di `project_settings.json.prompt_generation`
 - provider `gemini` memakai default model API tanpa setting `temperature`
-- provider `llama.cpp` hanya memakai endpoint OpenAI-compatible `/v1/chat/completions`
+- provider `hipfire` memakai endpoint OpenAI-compatible `/v1/chat/completions`
 - runtime memakai `v1/chat/completions` untuk text generation dan `v1/models` untuk daftar model
 - runtime tidak melakukan fallback ke endpoint legacy `/completion` atau `/api/generate`
-- request translate llama.cpp memakai `reasoning_effort=low`
-- request `Buat Prompt` dan `Generate Variasi` llama.cpp memakai `reasoning_effort=low`
+- request translate Hipfire memakai `reasoning_effort=low`
+- request `Buat Prompt` dan `Generate Variasi` Hipfire memakai `reasoning_effort=low`
 - tombol `Buat Prompt` tidak melakukan `Save Scene` terlebih dahulu; input dan konteks diambil langsung dari nilai yang sedang tampil di UI
 - khusus MiniMax H3, `Save` hanya memvalidasi JSON `id_new` dan mempertahankan `id_old` sebagai penanda perubahan; `Save` tidak memanggil LLM untuk menerjemahkan prompt
 - saat scene MiniMax dijalankan, runtime menerjemahkan `id_new` ke `en` hanya jika `id_old != id_new` atau `en` kosong, lalu menyimpan hasil sinkronisasi tersebut
@@ -111,9 +111,9 @@ Instruksi `Buat Prompt` dapat menjelaskan:
 - perubahan pose, pakaian, warna, latar, komposisi, atau gaya
 - hubungan antara beberapa gambar referensi
 
-`Buat Prompt` menggunakan input gambar multimodal dan tersedia untuk provider Gemini maupun llama.cpp yang mendukung input gambar. Model menerima instruksi Qwen Image Edit 2.1 sebelum instruksi tambahan dari UI, sehingga prompt yang dihasilkan tetap mengikuti aturan edit gambar Qwen.
+`Buat Prompt` menggunakan input gambar multimodal dan tersedia untuk provider Gemini maupun Hipfire yang mendukung input gambar. Model menerima instruksi Qwen Image Edit 2.1 sebelum instruksi tambahan dari UI, sehingga prompt yang dihasilkan tetap mengikuti aturan edit gambar Qwen.
 
-LLM diminta mengembalikan JSON yang berisi `en`, `id_new`, dan `id_old`. Hasil tersebut dipakai untuk mengisi `Positive Prompt`; `Negative Prompt` tidak diubah oleh tombol `Buat Prompt`. Jika provider translasi menggunakan llama.cpp, translasi diselesaikan terlebih dahulu sebelum workflow Qwen dikirim ke ComfyUI.
+LLM diminta mengembalikan JSON yang berisi `en`, `id_new`, dan `id_old`. Hasil tersebut dipakai untuk mengisi `Positive Prompt`; `Negative Prompt` tidak diubah oleh tombol `Buat Prompt`. Jika provider translasi menggunakan Hipfire, translasi diselesaikan terlebih dahulu sebelum workflow Qwen dikirim ke ComfyUI.
 
 Aturan khusus MiniMax H3 untuk tombol `Buat Prompt` dan Agentic:
 - LLM hanya diminta menghasilkan `positive_prompt.en` dalam bentuk object JSON nested; LLM tidak diminta membuat `id_new` atau `id_old`
@@ -155,7 +155,7 @@ Field utama:
   - `video_size.height`
   - `prompt_generation.provider`
   - `prompt_generation.model`
-  - `prompt_generation.host` dan `prompt_generation.port` untuk llama.cpp
+  - `prompt_generation.host` dan `prompt_generation.port` untuk Hipfire; default `nextgenserver:11435`
   - `voice.voice_provider` (fixed `gemini`)
   - `caption.generate_caption`
   - `cover` (struktur sama seperti `z_image_prompt.json`)
@@ -369,9 +369,13 @@ Contoh:
 Pemakaian:
 - dipakai oleh `main.py`, `scripts/generate_initial_image.py`, `scripts/generate_voice.py`, `scripts/generate_cover_image.py`, dan `scene_manager_ui.py`
 - model `prompt_generation` bersifat per-project dan dibaca dari `project_settings.json`
+- provider LLM lokal default adalah `hipfire`
+- model alias Hipfire default: `qwen3.8-27`
+- health endpoint Hipfire: `http://nextgenserver:11435/v1/models`
+- endpoint text generation Hipfire: `http://nextgenserver:11435/v1/chat/completions`
 - default model Gemini untuk `prompt_generation` dan `translate` adalah `gemini-3.1-flash-lite`
 - `gemini-3.1-flash-lite` juga menjadi model default Agentic saat provider project adalah Gemini
-- jika provider `llama.cpp` dipilih, UI akan membaca model yang tersimpan di JSON lalu mencoba mengambil daftar model dari server `host:port`
+- jika provider `Hipfire` dipilih, UI akan membaca model yang tersimpan di JSON lalu mengambil daftar model dari `http://host:port/v1/models`
 - jika model tersimpan tersedia, dropdown akan memilih model itu
 - jika model tersimpan tidak tersedia, nilai tersimpan tetap ditampilkan sebagai opsi supaya konfigurasi lama tidak hilang
 - di UI, konfigurasi ini diubah lewat dialog `Konfigurasi Project` (bukan dialog server terpisah)
@@ -426,7 +430,7 @@ Pilihan `scene_type`:
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project
-.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider llama.cpp --prompt-generation-model qwen3.8-27b-uc-q4_k_m --prompt-generation-host nextgenserver --prompt-generation-port 8080 --voice-provider gemini --generate-caption true
+.\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --description "Video edukasi anak" --width 360 --height 640 --comfyui-server nextgenserver:8188 --prompt-generation-provider hipfire --prompt-generation-model qwen3.8-27 --prompt-generation-host nextgenserver --prompt-generation-port 11435 --voice-provider gemini --generate-caption true
 .\.venv\Scripts\python.exe scripts\project_cli.py create-project --project demo_project --with-default-scene
 .\.venv\Scripts\python.exe scripts\project_cli.py create-scene --project demo_project --scene-type wan22_t2v --title "Intro Gerak" --scene-description "Pembuka video dengan gerakan yang berkesinambungan." --voice-text "Halo teman-teman! Hari ini kita mulai dengan gerakan singkat." --duration 15
 ```
@@ -508,16 +512,16 @@ Fungsi utama:
   - `ComfyUI Server` (`<ip/host>:<port>`, wajib diisi, default `nextgenserver:8188`)
   - `Ukuran Video Project`
   - `Model Prompt Generation`
-    - provider: `Gemini` atau `llama.cpp`
+    - provider: `Gemini` atau `Hipfire`
     - model Gemini dibaca dari daftar model yang tersedia
-    - model llama.cpp dibaca dari server `host:port`
+    - model Hipfire dibaca dari server `host:port`
     - jika model tersimpan di JSON tersedia, dropdown akan langsung memilihnya
     - jika model tidak tersedia, dropdown dibiarkan kosong dan harus dipilih ulang
     - provider `Gemini` memakai default API tanpa setting `temperature`
-    - provider `llama.cpp` memakai endpoint `v1/models` untuk daftar model dan `/v1/chat/completions` untuk text generation
-  - `llama.cpp Host / Port`
+    - provider `Hipfire` memakai endpoint `/v1/models` untuk daftar model dan `/v1/chat/completions` untuk text generation
+  - `Hipfire Host / Port` (default `nextgenserver:11435`)
     - berdampingan di satu baris
-    - default: `nextgenserver:8080`
+    - default: `nextgenserver:11435`
   - `Voice Project`
   - `Caption Project`
   - `Cover`
@@ -579,17 +583,17 @@ Perilaku UI:
 - daftar LoRa dimuat sekali saat UI dijalankan, lalu dipakai dari memory cache untuk semua dropdown LoRa
 - jika ComfyUI tidak menjawab saat startup UI, akan muncul popup error berbahasa Indonesia dan daftar LoRa tidak dimuat
 - grup toolbar runtime menyediakan tombol:
-  - `L`: switch ke Llama
+  - `H`: switch ke Hipfire
   - `C`: switch ke ComfyUI
   - `V`: memeriksa status kedua service
   - `LC`: membuka dialog log ComfyUI
-  - `LL`: membuka dialog log Llama
-- dialog `LC` dan `LL` berukuran sekitar dua pertiga layar, berada di tengah, dan mengambil 100 baris log terakhir
+  - `HL`: membuka dialog log Hipfire
+- dialog `LC` dan `HL` berukuran sekitar dua pertiga layar, berada di tengah, dan mengambil 100 baris log terakhir
 - dialog log bersifat read-only dan melakukan refresh async setiap 5 detik; waktu refresh terakhir ditampilkan
 - posisi scroll vertikal dan horizontal dipertahankan saat isi log diperbarui, tanpa memaksa scrollbar ke baris paling akhir
 - endpoint log runtime yang digunakan adalah:
   - `GET /v1/runtime/logs/comfyui`
-  - `GET /v1/runtime/logs/llama`
+  - `GET /v1/runtime/logs/hipfire`
 - endpoint log memerlukan autentikasi Bearer yang sama dengan endpoint runtime lainnya; API key client dibaca dari `switch-key.cfg`
 - jika Runtime Controller belum menyediakan endpoint log, dialog menampilkan error HTTP (misalnya `404`) dan tetap mencoba refresh setiap 5 detik
 - `voice` dan `sound` bersifat opsional

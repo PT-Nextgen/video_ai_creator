@@ -13,7 +13,7 @@ from typing import Callable
 
 import requests
 from scripts.timeout_config import LLM_CALL_TIMEOUT_SECONDS
-from scripts.runtime_service_controller import ensure_llama
+from scripts.runtime_service_controller import ensure_hipfire
 
 from gemini.gemini_image import find_gemini_key
 from scripts.server_config import load_server_config
@@ -112,10 +112,11 @@ def _restore_minimax_dialogue_blocks(text: str, replacements: dict[str, str]) ->
 
 DEFAULT_TRANSLATE_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_PROMPT_GENERATION_MODEL = "gemini-3.1-flash-lite"
-LOCAL_PROMPT_PROVIDER = "llama.cpp"
-LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
+DEFAULT_LOCAL_PROMPT_MODEL = "qwen3.8-27"
+LOCAL_PROMPT_PROVIDER = "hipfire"
+LEGACY_LOCAL_PROMPT_PROVIDERS = {"llama.cpp", "ollama", "llama"}
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
-DEFAULT_LOCAL_PROMPT_PORT = 8080
+DEFAULT_LOCAL_PROMPT_PORT = 11435
 LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
 LOCAL_TRANSLATE_REASONING_EFFORT = "low"
 LOCAL_PROMPT_REASONING_EFFORT = "low"
@@ -228,9 +229,7 @@ class GeminiPromptTranslator:
         prompt_generation_model_name: str = DEFAULT_PROMPT_GENERATION_MODEL,
     ):
         self.translate_model_name = str(translate_model_name or "").strip() or DEFAULT_TRANSLATE_MODEL
-        self.prompt_generation_model_name = (
-            str(prompt_generation_model_name or "").strip() or DEFAULT_PROMPT_GENERATION_MODEL
-        )
+        self.prompt_generation_model_name = str(prompt_generation_model_name or "").strip() or DEFAULT_PROMPT_GENERATION_MODEL
         self.api_key = find_gemini_key()
         self._cache: dict[str, str] = {}
         self.last_call_metrics: dict | None = None
@@ -505,7 +504,7 @@ class PromptTranslator:
     def __init__(
         self,
         prompt_generation_provider: str = "gemini",
-        prompt_generation_model_name: str = DEFAULT_PROMPT_GENERATION_MODEL,
+        prompt_generation_model_name: str = "",
         prompt_generation_host: str = DEFAULT_LOCAL_PROMPT_HOST,
         prompt_generation_port: int = DEFAULT_LOCAL_PROMPT_PORT,
         translate_provider: str = "gemini",
@@ -518,12 +517,15 @@ class PromptTranslator:
         self.prompt_generation_provider = (
             str(prompt_generation_provider or "").strip().lower() or "gemini"
         )
-        if self.prompt_generation_provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+        if self.prompt_generation_provider in LEGACY_LOCAL_PROMPT_PROVIDERS:
             self.prompt_generation_provider = LOCAL_PROMPT_PROVIDER
         if self.prompt_generation_provider not in {"gemini", LOCAL_PROMPT_PROVIDER}:
             self.prompt_generation_provider = "gemini"
-        self.prompt_generation_model_name = (
-            str(prompt_generation_model_name or "").strip() or DEFAULT_PROMPT_GENERATION_MODEL
+        configured_prompt_model = str(prompt_generation_model_name or "").strip()
+        self.prompt_generation_model_name = configured_prompt_model or (
+            DEFAULT_LOCAL_PROMPT_MODEL
+            if self.prompt_generation_provider == LOCAL_PROMPT_PROVIDER
+            else DEFAULT_PROMPT_GENERATION_MODEL
         )
         self.prompt_generation_host = str(prompt_generation_host or "").strip() or DEFAULT_LOCAL_PROMPT_HOST
         try:
@@ -533,7 +535,7 @@ class PromptTranslator:
         if self.prompt_generation_port <= 0:
             self.prompt_generation_port = DEFAULT_LOCAL_PROMPT_PORT
         self.translate_provider = str(translate_provider or "gemini").strip().lower() or "gemini"
-        if self.translate_provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+        if self.translate_provider in LEGACY_LOCAL_PROMPT_PROVIDERS:
             self.translate_provider = LOCAL_PROMPT_PROVIDER
         if self.translate_provider not in {"gemini", LOCAL_PROMPT_PROVIDER}:
             self.translate_provider = "gemini"
@@ -548,7 +550,7 @@ class PromptTranslator:
         phase: str = "generate_prompt_to_english",
         image_parts: list[dict] | None = None,
     ) -> str:
-        ensure_llama(reason=f"prompt localization phase={phase}")
+        ensure_hipfire(reason=f"prompt localization phase={phase}")
         host = self.prompt_generation_host
         port = self.prompt_generation_port
         base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
@@ -615,7 +617,7 @@ class PromptTranslator:
                     extra_parts=[f"host={host}", f"port={port}", f"endpoint={url}", f"error={exc}"],
                 )
             )
-            raise RuntimeError(f"llama.cpp error: {error_text}") from exc
+            raise RuntimeError(f"Hipfire error: {error_text}") from exc
         elapsed_seconds = time.perf_counter() - start_time
         tok_per_sec = _extract_tok_per_sec_from_payload(response_payload)
         self.last_call_metrics = {
@@ -1517,7 +1519,7 @@ def get_prompt_translator(provider: str | None = None, project_dir: str | Path |
                     project_port = DEFAULT_LOCAL_PROMPT_PORT
         except Exception:
             pass
-    if project_provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+    if project_provider in LEGACY_LOCAL_PROMPT_PROVIDERS:
         project_provider = LOCAL_PROMPT_PROVIDER
     prompt_generation_provider = project_provider if project_provider in {"gemini", LOCAL_PROMPT_PROVIDER} else "gemini"
     if prompt_generation_provider == LOCAL_PROMPT_PROVIDER:
@@ -2164,7 +2166,7 @@ def prepare_project_prompts_for_runtime(
 ) -> None:
     """Resolve only workflow-relevant prompts before ComfyUI is activated.
 
-    Runtime workflow entrypoints use this as a barrier: any required Llama
+    Runtime workflow entrypoints use this as a barrier: any required Hipfire
     calls happen first, so prompt loading cannot switch away from ComfyUI
     after the workflow phase has started. Unused prompt files are deliberately
     skipped so stale data from another scene type cannot block the workflow.

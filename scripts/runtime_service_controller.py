@@ -1,4 +1,4 @@
-"""Switch and verify the mutually-exclusive Llama/ComfyUI services.
+"""Switch and verify the mutually-exclusive Hipfire/ComfyUI services.
 
 The remote controller API is specified in SERVER-SWITCH.md. This client never
 considers a start/stop request successful until the service health check agrees.
@@ -39,12 +39,12 @@ def _load_api_key() -> str:
     return ""
 
 
-def project_uses_llama(project_dir: str | Path) -> bool:
-    """Return whether this project selects the local Llama provider."""
+def project_uses_hipfire(project_dir: str | Path) -> bool:
+    """Return whether this project selects the local Hipfire provider."""
     try:
         from scripts.project_settings import load_project_settings
         provider = str(load_project_settings(Path(project_dir)).get("prompt_generation", {}).get("provider", "gemini")).strip().lower()
-        return provider in {"llama.cpp", "ollama"}
+        return provider in {"hipfire", "llama.cpp", "ollama"}
     except Exception:
         return False
 
@@ -99,7 +99,7 @@ class RuntimeServiceController:
     def logs(self, service: str) -> dict:
         """Return the latest service log lines from the runtime controller."""
         service = str(service or "").strip().lower()
-        if service not in {"llama", "comfyui"}:
+        if service not in {"hipfire", "comfyui"}:
             raise RuntimeServiceError(f"Service log tidak valid: {service}")
         return self._request("GET", f"/v1/runtime/logs/{service}")
 
@@ -138,7 +138,7 @@ class RuntimeServiceController:
 
     def switch(self, target: str, reason: str = "video_ai_creator") -> None:
         target = str(target).strip().lower()
-        if target not in {"llama", "comfyui"}:
+        if target not in {"hipfire", "comfyui"}:
             raise RuntimeServiceError(f"Target service tidak valid: {target}")
         write_log(f"[runtime] Switch mulai target={target}, reason={reason}")
         self._request("POST", "/v1/runtime/switch", {
@@ -146,33 +146,33 @@ class RuntimeServiceController:
             "reason": reason,
             "wait_ready": False,
         }, timeout=float(self.config.get("switch_timeout_seconds", 300)))
-        other = "comfyui" if target == "llama" else "llama"
+        other = "comfyui" if target == "hipfire" else "hipfire"
         self.wait_health(other, False)
         self.wait_health(target, True)
         write_log(f"[runtime] Switch selesai target={target}")
 
     def ensure(self, target: str, reason: str = "video_ai_creator") -> None:
         target = str(target).strip().lower()
-        if target not in {"llama", "comfyui"}:
+        if target not in {"hipfire", "comfyui"}:
             raise RuntimeServiceError(f"Target service tidak valid: {target}")
         write_log(f"[runtime] Ensure mulai target={target}, reason={reason}")
         if self._health(target):
-            other = "comfyui" if target == "llama" else "llama"
+            other = "comfyui" if target == "hipfire" else "hipfire"
             if not self._health(other):
                 write_log(f"[runtime] Ensure selesai target={target}, result=sudah_aktif")
                 return
         self.switch(target, reason=reason)
         write_log(f"[runtime] Ensure selesai target={target}, result=switch")
 
-    def ensure_llama(self, reason: str = "prompt_generation") -> None:
-        self.ensure("llama", reason)
+    def ensure_hipfire(self, reason: str = "prompt_generation") -> None:
+        self.ensure("hipfire", reason)
 
     def ensure_comfyui(self, reason: str = "workflow_execution") -> None:
         self.ensure("comfyui", reason)
 
 
-def ensure_llama(reason: str = "prompt_generation") -> None:
-    RuntimeServiceController.from_config().ensure_llama(reason)
+def ensure_hipfire(reason: str = "prompt_generation") -> None:
+    RuntimeServiceController.from_config().ensure_hipfire(reason)
 
 
 def ensure_comfyui(reason: str = "workflow_execution", restore_on_exit: bool = False) -> None:
@@ -180,6 +180,6 @@ def ensure_comfyui(reason: str = "workflow_execution", restore_on_exit: bool = F
 
     ``restore_on_exit`` is retained for caller compatibility, but is ignored.
     Runtime ownership must follow the next operation that actually requires a
-    service; process exit is not a reason to start Llama.
+    service; process exit is not a reason to start Hipfire.
     """
     RuntimeServiceController.from_config().ensure_comfyui(reason)

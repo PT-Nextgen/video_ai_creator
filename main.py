@@ -18,7 +18,7 @@ import subprocess
 from PIL import Image
 
 from scripts import comfyui_api
-from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
+from scripts.runtime_service_controller import RuntimeServiceController, project_uses_hipfire
 from scripts.server_config import get_server_address
 from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, COMFYUI_POLL_INTERVAL_SECONDS
 from scripts.workflow_builders import load_json
@@ -2141,7 +2141,7 @@ def main():
         print('Loop count must be >= 1')
         return 1
 
-    manage_runtime = project_uses_llama(project_dir)
+    manage_runtime = project_uses_hipfire(project_dir)
     runtime_controller = RuntimeServiceController.from_config() if manage_runtime else None
     if runtime_controller is not None:
         write_log(f"[runtime] Pra-lokalisasi prompt project sebelum switch ComfyUI: {project_dir}")
@@ -2163,7 +2163,7 @@ def main():
                 print(f"Stopped due to failure in {scene}")
                 return 1
     # Pertahankan service terakhir yang diperlukan. Jangan switch balik
-    # otomatis ke Llama setelah workflow selesai.
+    # otomatis ke Hipfire setelah workflow selesai.
     return 0
 
 

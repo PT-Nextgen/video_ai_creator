@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import requests
-from scripts.runtime_service_controller import ensure_llama
+from scripts.runtime_service_controller import ensure_hipfire
 from scripts.server_config import load_server_config
 from scripts.timeout_config import LLM_CALL_TIMEOUT_SECONDS
 
@@ -27,10 +27,10 @@ from minimax_h3.minimax_h3_skill import (
     is_minimax_h3_scene_type,
 )
 
-LOCAL_PROMPT_PROVIDER = "llama.cpp"
-LEGACY_LOCAL_PROMPT_PROVIDER = "ollama"
+LOCAL_PROMPT_PROVIDER = "hipfire"
+LEGACY_LOCAL_PROMPT_PROVIDERS = {"llama.cpp", "ollama", "llama"}
 DEFAULT_LOCAL_PROMPT_HOST = "nextgenserver"
-DEFAULT_LOCAL_PROMPT_PORT = 8080
+DEFAULT_LOCAL_PROMPT_PORT = 11435
 LOCAL_LLM_TIMEOUT_SECONDS = LLM_CALL_TIMEOUT_SECONDS
 LOCAL_AGENTIC_REASONING_EFFORT = "low"
 
@@ -101,7 +101,7 @@ def call_gemini_text(
     return _clean_text(text)
 
 
-def call_llama_cpp_text(
+def call_hipfire_text(
     prompt: str,
     model_name: str,
     host: str = DEFAULT_LOCAL_PROMPT_HOST,
@@ -109,8 +109,8 @@ def call_llama_cpp_text(
     timeout: int = LOCAL_LLM_TIMEOUT_SECONDS,
     response_format: str | dict | None = None,
 ) -> str:
-    """Call llama.cpp through its OpenAI-compatible chat completions endpoint."""
-    ensure_llama(reason="agentic LLM generation")
+    """Call Hipfire through its OpenAI-compatible chat completions endpoint."""
+    ensure_hipfire(reason="agentic LLM generation")
     host = str(host or "").strip() or "nextgenserver"
     base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
     server_base_url = f"{base_url.rstrip('/')}:{int(port)}"
@@ -143,7 +143,7 @@ def call_llama_cpp_text(
             f"elapsed={elapsed:.3f}s | endpoint={url} | reasoning_effort={LOCAL_AGENTIC_REASONING_EFFORT} | error={exc}",
             level="error",
         )
-        raise RuntimeError(f"llama.cpp error: {url} -> {exc}") from exc
+        raise RuntimeError(f"Hipfire error: {url} -> {exc}") from exc
 
     elapsed = time.perf_counter() - start_time
     write_log(
@@ -1815,7 +1815,7 @@ def generate_variations(
     project_prompt_config = project_settings.get("prompt_generation", {})
     project_pg = project_prompt_config if isinstance(project_prompt_config, dict) else {}
     provider = str(project_pg.get("provider", global_pg.get("provider", "gemini"))).strip().lower() or "gemini"
-    if provider == LEGACY_LOCAL_PROMPT_PROVIDER:
+    if provider in LEGACY_LOCAL_PROMPT_PROVIDERS:
         provider = LOCAL_PROMPT_PROVIDER
     if provider not in {"gemini", LOCAL_PROMPT_PROVIDER}:
         provider = "gemini"
@@ -1866,7 +1866,7 @@ def generate_variations(
                     "minimax_h3_t2v_prompt.json dan minimax_h3_i2v_prompt.json."
                 )
             if provider == LOCAL_PROMPT_PROVIDER:
-                response_text = call_llama_cpp_text(
+                response_text = call_hipfire_text(
                     request_prompt,
                     model_name=model_name,
                     host=local_host,

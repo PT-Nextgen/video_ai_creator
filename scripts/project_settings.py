@@ -20,10 +20,10 @@ DEFAULT_PROJECT_SETTINGS = {
         "height": 848,
     },
     "prompt_generation": {
-        "provider": "llama.cpp",
-        "model": "qwen3.8-27b-uc-q4_k_m",
+        "provider": "hipfire",
+        "model": "qwen3.8-27",
         "host": "nextgenserver",
-        "port": 8080,
+        "port": 11435,
     },
     "translate": {
         "provider": "gemini",
@@ -81,9 +81,10 @@ def _normalize_settings(data: dict | None) -> dict:
         sub = merged.get(key) if isinstance(merged.get(key), dict) else {}
         provider = str(sub.get("provider", "gemini")).strip().lower()
         if key == "prompt_generation":
-            if provider == "ollama":
-                provider = "llama.cpp"
-            sub["provider"] = provider if provider in {"gemini", "llama.cpp"} else "gemini"
+            legacy_local_provider = provider in {"llama.cpp", "ollama", "llama"}
+            if legacy_local_provider:
+                provider = "hipfire"
+            sub["provider"] = provider if provider in {"gemini", "hipfire"} else "gemini"
             sub["host"] = str(sub.get("host", DEFAULT_PROJECT_SETTINGS[key]["host"])).strip() or DEFAULT_PROJECT_SETTINGS[key]["host"]
             try:
                 sub["port"] = int(sub.get("port", DEFAULT_PROJECT_SETTINGS[key]["port"]))
@@ -91,6 +92,11 @@ def _normalize_settings(data: dict | None) -> dict:
                 sub["port"] = DEFAULT_PROJECT_SETTINGS[key]["port"]
             if sub["port"] <= 0:
                 sub["port"] = DEFAULT_PROJECT_SETTINGS[key]["port"]
+            if sub["provider"] == "hipfire":
+                if sub["host"] == "nextgenserver" and sub["port"] == 8080:
+                    sub["port"] = DEFAULT_PROJECT_SETTINGS[key]["port"]
+                if sub["model"] in {"qwen3.8-27b", "qwen3.8-27b-uc-q4_k_m"}:
+                    sub["model"] = DEFAULT_PROJECT_SETTINGS[key]["model"]
             sub.pop("temperature", None)
             sub.pop("thinking_mode", None)
         else:

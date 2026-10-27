@@ -8,22 +8,22 @@
     "model": "gemini-3.1-flash-lite"
   },
   "prompt_generation": {
-    "provider": "llama.cpp",
-    "model": "qwen3.8-27b",
+    "provider": "hipfire",
+    "model": "qwen3.8-27",
     "host": "nextgenserver",
-    "port": 8080
+    "port": 11435
   },
   "runtime_controller": {
     "url": "http://nextgenserver:9000",
     "api_key_env": "VIDEO_RUNTIME_API_KEY",
-    "default_service": "llama",
+    "default_service": "hipfire",
     "request_timeout_seconds": 30,
     "switch_timeout_seconds": 300,
     "health_timeout_seconds": 600,
     "health_interval_seconds": 2,
     "services": {
-      "llama": {
-        "health_url": "http://nextgenserver:8080/v1/models",
+      "hipfire": {
+        "health_url": "http://nextgenserver:11435/v1/models",
         "health_path": "/v1/models"
       },
       "comfyui": {

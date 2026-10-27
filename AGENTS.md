@@ -116,8 +116,8 @@ main.py (orchestrator)
 
 - `server_config.json` is the authoritative config file. `scripts/server_config.py` loads it and merges with `DEFAULT_SERVER_CONFIG` defaults.
 - Each scene has its own `project_settings.json` with per-project settings (prompt generation provider, voice settings, caption config).
-- Runtime service switching (llama ↔ ComfyUI) is handled by `RuntimeServiceController` in `scripts/runtime_service_controller.py`.
-- `project_uses_llama(project_dir)` checks if the project needs a local LLM.
+- Runtime service switching (Hipfire ↔ ComfyUI) is handled by `RuntimeServiceController` in `scripts/runtime_service_controller.py`.
+- `project_uses_hipfire(project_dir)` checks if the project needs a local LLM.
 
 ## Prompt Localization
 
@@ -168,7 +168,7 @@ After a scene video is produced, `write_audio_composed_marker()` records the com
 
 ### Prompt generation provider
 
-`prompt_generation.provider` in `project_settings.json` defaults to `gemini` but can be `llama.cpp`. The provider affects prompt generation, translation, and agentic flows. `scripts/runtime_service_controller.py` handles switching between llama and ComfyUI services.
+`prompt_generation.provider` in `project_settings.json` defaults to `hipfire` but can be `gemini`. The provider affects prompt generation, translation, and agentic flows. Hipfire uses `nextgenserver:11435`, model alias `qwen3.8-27`, and `scripts/runtime_service_controller.py` handles switching between Hipfire and ComfyUI services.
 
 ### Speech file naming
 
@@ -180,7 +180,7 @@ Recognized: `.png`, `.jpg`, `.jpeg`, `.webp`. Video: `.mp4`, `.mov`, `.webm`, `.
 
 ## Runtime Controller
 
-`RuntimeServiceController` manages switching between local LLM services (llama.cpp) and ComfyUI:
+`RuntimeServiceController` manages switching between Hipfire and ComfyUI:
 - Health checks at configured intervals
 - Switch timeout (300s default) for long-running operations
 - API key from environment variable (`VIDEO_RUNTIME_API_KEY`)

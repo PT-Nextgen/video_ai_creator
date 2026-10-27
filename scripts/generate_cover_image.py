@@ -12,7 +12,7 @@ if PROJECT_ROOT not in os.sys.path:
 
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
-from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_hipfire
 from scripts.server_config import get_server_address
 from scripts.project_settings import load_project_settings, save_project_settings
 from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
@@ -142,7 +142,7 @@ def main():
         write_log(f"Project folder not found: {project_dir}", level="error")
         print("Project folder not found; aborting")
         return 1
-    if project_uses_llama(project_dir):
+    if project_uses_hipfire(project_dir):
         prepare_project_prompts_for_runtime(
             project_dir,
             scene_dirs=[],

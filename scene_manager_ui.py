@@ -192,21 +192,23 @@ LORA_PREFIX_FLUX2 = "FLUX.2"
 LORA_PREFIX_WAN_HIGH = "WAN2.2/HIGH"
 LORA_PREFIX_WAN_LOW = "WAN2.2/LOW"
 LORA_PREFIX_MINIMAX_H3 = "MINIMAX-H3"
+MINIMAX_H3_LORA_NAME_MIN_WIDTH = 360
+MINIMAX_H3_LORA_STRENGTH_WIDTH = 64
 
 _COMFYUI_LORA_OPTIONS_CACHE: dict[str, list[str]] = {}
 
 
 def _normalize_prompt_provider(value: str) -> str:
     provider = str(value or "").strip().lower()
-    if provider == "ollama":
-        return "llama.cpp"
-    if provider in {"gemini", "llama.cpp"}:
+    if provider in {"llama.cpp", "ollama", "llama"}:
+        return "hipfire"
+    if provider in {"gemini", "hipfire"}:
         return provider
     return "gemini"
 
 
 def _is_local_prompt_provider(value: str) -> bool:
-    return _normalize_prompt_provider(value) == "llama.cpp"
+    return _normalize_prompt_provider(value) == "hipfire"
 
 
 def _normalize_server_url(server: str) -> str:
@@ -2080,39 +2082,39 @@ class ProjectSettingsDialog(QDialog):
 
         self.prompt_provider_input = QComboBox(self)
         self.prompt_provider_input.addItem("Gemini", "gemini")
-        self.prompt_provider_input.addItem("llama.cpp", "llama.cpp")
+        self.prompt_provider_input.addItem("Hipfire", "hipfire")
         global_config = load_server_config()
         global_prompt_config = global_config.get("prompt_generation", {})
         global_translate_config = global_config.get("translate", {})
-        llama_model = str(global_prompt_config.get("model", "")).strip() if isinstance(global_prompt_config, dict) else ""
+        hipfire_model = str(global_prompt_config.get("model", "")).strip() if isinstance(global_prompt_config, dict) else ""
         gemini_model = str(global_translate_config.get("model", "")).strip() if isinstance(global_translate_config, dict) else ""
         self._prompt_models_by_provider = {
-            "llama.cpp": [llama_model] if llama_model else [],
+            "hipfire": [hipfire_model] if hipfire_model else [],
             "gemini": [gemini_model] if gemini_model else [],
         }
         self._gemini_prompt_models = list(self._prompt_models_by_provider["gemini"])
         self._pending_prompt_model_value = ""
         self._is_loading_project_settings = False
-        self._ollama_models_refresh_timer = QTimer(self)
-        self._ollama_models_refresh_timer.setSingleShot(True)
-        self._ollama_models_refresh_timer.setInterval(450)
-        self._ollama_models_refresh_timer.timeout.connect(self._refresh_ollama_models)
+        self._hipfire_models_refresh_timer = QTimer(self)
+        self._hipfire_models_refresh_timer.setSingleShot(True)
+        self._hipfire_models_refresh_timer.setInterval(450)
+        self._hipfire_models_refresh_timer.timeout.connect(self._refresh_hipfire_models)
 
         self.prompt_model_input = QComboBox(self)
         self.prompt_model_input.setEditable(False)
         self.prompt_model_input.setPlaceholderText("Pilih model...")
         for model_name in self._gemini_prompt_models:
             self.prompt_model_input.addItem(model_name, model_name)
-        self.prompt_ollama_host_input = QLineEdit(self)
-        self.prompt_ollama_port_input = QSpinBox(self)
-        self.prompt_ollama_port_input.setRange(1, 65535)
-        self.prompt_ollama_port_input.setValue(8080)
-        self.prompt_ollama_server_widget = QWidget(self)
-        prompt_ollama_server_layout = QHBoxLayout(self.prompt_ollama_server_widget)
-        prompt_ollama_server_layout.setContentsMargins(0, 0, 0, 0)
-        prompt_ollama_server_layout.setSpacing(8)
-        prompt_ollama_server_layout.addWidget(self.prompt_ollama_host_input, 1)
-        prompt_ollama_server_layout.addWidget(self.prompt_ollama_port_input, 0)
+        self.prompt_hipfire_host_input = QLineEdit(self)
+        self.prompt_hipfire_port_input = QSpinBox(self)
+        self.prompt_hipfire_port_input.setRange(1, 65535)
+        self.prompt_hipfire_port_input.setValue(11435)
+        self.prompt_hipfire_server_widget = QWidget(self)
+        prompt_hipfire_server_layout = QHBoxLayout(self.prompt_hipfire_server_widget)
+        prompt_hipfire_server_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_hipfire_server_layout.setSpacing(8)
+        prompt_hipfire_server_layout.addWidget(self.prompt_hipfire_host_input, 1)
+        prompt_hipfire_server_layout.addWidget(self.prompt_hipfire_port_input, 0)
 
         self.caption_enabled_input = QCheckBox("Aktifkan Generate Caption otomatis", self)
 
@@ -2148,7 +2150,7 @@ class ProjectSettingsDialog(QDialog):
         self.form_layout.addRow("Ukuran Video Project", self.video_size_input)
         self.form_layout.addRow("Provider Prompt Generation", self.prompt_provider_input)
         self.form_layout.addRow("Model Prompt Generation", self.prompt_model_input)
-        self.form_layout.addRow("llama.cpp Host / Port", self.prompt_ollama_server_widget)
+        self.form_layout.addRow("Hipfire Host / Port", self.prompt_hipfire_server_widget)
         self.form_layout.addRow("Caption Project", self.caption_enabled_input)
 
         self.form_layout.addRow(QLabel("Konfigurasi Cover"))
@@ -2234,10 +2236,10 @@ class ProjectSettingsDialog(QDialog):
 
         prompt_generation = data.get("prompt_generation", {})
         prompt_generation = prompt_generation if isinstance(prompt_generation, dict) else {}
-        self.prompt_ollama_host_input.setText(
+        self.prompt_hipfire_host_input.setText(
             str(prompt_generation.get("host", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"])).strip()
         )
-        self.prompt_ollama_port_input.setValue(
+        self.prompt_hipfire_port_input.setValue(
             int(prompt_generation.get("port", DEFAULT_PROJECT_SETTINGS["prompt_generation"]["port"]))
         )
         prompt_provider = str(prompt_generation.get("provider", "gemini")).strip().lower() or "gemini"
@@ -2302,11 +2304,11 @@ class ProjectSettingsDialog(QDialog):
 
     def _update_prompt_generation_fields(self):
         provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
-        is_ollama = _is_local_prompt_provider(provider)
-        self.prompt_ollama_server_widget.setVisible(is_ollama)
-        label = self.form_layout.labelForField(self.prompt_ollama_server_widget) if hasattr(self, "form_layout") else None
+        is_hipfire = _is_local_prompt_provider(provider)
+        self.prompt_hipfire_server_widget.setVisible(is_hipfire)
+        label = self.form_layout.labelForField(self.prompt_hipfire_server_widget) if hasattr(self, "form_layout") else None
         if label is not None:
-            label.setVisible(is_ollama)
+            label.setVisible(is_hipfire)
         model_options = self._prompt_models_by_provider.get(provider, [])
         selected_value = model_options[0] if model_options else ""
         self._set_prompt_model_choices(model_options, selected_value)
@@ -2354,7 +2356,7 @@ class ProjectSettingsDialog(QDialog):
             or str(self.prompt_model_input.currentText() or "").strip()
         )
 
-    def _schedule_ollama_model_refresh(self):
+    def _schedule_hipfire_model_refresh(self):
         provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
         if not _is_local_prompt_provider(provider):
             return
@@ -2365,45 +2367,31 @@ class ProjectSettingsDialog(QDialog):
         self._pending_prompt_model_value = current_value or self._pending_prompt_model_value
         if self._is_loading_project_settings:
             return
-        self._ollama_models_refresh_timer.start()
+        self._hipfire_models_refresh_timer.start()
 
-    def _refresh_ollama_models(self):
+    def _refresh_hipfire_models(self):
         provider = _normalize_prompt_provider(self.prompt_provider_input.currentData() or "gemini")
         if not _is_local_prompt_provider(provider):
             return
-        host = self.prompt_ollama_host_input.text().strip()
-        port = int(self.prompt_ollama_port_input.value())
+        host = self.prompt_hipfire_host_input.text().strip()
+        port = int(self.prompt_hipfire_port_input.value())
         if not host or port <= 0:
             self._set_prompt_model_choices([], self._pending_prompt_model_value)
             return
         base_url = host if host.startswith(("http://", "https://")) else f"http://{host}"
         model_names = []
-        for url, parser in (
-            (f"{base_url.rstrip('/')}:{port}/v1/models", "openai"),
-            (f"{base_url.rstrip('/')}:{port}/api/tags", "ollama"),
-        ):
+        for url in (f"{base_url.rstrip('/')}:{port}/v1/models",):
             try:
                 response = requests.get(url, timeout=3)
                 response.raise_for_status()
                 payload = response.json() if response.content else {}
-                if parser == "openai":
-                    models = payload.get("data", []) if isinstance(payload, dict) else []
-                    if isinstance(models, list):
-                        for item in models:
-                            if isinstance(item, dict):
-                                model_name = str(item.get("id", "")).strip()
-                                if model_name:
-                                    model_names.append(model_name)
-                else:
-                    models = payload.get("models", []) if isinstance(payload, dict) else []
-                    if isinstance(models, list):
-                        for item in models:
-                            if isinstance(item, dict):
-                                model_name = str(item.get("name", "")).strip()
-                                if model_name:
-                                    model_names.append(model_name)
-                if model_names:
-                    break
+                models = payload.get("data", []) if isinstance(payload, dict) else []
+                if isinstance(models, list):
+                    for item in models:
+                        if isinstance(item, dict):
+                            model_name = str(item.get("id", "")).strip()
+                            if model_name:
+                                model_names.append(model_name)
             except Exception:
                 continue
         self._set_prompt_model_choices(model_names, self._pending_prompt_model_value)
@@ -2492,13 +2480,13 @@ class ProjectSettingsDialog(QDialog):
             raise ValueError("Port ComfyUI harus lebih besar dari 0.")
         if not prompt_model:
             raise ValueError("Model Prompt Generation wajib diisi.")
-        prompt_ollama_host = self.prompt_ollama_host_input.text().strip()
-        prompt_ollama_port = int(self.prompt_ollama_port_input.value())
+        prompt_hipfire_host = self.prompt_hipfire_host_input.text().strip()
+        prompt_hipfire_port = int(self.prompt_hipfire_port_input.value())
         if _is_local_prompt_provider(prompt_provider):
-            if not prompt_ollama_host:
-                raise ValueError("Host llama.cpp wajib diisi.")
-            if prompt_ollama_port <= 0:
-                raise ValueError("Port llama.cpp harus lebih besar dari 0.")
+            if not prompt_hipfire_host:
+                raise ValueError("Host Hipfire wajib diisi.")
+            if prompt_hipfire_port <= 0:
+                raise ValueError("Port Hipfire harus lebih besar dari 0.")
         size_data = self.video_size_input.currentData() or (
             DEFAULT_PROJECT_SETTINGS["video_size"]["width"],
             DEFAULT_PROJECT_SETTINGS["video_size"]["height"],
@@ -2561,8 +2549,8 @@ class ProjectSettingsDialog(QDialog):
             "prompt_generation": {
                 "provider": prompt_provider,
                 "model": prompt_model,
-                "host": prompt_ollama_host or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"],
-                "port": prompt_ollama_port,
+                "host": prompt_hipfire_host or DEFAULT_PROJECT_SETTINGS["prompt_generation"]["host"],
+                "port": prompt_hipfire_port,
             },
             "translate": {
                 "provider": prompt_provider,
@@ -3108,6 +3096,29 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_lora_name_2_input.setEditable(False)
         self.minimax_h3_r2v_lora_strength_input = QLineEdit()
         self.minimax_h3_r2v_lora_strength_2_input = QLineEdit()
+        for lora_name_input in (
+            self.minimax_h3_t2v_lora_name_input,
+            self.minimax_h3_t2v_lora_name_2_input,
+            self.minimax_h3_i2v_lora_name_input,
+            self.minimax_h3_i2v_lora_name_2_input,
+            self.minimax_h3_s2v_lora_name_input,
+            self.minimax_h3_s2v_lora_name_2_input,
+            self.minimax_h3_r2v_lora_name_input,
+            self.minimax_h3_r2v_lora_name_2_input,
+        ):
+            lora_name_input.setMinimumWidth(MINIMAX_H3_LORA_NAME_MIN_WIDTH)
+            lora_name_input.view().setMinimumWidth(MINIMAX_H3_LORA_NAME_MIN_WIDTH)
+        for lora_strength_input in (
+            self.minimax_h3_t2v_lora_strength_input,
+            self.minimax_h3_t2v_lora_strength_2_input,
+            self.minimax_h3_i2v_lora_strength_input,
+            self.minimax_h3_i2v_lora_strength_2_input,
+            self.minimax_h3_s2v_lora_strength_input,
+            self.minimax_h3_s2v_lora_strength_2_input,
+            self.minimax_h3_r2v_lora_strength_input,
+            self.minimax_h3_r2v_lora_strength_2_input,
+        ):
+            lora_strength_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
         self.minimax_h3_r2v_special_mode_input = QCheckBox("Mode Khusus")
         self.minimax_h3_r2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.minimax_h3_r2v_generate_prompt_button = QToolButton()
@@ -3592,7 +3603,7 @@ class SceneEditorWindow(QMainWindow):
         minimax_t2v_layout.setColumnStretch(1, 1)
         minimax_t2v_layout.setColumnStretch(2, 0)
         minimax_t2v_layout.setColumnStretch(3, 0)
-        self.minimax_h3_t2v_lora_strength_input.setFixedWidth(84)
+        self.minimax_h3_t2v_lora_strength_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
         minimax_t2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         minimax_t2v_layout.addWidget(self.minimax_h3_t2v_size_input, 0, 1, 1, 3)
         minimax_t2v_layout.addWidget(QLabel("Lora"), 1, 0)
@@ -3671,7 +3682,7 @@ class SceneEditorWindow(QMainWindow):
             page_layout.setColumnStretch(2, 0)
             page_layout.setColumnStretch(3, 0)
             if stage_index == 0:
-                self.minimax_h3_i2v_lora_strength_input.setFixedWidth(84)
+                self.minimax_h3_i2v_lora_strength_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
                 page_layout.addWidget(QLabel("Ukuran"), 0, 0)
                 page_layout.addWidget(self.minimax_h3_i2v_size_input, 0, 1, 1, 3)
                 page_layout.addWidget(QLabel("Lora"), 1, 0)
@@ -3727,8 +3738,8 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_tab = QWidget()
         r2v_layout = QGridLayout(self.minimax_h3_r2v_tab)
         r2v_layout.setColumnStretch(1, 1)
-        self.minimax_h3_r2v_lora_strength_input.setFixedWidth(84)
-        self.minimax_h3_r2v_lora_strength_2_input.setFixedWidth(84)
+        self.minimax_h3_r2v_lora_strength_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
+        self.minimax_h3_r2v_lora_strength_2_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
         r2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_size_input, 0, 1, 1, 3)
         r2v_layout.addWidget(QLabel("Lora"), 1, 0)
@@ -3758,8 +3769,8 @@ class SceneEditorWindow(QMainWindow):
         self.s2v_tab = QWidget()
         s2v_layout = QGridLayout(self.s2v_tab)
         s2v_layout.setColumnStretch(1, 1)
-        self.minimax_h3_s2v_lora_strength_input.setFixedWidth(84)
-        self.minimax_h3_s2v_lora_strength_2_input.setFixedWidth(84)
+        self.minimax_h3_s2v_lora_strength_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
+        self.minimax_h3_s2v_lora_strength_2_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
         s2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
         s2v_layout.addWidget(self.s2v_size_input, 0, 1, 1, 3)
         self.minimax_h3_s2v_lora_label = QLabel("Lora")
@@ -5604,25 +5615,25 @@ class SceneEditorWindow(QMainWindow):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(3)
 
-        llama_button = QToolButton(frame)
-        llama_button.setText("L")
-        llama_button.setToolTip("Hidupkan Llama dan matikan ComfyUI.")
-        llama_button.setStatusTip(llama_button.toolTip())
-        llama_button.clicked.connect(lambda: self.manual_runtime_switch("llama"))
-        layout.addWidget(llama_button)
+        hipfire_button = QToolButton(frame)
+        hipfire_button.setText("H")
+        hipfire_button.setToolTip("Hidupkan Hipfire dan matikan ComfyUI.")
+        hipfire_button.setStatusTip(hipfire_button.toolTip())
+        hipfire_button.clicked.connect(lambda: self.manual_runtime_switch("hipfire"))
+        layout.addWidget(hipfire_button)
 
         comfyui_button = QToolButton(frame)
         comfyui_button.setText("C")
-        comfyui_button.setToolTip("Hidupkan ComfyUI dan matikan Llama.")
+        comfyui_button.setToolTip("Hidupkan ComfyUI dan matikan Hipfire.")
         comfyui_button.setStatusTip(comfyui_button.toolTip())
         comfyui_button.clicked.connect(lambda: self.manual_runtime_switch("comfyui"))
         layout.addWidget(comfyui_button)
-        self.runtime_switch_buttons = [llama_button, comfyui_button]
+        self.runtime_switch_buttons = [hipfire_button, comfyui_button]
 
         status_button = QToolButton(frame)
         status_button.setText("V")
         status_button.setFixedWidth(30)
-        status_button.setToolTip("Cek service Llama dan ComfyUI yang sedang hidup.")
+        status_button.setToolTip("Cek service Hipfire dan ComfyUI yang sedang hidup.")
         status_button.setStatusTip(status_button.toolTip())
         status_button.clicked.connect(self.check_runtime_status)
         layout.addWidget(status_button)
@@ -5635,20 +5646,20 @@ class SceneEditorWindow(QMainWindow):
         comfyui_log_button.clicked.connect(lambda: self.show_runtime_log("comfyui"))
         layout.addWidget(comfyui_log_button)
 
-        llama_log_button = QToolButton(frame)
-        llama_log_button.setText("LL")
-        llama_log_button.setToolTip("Tampilkan log Llama dan refresh setiap 5 detik.")
-        llama_log_button.setStatusTip(llama_log_button.toolTip())
-        llama_log_button.clicked.connect(lambda: self.show_runtime_log("llama"))
-        layout.addWidget(llama_log_button)
-        self.runtime_log_buttons = [comfyui_log_button, llama_log_button]
+        hipfire_log_button = QToolButton(frame)
+        hipfire_log_button.setText("HL")
+        hipfire_log_button.setToolTip("Tampilkan log Hipfire dan refresh setiap 5 detik.")
+        hipfire_log_button.setStatusTip(hipfire_log_button.toolTip())
+        hipfire_log_button.clicked.connect(lambda: self.show_runtime_log("hipfire"))
+        layout.addWidget(hipfire_log_button)
+        self.runtime_log_buttons = [comfyui_log_button, hipfire_log_button]
 
         self._apply_runtime_status_colors(None)
         return frame
 
     def show_runtime_log(self, service: str):
         service = str(service or "").strip().lower()
-        if service not in {"llama", "comfyui"}:
+        if service not in {"hipfire", "comfyui"}:
             return
         dialog = self.runtime_log_dialogs.get(service)
         if dialog is None:
@@ -5660,7 +5671,7 @@ class SceneEditorWindow(QMainWindow):
 
     def manual_runtime_switch(self, target: str):
         target = str(target or "").strip().lower()
-        if target not in {"llama", "comfyui"}:
+        if target not in {"hipfire", "comfyui"}:
             return
         if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
             self.statusBar().showMessage("Operasi runtime lain masih berjalan.", 4000)
@@ -5680,8 +5691,8 @@ class SceneEditorWindow(QMainWindow):
     @staticmethod
     def _manual_runtime_switch_task(target: str):
         controller = RuntimeServiceController.from_config()
-        if target == "llama":
-            controller.ensure_llama(reason="manual UI switch")
+        if target == "hipfire":
+            controller.ensure_hipfire(reason="manual UI switch")
         else:
             controller.ensure_comfyui(reason="manual UI switch")
         return controller.status()
@@ -5718,12 +5729,12 @@ class SceneEditorWindow(QMainWindow):
     def _runtime_status_checked(self, status: dict):
         self._apply_runtime_status_colors(status)
         services = status.get("services", {}) if isinstance(status, dict) else {}
-        llama_health = bool(services.get("llama", {}).get("health")) if isinstance(services, dict) and isinstance(services.get("llama"), dict) else False
+        hipfire_health = bool(services.get("hipfire", {}).get("health")) if isinstance(services, dict) and isinstance(services.get("hipfire"), dict) else False
         comfyui_health = bool(services.get("comfyui", {}).get("health")) if isinstance(services, dict) and isinstance(services.get("comfyui"), dict) else False
         active = str(status.get("active", "none")) if isinstance(status, dict) else "none"
         self.append_log(
             f"[runtime] Status terverifikasi active={active}, "
-            f"llama={'healthy' if llama_health else 'mati'}, "
+            f"hipfire={'healthy' if hipfire_health else 'mati'}, "
             f"comfyui={'healthy' if comfyui_health else 'mati'}"
         )
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
@@ -5744,11 +5755,11 @@ class SceneEditorWindow(QMainWindow):
             value = services.get(service, {}) if isinstance(services, dict) else {}
             return isinstance(value, dict) and bool(value.get("health"))
 
-        llama_green = is_healthy("llama")
+        hipfire_green = is_healthy("hipfire")
         comfyui_green = is_healthy("comfyui")
         if self.runtime_switch_buttons:
             self.runtime_switch_buttons[0].setStyleSheet(
-                "QToolButton { background: #22c55e; color: white; font-weight: 700; }" if llama_green
+                "QToolButton { background: #22c55e; color: white; font-weight: 700; }" if hipfire_green
                 else "QToolButton { background: #9ca3af; color: white; font-weight: 700; }"
             )
             self.runtime_switch_buttons[1].setStyleSheet(

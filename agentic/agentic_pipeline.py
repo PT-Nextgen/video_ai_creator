@@ -30,7 +30,7 @@ VENV_PYTHON = Path(ROOT) / ".venv" / "Scripts" / "python.exe"
 
 from logging_config import write_log
 from scripts.project_settings import load_project_settings
-from scripts.runtime_service_controller import RuntimeServiceController, project_uses_llama
+from scripts.runtime_service_controller import RuntimeServiceController, project_uses_hipfire
 from prompt_localization import prepare_project_prompts_for_runtime
 from agentic.agentic_config import load_agentic_config
 from agentic.agentic_llm import expected_output_files, generate_variations
@@ -646,8 +646,8 @@ def _collect_all_scenes_meta(scene_dirs: list[Path]) -> list[dict]:
 
 
 def run_agentic_generate_for_project(project_dir: Path, target_scenes: list[str] | None = None) -> bool:
-    if project_uses_llama(project_dir):
-        RuntimeServiceController.from_config().ensure_llama(reason="agentic generate konfigurasi")
+    if project_uses_hipfire(project_dir):
+        RuntimeServiceController.from_config().ensure_hipfire(reason="agentic generate konfigurasi")
     project_dir = Path(project_dir)
     scene_dirs = _collect_scene_dirs(project_dir, target_scenes=target_scenes)
     all_scenes_meta = _collect_all_scenes_meta(scene_dirs)
@@ -674,7 +674,7 @@ def run_agentic_generate_for_project(project_dir: Path, target_scenes: list[str]
 def run_agentic_execute_for_project(project_dir: Path, server: str, target_scenes: list[str] | None = None) -> bool:
     project_dir = Path(project_dir)
     scene_dirs = _collect_scene_dirs(project_dir, target_scenes=target_scenes)
-    manage_runtime = project_uses_llama(project_dir)
+    manage_runtime = project_uses_hipfire(project_dir)
     controller = RuntimeServiceController.from_config() if manage_runtime else None
     if controller is not None:
         write_log(f"[runtime] Pra-lokalisasi prompt Agentic sebelum switch ComfyUI: {project_dir}")
@@ -703,9 +703,9 @@ def run_agentic_execute_for_project(project_dir: Path, server: str, target_scene
             os.environ.pop("VIDEO_AI_KEEP_COMFYUI", None)
         else:
             os.environ["VIDEO_AI_KEEP_COMFYUI"] = previous_keep_comfyui
-        # Jangan switch balik ke Llama setelah execute variasi selesai.
+        # Jangan switch balik ke Hipfire setelah execute variasi selesai.
         # ComfyUI masih menjadi service yang dibutuhkan untuk workflow/output
-        # berikutnya; switch ke Llama hanya dilakukan oleh operasi LLM yang
+        # berikutnya; switch ke Hipfire hanya dilakukan oleh operasi LLM yang
         # memerlukannya.
 
 

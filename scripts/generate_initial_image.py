@@ -9,7 +9,7 @@ if PROJECT_ROOT not in os.sys.path:
 
 from logging_config import setup_logging, write_log
 from scripts import comfyui_api
-from scripts.runtime_service_controller import ensure_comfyui, project_uses_llama
+from scripts.runtime_service_controller import ensure_comfyui, project_uses_hipfire
 from scripts.server_config import get_server_address
 from scripts.workflow_builders import load_json
 from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS, SHORT_POLL_INTERVAL_SECONDS
@@ -167,7 +167,7 @@ def main():
     if args.scene:
         requested = set(args.scene)
         scenes = [s for s in scenes if s in requested]
-    if project_uses_llama(project_root):
+    if project_uses_hipfire(project_root):
         additional_filenames = []
         if str(args.prompt_file or "").strip() and args.prompt_file != "z_image_prompt.json":
             additional_filenames.append(str(args.prompt_file).strip())

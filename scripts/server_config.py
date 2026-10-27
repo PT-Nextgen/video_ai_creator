@@ -16,22 +16,22 @@ DEFAULT_SERVER_CONFIG = {
         "model": "gemini-3.1-flash-lite",
     },
     "prompt_generation": {
-        "provider": "llama.cpp",
-        "model": "qwen3.8-27b-uc-q4_k_m",
+        "provider": "hipfire",
+        "model": "qwen3.8-27",
         "host": "nextgenserver",
-        "port": 8080,
+        "port": 11435,
     },
     "runtime_controller": {
         "url": "http://nextgenserver:9000",
         "api_key_env": "VIDEO_RUNTIME_API_KEY",
-        "default_service": "llama",
+        "default_service": "hipfire",
         "request_timeout_seconds": 30,
         "switch_timeout_seconds": 300,
         "health_timeout_seconds": 600,
         "health_interval_seconds": 2,
         "services": {
-            "llama": {
-                "health_url": "http://nextgenserver:8080/v1/models",
+            "hipfire": {
+                "health_url": "http://nextgenserver:11435/v1/models",
                 "health_path": "/v1/models"
             },
             "comfyui": {
@@ -66,9 +66,10 @@ def _normalize_config(data: dict | None) -> dict:
             sub_config = copy.deepcopy(DEFAULT_SERVER_CONFIG[key])
         provider = str(sub_config.get("provider", "gemini")).strip().lower()
         if key == "prompt_generation":
-            if provider == "ollama":
-                provider = "llama.cpp"
-            sub_config["provider"] = provider if provider in {"gemini", "llama.cpp"} else "gemini"
+            legacy_local_provider = provider in {"llama.cpp", "ollama", "llama"}
+            if legacy_local_provider:
+                provider = "hipfire"
+            sub_config["provider"] = provider if provider in {"gemini", "hipfire"} else "gemini"
             sub_config["host"] = str(sub_config.get("host", DEFAULT_SERVER_CONFIG[key]["host"])).strip() or DEFAULT_SERVER_CONFIG[key]["host"]
             try:
                 sub_config["port"] = int(sub_config.get("port", DEFAULT_SERVER_CONFIG[key]["port"]))
@@ -76,6 +77,11 @@ def _normalize_config(data: dict | None) -> dict:
                 sub_config["port"] = DEFAULT_SERVER_CONFIG[key]["port"]
             if sub_config["port"] <= 0:
                 sub_config["port"] = DEFAULT_SERVER_CONFIG[key]["port"]
+            if sub_config["provider"] == "hipfire":
+                if sub_config["host"] == "nextgenserver" and sub_config["port"] == 8080:
+                    sub_config["port"] = DEFAULT_SERVER_CONFIG[key]["port"]
+                if sub_config["model"] in {"qwen3.8-27b", "qwen3.8-27b-uc-q4_k_m"}:
+                    sub_config["model"] = DEFAULT_SERVER_CONFIG[key]["model"]
             sub_config.pop("temperature", None)
             sub_config.pop("thinking_mode", None)
         else:
@@ -89,22 +95,30 @@ def _normalize_config(data: dict | None) -> dict:
             config["runtime_controller"].update(runtime)
             if isinstance(runtime.get("services"), dict):
                 config["runtime_controller"]["services"].update(runtime["services"])
-                for service in ("llama", "comfyui"):
+                for service in ("hipfire", "comfyui"):
                     if isinstance(runtime["services"].get(service), dict):
                         config["runtime_controller"]["services"][service].update(runtime["services"][service])
     runtime = config["runtime_controller"]
     runtime["url"] = str(runtime.get("url", "")).strip().rstrip("/")
     runtime["api_key_env"] = str(runtime.get("api_key_env", "VIDEO_RUNTIME_API_KEY")).strip() or "VIDEO_RUNTIME_API_KEY"
-    runtime["default_service"] = "llama" if str(runtime.get("default_service", "llama")).strip().lower() != "comfyui" else "comfyui"
+    default_service = str(runtime.get("default_service", "hipfire")).strip().lower()
+    if default_service in {"llama", "llama.cpp", "ollama"}:
+        default_service = "hipfire"
+    runtime["default_service"] = default_service if default_service in {"hipfire", "comfyui"} else "hipfire"
     for key, fallback in (("request_timeout_seconds", 30), ("switch_timeout_seconds", 300), ("health_timeout_seconds", 600), ("health_interval_seconds", 2)):
         try:
             runtime[key] = max(1, float(runtime.get(key, fallback)))
         except (TypeError, ValueError):
             runtime[key] = fallback
-    for service in ("llama", "comfyui"):
+    for service in ("hipfire", "comfyui"):
         entry = runtime.setdefault("services", {}).setdefault(service, {})
         entry["health_url"] = str(entry.get("health_url", DEFAULT_SERVER_CONFIG["runtime_controller"]["services"][service]["health_url"])).strip()
         entry["health_path"] = str(entry.get("health_path", DEFAULT_SERVER_CONFIG["runtime_controller"]["services"][service]["health_path"])).strip() or DEFAULT_SERVER_CONFIG["runtime_controller"]["services"][service]["health_path"]
+    # Drop service names from the pre-Hipfire schema after normalizing an old
+    # server_config.json. The runtime controller must only receive Hipfire or
+    # ComfyUI targets.
+    runtime.setdefault("services", {}).pop("llama", None)
+    runtime.setdefault("services", {}).pop("ollama", None)
     return config
 
 
