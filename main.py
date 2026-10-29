@@ -68,6 +68,7 @@ from minimax_h3_r2v.minimax_h3_r2v import (
     MAX_IMAGE_REFERENCES as MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES,
     MAX_DURATION as MINIMAX_H3_R2V_MAX_DURATION,
     build_minimax_h3_r2v_workflow,
+    get_audio_duration as get_s2v_audio_duration,
     send_workflow as send_minimax_h3_s2v_workflow,
 )
 from logging_config import setup_logging, get_logger, write_log, RUN_ID

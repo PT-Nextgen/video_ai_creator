@@ -102,6 +102,7 @@ keys.cfg
 history_fetch/
 prompt_planning/
 backup_production/
+production_helper/
 outputs/
 output-music/
 userdata/
