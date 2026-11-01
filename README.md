@@ -238,11 +238,13 @@ Kebutuhan prompt per `scene_type`:
   - durasi audio speech tidak boleh lebih dari 15 detik; jika melebihi batas, scene diblokir
   - FPS MiniMax H3 ditetapkan `24`
   - workflow memakai `minimax_h3_r2v_api.json` secara in-memory dan menghapus referensi Picture 2, Picture 3, Video 1, Audio 2, dan Audio 3
+  - jika `fast_mode=true`, workflow S2V memakai template FastH3 R2V dengan konfigurasi model omnireference FastH3
   - Picture 1 berasal dari gambar root terbaru dan Audio 1 berasal dari audio speech root terbaru
 
 Mode MiniMax H3:
-- `Mode Cepat` tersedia pada tab T2V dan I2V. Pada `minimax-h3_i2v-panjang`, pilihan ini berlaku untuk seluruh stage I2V yang dijalankan.
+- `Mode Cepat` tersedia pada tab T2V, I2V, R2V, dan S2V. Pada `minimax-h3_i2v-panjang`, pilihan ini berlaku untuk seluruh stage I2V yang dijalankan.
 - `Mode Cepat` memakai workflow Fast MiniMax H3, tidak menggunakan H3 Cache, dan tidak menyediakan pengaturan jumlah step.
+- FastH3 R2V/S2V memakai `api_template/minimax_fasth3_r2v_api.json`, UNet `MINIMAX-H3/fasth3_omniref_8step_pruned_int8_convrot.safetensors`, Sigma Shift video `12`, Sigma Shift audio `3`, dan Model Sparse Attention dengan `start_percent=0.00`.
 - `Mode Khusus` tersedia pada seluruh tab MiniMax H3: T2V, I2V, I2V-Panjang, S2V, dan R2V. Mode ini memakai model MiniMax H3 turbo 8-step khusus.
 - `Mode Cepat` dan `Mode Khusus` tidak dapat aktif bersamaan. Jika salah satunya dipilih, mode yang lain otomatis dimatikan.
 - Jika kedua mode tidak dipilih, scene memakai workflow MiniMax H3 normal dan pengaturan H3 Cache yang tersedia pada tab tersebut tetap digunakan.
@@ -1149,10 +1151,11 @@ Checkbox `H3 Cache` disimpan sebagai `h3_cache_enabled` dan default-nya `true`. 
 
 #### Mode Cepat FastH3
 
-Tab MiniMax H3 T2V dan I2V menyediakan checkbox `Mode Cepat`. Nilainya disimpan sebagai `fast_mode` pada file prompt. Jika aktif, runtime memilih template FastH3 berikut:
+Tab MiniMax H3 T2V, I2V, R2V, dan S2V menyediakan checkbox `Mode Cepat`. Nilainya disimpan sebagai `fast_mode` pada file prompt. Jika aktif, runtime memilih template FastH3 berikut:
 
 - T2V: `api_template/minimax_fasth3_t2v_api.json` melalui `minimax_h3_t2v/minimax_h3fast_t2v.py`;
-- I2V: `api_template/minimax_fasth3_i2v_api.json` melalui `minimax_h3_i2v/minimax_h3fast_i2v.py`.
+- I2V: `api_template/minimax_fasth3_i2v_api.json` melalui `minimax_h3_i2v/minimax_h3fast_i2v.py`;
+- R2V/S2V: `api_template/minimax_fasth3_r2v_api.json` melalui builder R2V.
 
 Mode ini hanya mengekspos prompt, durasi, resolusi, LoRA 1, dan LoRA 2. FastH3 selalu memakai 8 step dan FPS `24`; pengaturan jumlah step serta H3 Cache tidak digunakan dan group Cache disembunyikan di UI ketika Mode Cepat aktif. Untuk `minimax-h3_i2v-panjang`, satu `fast_mode` pada prompt root berlaku seragam untuk seluruh empat stage dan setiap `last_frame` tetap diinjeksi oleh runtime ke node `LoadImage` FastH3 pada stage berikutnya.
 
@@ -1160,7 +1163,7 @@ Mode ini hanya mengekspos prompt, durasi, resolusi, LoRA 1, dan LoRA 2. FastH3 s
 
 `Mode Khusus` tersedia pada tab MiniMax H3 T2V, I2V, I2V-Panjang, S2V, dan R2V. Mode ini memakai model turbo 8-step khusus. Pada `minimax-h3_i2v-panjang`, satu pilihan Mode Khusus berlaku untuk semua stage yang dijalankan dan input `last frame` tetap digunakan pada stage lanjutan.
 
-Mode Cepat dan Mode Khusus tidak dapat aktif bersamaan. Pada T2V dan I2V, memilih salah satunya akan mematikan pilihan lainnya. S2V dan R2V tidak memiliki Mode Cepat, sehingga hanya menampilkan Mode Khusus. Jika Mode Khusus dipilih, workflow memakai alur MiniMax H3 normal dengan model khusus; jika tidak, workflow normal tetap menggunakan model default dan H3 Cache sesuai pengaturan tab.
+Mode Cepat dan Mode Khusus tidak dapat aktif bersamaan. Jika salah satunya dipilih, mode yang lain otomatis dimatikan. Jika Mode Khusus dipilih, workflow memakai alur MiniMax H3 normal dengan model khusus; jika tidak, workflow normal tetap menggunakan model default dan H3 Cache sesuai pengaturan tab.
 
 Saat Cache dinonaktifkan, koneksi wajib tetap melewati LoRA 2:
 
@@ -1294,6 +1297,7 @@ Scene type: `minimax-h3_i2v-panjang`
 Template workflow:
 
 - `api_template/minimax_h3_r2v_api.json`
+- FastH3: `api_template/minimax_fasth3_r2v_api.json`
 - node utama: `136` (`MiniMaxH3ReferenceToVideo`)
 - prompt dikirim langsung ke `136.inputs.prompt`
 - resolusi dibaca dari node `115` (`ResolutionSelector`)
@@ -1304,6 +1308,7 @@ Template workflow:
 - field prompt `lora_name`/`lora_strength` dan `lora_name_2`/`lora_strength_2` diisi melalui dropdown UI
 - output video disimpan melalui node `92`
 - setelah proses selesai, frame pertama dan terakhir video diekstrak ke file dengan pola `<nama_file_video>_first_frame.png` dan `<nama_file_video>_last_frame.png` di folder scene
+- jika `fast_mode=true`, workflow memakai FastH3 Ref2VA tanpa H3 Cache, 8 step, Sigma Shift `12/3`, dan Model Sparse Attention mulai `0.00`
 
 Workflow ini memakai mode full-reference `Ref2VA` dari skill `MINIMAX-H3`. Formatnya berbeda dari `T2VA`/`I2VA`: prompt harus mempunyai enam section berikut secara berurutan:
 
@@ -1408,7 +1413,7 @@ Scene ini memakai tab dan alur S2V MiniMax H3, dengan perbedaan berikut:
 - urutan tab: `Meta`, `Gambar Awal`, `MINIMAX-H3_S2V`, `Agentic`, `Aset`;
 - tab utama memiliki `Ukuran`, dua LoRA, `Prompt Positif`, dan `Buat Prompt`; FPS workflow tetap `24` tanpa dropdown UI;
 - tidak ada `CFG` dan `Prompt Negatif`;
-- workflow sumber selalu `api_template/minimax_h3_r2v_api.json`;
+- workflow sumber default adalah `api_template/minimax_h3_r2v_api.json`;
 - hanya Picture 1 dan Audio 1 yang digunakan.
 
 Pemetaan input runtime:

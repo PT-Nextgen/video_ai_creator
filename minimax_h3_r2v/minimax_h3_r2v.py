@@ -1,9 +1,9 @@
 """Build an in-memory MiniMax H3 Reference-to-Video workflow.
 
-The adapter starts from ``api_template/minimax_h3_r2v_api.json`` and removes
-reference nodes/connections when the corresponding assets are not available.
-The source template is never modified and no generated workflow is written to
-disk.
+The adapter selects the normal or FastH3 R2V template from ``fast_mode`` and
+removes reference nodes/connections when the corresponding assets are not
+available. The source template is never modified and no generated workflow is
+written to disk.
 """
 
 from __future__ import annotations
@@ -23,7 +23,13 @@ from minimax_h3.minimax_h3_prompt import empty_ref2va_prompt, serialize_ref2va_p
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_TEMPLATE = os.path.join(ROOT, "api_template")
 TEMPLATE = "minimax_h3_r2v_api.json"
+FAST_TEMPLATE = "minimax_fasth3_r2v_api.json"
 SPECIAL_UNET_MODEL = "MINIMAX-H3/10eros_max_h3_8step_turbo_beta6_int8.safetensors"
+FAST_UNET_MODEL = "MINIMAX-H3/fasth3_omniref_8step_pruned_int8_convrot.safetensors"
+FAST_H3_STEPS = 8
+FAST_SHIFT_VIDEO = 12
+FAST_SHIFT_AUDIO = 3
+FAST_SPARSE_START_PERCENT = 0.0
 MAIN_NODE = "136"
 PICTURE_1_NODE = "143"
 PICTURE_NODE_IDS = ("143", "144", "151", "163", "164")
@@ -112,6 +118,7 @@ DEFAULT_PROMPT = {
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
     "replace_speech": False,
+    "fast_mode": False,
     "special_mode": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
@@ -153,6 +160,7 @@ DEFAULT_R2V_PROMPT = {
     "lora_strength": 0,
     "lora_name_2": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
     "lora_strength_2": 0,
+    "fast_mode": False,
     "special_mode": False,
     "h3_cache_enabled": True,
     "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
@@ -433,6 +441,40 @@ def _apply_h3_cache(workflow: dict, prompt: dict) -> None:
     _set_input(workflow, "162", "max_steps", values["max_steps"])
 
 
+def _apply_fast_h3_graph(workflow: dict) -> None:
+    """Configure the FastH3 Ref2VA graph and bypass the H3 cache.
+
+    The FastH3 graph follows the same model-side changes as the FastH3 T2V
+    template, while retaining R2V's reference-conditioning node and asset
+    inputs.  LoRA ordering is kept in the FastH3 graph order: LoRA 2 is
+    upstream of LoRA 1.
+    """
+    required_inputs = (
+        ("124", "steps", FAST_H3_STEPS),
+        ("124", "model", ["156", 0]),
+        ("126", "model", ["156", 0]),
+        ("156", "model", ["157", 0]),
+        ("157", "model", ["165", 0]),
+        ("165", "model", ["166", 0]),
+        ("166", "model", ["167", 0]),
+        ("167", "model", ["127", 0]),
+        ("167", "shift_video", FAST_SHIFT_VIDEO),
+        ("167", "shift_audio", FAST_SHIFT_AUDIO),
+        ("165", "selection", "vsa"),
+        ("165", "selection.keep_percent", 10),
+        ("165", "start_percent", FAST_SPARSE_START_PERCENT),
+        ("165", "end_percent", 1),
+    )
+    workflow.pop("162", None)
+    for node_id, key, value in required_inputs:
+        if not _set_input(workflow, node_id, key, value):
+            raise ValueError(
+                f"Template FastH3 R2V tidak memiliki input node yang diperlukan: {node_id}.{key}"
+            )
+    if not _set_input(workflow, "127", "unet_name", FAST_UNET_MODEL):
+        raise ValueError("Template FastH3 R2V tidak memiliki node UNet 127")
+
+
 def build_workflow(
     prompt=None,
     scene_meta: dict | None = None,
@@ -469,9 +511,6 @@ def build_workflow(
         names = ", ".join(sorted(unknown))
         raise TypeError(f"Unknown R2V reference removal option(s): {names}")
 
-    workflow = copy.deepcopy(_load_template())
-    _set_prompt(workflow, prompt)
-
     # New R2V callers provide compact lists. The legacy image_name/audio_name
     # arguments remain supported for the existing MiniMax H3 S2V scene.
     if image_names is None:
@@ -491,8 +530,15 @@ def build_workflow(
     video_name = str(video_name or "").strip()
 
     source = prompt if isinstance(prompt, Mapping) else {}
-    if bool(source.get("fast_mode", False)) and bool(source.get("special_mode", False)):
+    use_fast = bool(source.get("fast_mode", False))
+    if use_fast and bool(source.get("special_mode", False)):
         raise ValueError("Mode Cepat dan Mode Khusus MiniMax H3 tidak boleh aktif bersamaan.")
+
+    workflow = copy.deepcopy(
+        _load_template(FAST_TEMPLATE if use_fast else TEMPLATE)
+    )
+    _set_prompt(workflow, prompt)
+
     if bool(source.get("special_mode", False)):
         _set_input(workflow, "127", "unet_name", SPECIAL_UNET_MODEL)
     if width is None:
@@ -554,7 +600,10 @@ def build_workflow(
         source.get("lora_name_2", DEFAULT_PROMPT["lora_name_2"]),
         source.get("lora_strength_2", DEFAULT_PROMPT["lora_strength_2"]),
     )
-    _apply_h3_cache(workflow, source)
+    if use_fast:
+        _apply_fast_h3_graph(workflow)
+    else:
+        _apply_h3_cache(workflow, source)
     return _inject_random_noise_seed(workflow)
 
 
@@ -590,11 +639,11 @@ def build_minimax_h3_r2v_workflow(
 
 
 def get_template_name(prompt: dict | None = None) -> str:
-    return TEMPLATE
+    return FAST_TEMPLATE if isinstance(prompt, Mapping) and bool(prompt.get("fast_mode", False)) else TEMPLATE
 
 
 def get_step_template_name(prompt: dict | None = None) -> str:
-    return TEMPLATE
+    return FAST_TEMPLATE if isinstance(prompt, Mapping) and bool(prompt.get("fast_mode", False)) else TEMPLATE
 
 
 def send_workflow(workflow, server, log_file=None, source_label="in-memory workflow"):

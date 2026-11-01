@@ -32,7 +32,7 @@ from logging_config import write_log
 from scripts.project_settings import load_project_settings
 from scripts.runtime_service_controller import RuntimeServiceController, project_uses_hipfire
 from prompt_localization import prepare_project_prompts_for_runtime
-from agentic.agentic_config import load_agentic_config
+from agentic.agentic_config import AGENTIC_FILE, load_agentic_config
 from agentic.agentic_llm import expected_output_files, generate_variations
 
 
@@ -81,13 +81,15 @@ def _run_script(
 
 
 def _copy_dir_contents(src: Path, dst: Path, exclude_status_done: bool = False) -> bool:
-    """Copy scene contents from src to dst, excluding nested variation folders."""
+    """Copy scene contents while keeping the root Agentic config authoritative."""
     try:
         dst.mkdir(parents=True, exist_ok=True)
         for item in src.iterdir():
             if item.resolve() == dst.resolve():
                 continue
             if item.is_dir() and VARIATION_DIR_PATTERN.match(item.name.strip()):
+                continue
+            if item.is_file() and item.name == AGENTIC_FILE:
                 continue
             if exclude_status_done and item.is_file() and item.name == STATUS_DONE_FILENAME:
                 continue
@@ -124,13 +126,15 @@ def _write_scene_meta(scene_dir: Path, scene_meta: dict) -> bool:
 
 
 def _copy_scene_baseline_files(src: Path, dst: Path) -> bool:
-    """Copy non-media baseline scene files so a variation folder is self-contained."""
+    """Copy non-media baseline files without copying the root Agentic config."""
     try:
         dst.mkdir(parents=True, exist_ok=True)
         for item in src.iterdir():
             if item.resolve() == dst.resolve():
                 continue
             if item.is_dir() and VARIATION_DIR_PATTERN.match(item.name.strip()):
+                continue
+            if item.is_file() and item.name == AGENTIC_FILE:
                 continue
             if item.is_file() and item.name == STATUS_DONE_FILENAME:
                 continue
@@ -518,6 +522,13 @@ def generate_variation_configs_for_scene(
 def execute_variations_for_scene(scene_dir: Path, project_name: str, server: str) -> bool:
     scene_dir = Path(scene_dir)
     agentic_config = load_agentic_config(scene_dir)
+    number_of_variations = int(agentic_config.get("number_of_variations", 0))
+    if number_of_variations <= 0:
+        write_log(
+            f"[agentic] {scene_dir.name}: number_of_variations=0, skip execute"
+        )
+        return True
+
     scene_meta = _load_scene_meta(scene_dir)
     if scene_meta is None:
         return False

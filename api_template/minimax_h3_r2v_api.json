@@ -155,7 +155,7 @@
   },
   "128": {
     "inputs": {
-      "clip_name": "MINIMAX-H3/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "clip_name": "MINIMAX-H3/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
       "type": "minimax",
       "device": "default"
     },
@@ -251,6 +251,14 @@
       ],
       "ref_images.ref_image_2": [
         "151",
+        0
+      ],
+      "ref_images.ref_image_3": [
+        "163",
+        0
+      ],
+      "ref_images.ref_image_4": [
+        "164",
         0
       ],
       "ref_videos.ref_video_0": [
@@ -384,6 +392,24 @@
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
       "title": "Load LoRA"
+    }
+  },
+  "163": {
+    "inputs": {
+      "image": "Picture_4.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Picture 4"
+    }
+  },
+  "164": {
+    "inputs": {
+      "image": "Picture_5.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Picture 5"
     }
   },
   "162": {

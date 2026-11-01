@@ -2717,22 +2717,30 @@ class SceneEditorWindow(QMainWindow):
             layout.addRow(label, fields[key])
         return group
 
-    def _read_h3_cache_fields(self, fields: dict, label: str) -> dict:
+    def _read_h3_cache_fields(
+        self, fields: dict, label: str, *, unused_defaults: dict | None = None
+    ) -> dict:
+        """Preserve valid cache edits, with fallbacks when FastH3 ignores them."""
         values = {}
         for key, field_label, kind, minimum, maximum in self.H3_CACHE_FIELDS:
-            raw = field_text = fields[key].text().strip()
-            if not raw:
-                raise ValueError(f"{label} H3 Cache {field_label} wajib diisi.")
-            if kind == "int":
-                if not re.fullmatch(r"[0-9]+", raw):
-                    raise ValueError(f"{label} H3 Cache {field_label} harus integer.")
-                value = int(raw)
-            else:
-                if not re.fullmatch(r"[0-9]+\.[0-9]{2}", raw):
-                    raise ValueError(f"{label} H3 Cache {field_label} harus memiliki 2 desimal.")
-                value = float(raw)
-            if not minimum <= value <= maximum:
-                raise ValueError(f"{label} H3 Cache {field_label} harus berada pada {minimum} sampai {maximum}.")
+            raw = fields[key].text().strip()
+            try:
+                if not raw:
+                    raise ValueError(f"{label} H3 Cache {field_label} wajib diisi.")
+                if kind == "int":
+                    if not re.fullmatch(r"[0-9]+", raw):
+                        raise ValueError(f"{label} H3 Cache {field_label} harus integer.")
+                    value = int(raw)
+                else:
+                    if not re.fullmatch(r"[0-9]+\.[0-9]{2}", raw):
+                        raise ValueError(f"{label} H3 Cache {field_label} harus memiliki 2 desimal.")
+                    value = float(raw)
+                if not minimum <= value <= maximum:
+                    raise ValueError(f"{label} H3 Cache {field_label} harus berada pada {minimum} sampai {maximum}.")
+            except ValueError:
+                if unused_defaults is None:
+                    raise
+                value = unused_defaults[key]
             values[key] = value
         return values
 
@@ -2776,6 +2784,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_tab = None
         self.minimax_h3_t2v_h3_cache_group = None
         self.minimax_h3_i2v_h3_cache_group = None
+        self.minimax_h3_r2v_h3_cache_group = None
         self.minimax_h3_s2v_h3_cache_group = None
         self.s2v_tab = None
         self.web_search_tab = None
@@ -3068,6 +3077,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_s2v_lora_strength_2_input = QLineEdit()
         self.minimax_h3_s2v_replace_speech_input = QCheckBox("Ganti Speech")
         self.minimax_h3_s2v_replace_speech_input.setChecked(False)
+        self.minimax_h3_s2v_fast_mode_input = QCheckBox("Mode Cepat")
         self.minimax_h3_s2v_special_mode_input = QCheckBox("Mode Khusus")
         self.minimax_h3_s2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.s2v_generate_positive_button = QToolButton()
@@ -3119,6 +3129,7 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_r2v_lora_strength_2_input,
         ):
             lora_strength_input.setFixedWidth(MINIMAX_H3_LORA_STRENGTH_WIDTH)
+        self.minimax_h3_r2v_fast_mode_input = QCheckBox("Mode Cepat")
         self.minimax_h3_r2v_special_mode_input = QCheckBox("Mode Khusus")
         self.minimax_h3_r2v_h3_cache_inputs = self._create_h3_cache_inputs(DEFAULT_MINIMAX_H3_R2V_CACHE)
         self.minimax_h3_r2v_generate_prompt_button = QToolButton()
@@ -3318,6 +3329,8 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_remove_sound_input.checkStateChanged,
             self.minimax_h3_t2v_fast_mode_input.checkStateChanged,
             self.minimax_h3_i2v_fast_mode_input.checkStateChanged,
+            self.minimax_h3_s2v_fast_mode_input.checkStateChanged,
+            self.minimax_h3_r2v_fast_mode_input.checkStateChanged,
             self.minimax_h3_t2v_special_mode_input.checkStateChanged,
             self.minimax_h3_i2v_special_mode_input.checkStateChanged,
             self.minimax_h3_s2v_special_mode_input.checkStateChanged,
@@ -3390,6 +3403,12 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_i2v_fast_mode_input.toggled.connect(
             self.update_minimax_h3_fast_mode_controls
         )
+        self.minimax_h3_s2v_fast_mode_input.toggled.connect(
+            self.update_minimax_h3_fast_mode_controls
+        )
+        self.minimax_h3_r2v_fast_mode_input.toggled.connect(
+            self.update_minimax_h3_fast_mode_controls
+        )
         self.minimax_h3_t2v_fast_mode_input.toggled.connect(
             lambda checked: self._handle_minimax_mode_toggle(
                 self.minimax_h3_t2v_fast_mode_input,
@@ -3415,6 +3434,34 @@ class SceneEditorWindow(QMainWindow):
             lambda checked: self._handle_minimax_mode_toggle(
                 self.minimax_h3_i2v_special_mode_input,
                 self.minimax_h3_i2v_fast_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_s2v_fast_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_s2v_fast_mode_input,
+                self.minimax_h3_s2v_special_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_s2v_special_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_s2v_special_mode_input,
+                self.minimax_h3_s2v_fast_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_r2v_fast_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_r2v_fast_mode_input,
+                self.minimax_h3_r2v_special_mode_input,
+                checked,
+            )
+        )
+        self.minimax_h3_r2v_special_mode_input.toggled.connect(
+            lambda checked: self._handle_minimax_mode_toggle(
+                self.minimax_h3_r2v_special_mode_input,
+                self.minimax_h3_r2v_fast_mode_input,
                 checked,
             )
         )
@@ -3750,7 +3797,10 @@ class SceneEditorWindow(QMainWindow):
         r2v_layout.addWidget(self.minimax_h3_r2v_lora_name_2_input, 2, 1)
         r2v_layout.addWidget(QLabel("Kekuatan 2"), 2, 2)
         r2v_layout.addWidget(self.minimax_h3_r2v_lora_strength_2_input, 2, 3)
-        r2v_layout.addWidget(self.minimax_h3_r2v_special_mode_input, 3, 2)
+        r2v_mode_layout = QHBoxLayout()
+        r2v_mode_layout.addWidget(self.minimax_h3_r2v_fast_mode_input)
+        r2v_mode_layout.addWidget(self.minimax_h3_r2v_special_mode_input)
+        r2v_layout.addLayout(r2v_mode_layout, 3, 1, 1, 2)
         r2v_layout.addWidget(self.copy_minimax_h3_r2v_variations_button, 3, 3, Qt.AlignLeft)
         r2v_layout.addWidget(QLabel(f"Gambar (maks. {MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES})"), 4, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_image_list, 4, 1, 1, 3)
@@ -3763,7 +3813,8 @@ class SceneEditorWindow(QMainWindow):
         r2v_layout.addWidget(QLabel("Perintah kepada LLM"), 8, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_prompt_instruction_input, 8, 1, 1, 3)
         r2v_layout.addWidget(self.minimax_h3_r2v_generate_prompt_button, 9, 1, 1, 3, Qt.AlignLeft)
-        r2v_layout.addWidget(self._h3_cache_group(self.minimax_h3_r2v_h3_cache_inputs), 10, 0, 1, 4)
+        self.minimax_h3_r2v_h3_cache_group = self._h3_cache_group(self.minimax_h3_r2v_h3_cache_inputs)
+        r2v_layout.addWidget(self.minimax_h3_r2v_h3_cache_group, 10, 0, 1, 4)
         tabs.addTab(self.minimax_h3_r2v_tab, "MINIMAX-H3_R2V")
 
         self.s2v_tab = QWidget()
@@ -3787,6 +3838,7 @@ class SceneEditorWindow(QMainWindow):
         s2v_layout.addWidget(self.minimax_h3_s2v_lora_strength_2_input, 2, 3)
         s2v_mode_layout = QHBoxLayout()
         s2v_mode_layout.addWidget(self.minimax_h3_s2v_replace_speech_input)
+        s2v_mode_layout.addWidget(self.minimax_h3_s2v_fast_mode_input)
         s2v_mode_layout.addWidget(self.minimax_h3_s2v_special_mode_input)
         s2v_layout.addLayout(s2v_mode_layout, 3, 0, 1, 3)
         s2v_layout.addWidget(self.copy_minimax_h3_s2v_variations_button, 3, 3, Qt.AlignLeft)
@@ -3913,6 +3965,16 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_i2v_h3_cache_group.setVisible(
                 is_i2v_scene and not self.minimax_h3_i2v_fast_mode_input.isChecked()
             )
+        if self.minimax_h3_r2v_h3_cache_group is not None:
+            self.minimax_h3_r2v_h3_cache_group.setVisible(
+                scene_type == MINIMAX_H3_R2V_SCENE_TYPE
+                and not self.minimax_h3_r2v_fast_mode_input.isChecked()
+            )
+        if self.minimax_h3_s2v_h3_cache_group is not None:
+            self.minimax_h3_s2v_h3_cache_group.setVisible(
+                scene_type == MINIMAX_H3_S2V_SCENE_TYPE
+                and not self.minimax_h3_s2v_fast_mode_input.isChecked()
+            )
 
     def update_scene_type_tabs(self):
         if self.editor_tabs is None:
@@ -3930,6 +3992,8 @@ class SceneEditorWindow(QMainWindow):
         is_minimax_h3_s2v = scene_type == MINIMAX_H3_S2V_SCENE_TYPE
         is_minimax_h3_r2v = scene_type == MINIMAX_H3_R2V_SCENE_TYPE
         is_s2v = scene_type == MINIMAX_H3_S2V_SCENE_TYPE
+        if self.minimax_h3_r2v_h3_cache_group is not None:
+            self.minimax_h3_r2v_h3_cache_group.setVisible(is_minimax_h3_r2v)
         if self.minimax_h3_s2v_h3_cache_group is not None:
             self.minimax_h3_s2v_h3_cache_group.setVisible(is_minimax_h3_s2v)
         visible_map = {
@@ -4817,7 +4881,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=s2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "replace_speech", "special_mode", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "replace_speech", "fast_mode", "special_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 S2V",
         )
@@ -4832,7 +4896,7 @@ class SceneEditorWindow(QMainWindow):
             source_data=r2v_prompt,
             keys=[
                 "width", "height",
-                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "special_mode", "h3_cache_enabled", "h3_cache",
+                "lora_name", "lora_strength", "lora_name_2", "lora_strength_2", "fast_mode", "special_mode", "h3_cache_enabled", "h3_cache",
             ],
             action_title="Edit Variasi MiniMax H3 R2V",
         )
@@ -6701,6 +6765,9 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_s2v_replace_speech_input.setChecked(
                 bool(s2v_prompt.get("replace_speech", False))
             )
+            self.minimax_h3_s2v_fast_mode_input.setChecked(
+                bool(s2v_prompt.get("fast_mode", False))
+            )
             self.minimax_h3_s2v_special_mode_input.setChecked(
                 bool(s2v_prompt.get("special_mode", False))
             )
@@ -6734,6 +6801,9 @@ class SceneEditorWindow(QMainWindow):
                 self.minimax_h3_r2v_h3_cache_inputs,
                 minimax_h3_r2v_prompt,
                 DEFAULT_MINIMAX_H3_R2V_CACHE,
+            )
+            self.minimax_h3_r2v_fast_mode_input.setChecked(
+                bool(minimax_h3_r2v_prompt.get("fast_mode", False))
             )
             self.minimax_h3_r2v_special_mode_input.setChecked(
                 bool(minimax_h3_r2v_prompt.get("special_mode", False))
@@ -6910,7 +6980,11 @@ class SceneEditorWindow(QMainWindow):
                 else True
             ),
             "h3_cache": (
-                self._read_h3_cache_fields(self.minimax_h3_t2v_h3_cache_inputs, "MiniMax H3 T2V")
+                self._read_h3_cache_fields(
+                    self.minimax_h3_t2v_h3_cache_inputs,
+                    "MiniMax H3 T2V",
+                    unused_defaults=(DEFAULT_MINIMAX_H3_T2V_CACHE if self.minimax_h3_t2v_fast_mode_input.isChecked() else None),
+                )
                 if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
                 else copy.deepcopy(DEFAULT_MINIMAX_H3_T2V_CACHE)
             ),
@@ -6933,7 +7007,11 @@ class SceneEditorWindow(QMainWindow):
                 else True
             ),
             "h3_cache": (
-                self._read_h3_cache_fields(self.minimax_h3_i2v_h3_cache_inputs, "MiniMax H3 I2V")
+                self._read_h3_cache_fields(
+                    self.minimax_h3_i2v_h3_cache_inputs,
+                    "MiniMax H3 I2V",
+                    unused_defaults=(DEFAULT_MINIMAX_H3_I2V_CACHE if self.minimax_h3_i2v_fast_mode_input.isChecked() else None),
+                )
                 if scene_type in {MINIMAX_H3_T2V_I2V_SCENE_TYPE, MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE}
                 else copy.deepcopy(DEFAULT_MINIMAX_H3_I2V_CACHE)
             ),
@@ -7297,9 +7375,14 @@ class SceneEditorWindow(QMainWindow):
                 "lora_name_2": self.minimax_h3_s2v_lora_name_2_input.currentText().strip(),
                 "lora_strength_2": s2v_lora_strength_2,
                 "replace_speech": self.minimax_h3_s2v_replace_speech_input.isChecked(),
+                "fast_mode": self.minimax_h3_s2v_fast_mode_input.isChecked(),
                 "special_mode": self.minimax_h3_s2v_special_mode_input.isChecked(),
                 "h3_cache_enabled": self.minimax_h3_s2v_h3_cache_inputs["enabled"].isChecked(),
-                "h3_cache": self._read_h3_cache_fields(self.minimax_h3_s2v_h3_cache_inputs, "MiniMax H3 S2V"),
+                "h3_cache": self._read_h3_cache_fields(
+                    self.minimax_h3_s2v_h3_cache_inputs,
+                    "MiniMax H3 S2V",
+                    unused_defaults=(DEFAULT_MINIMAX_H3_R2V_CACHE if self.minimax_h3_s2v_fast_mode_input.isChecked() else None),
+                ),
             }
         image_pan_prompt = {
             "width": int((self.image_pan_size_input.currentData() or (480, 848))[0]),
@@ -7899,6 +7982,7 @@ class SceneEditorWindow(QMainWindow):
                 scene_dir,
                 minimax_h3_t2v_prompt,
                 minimax_h3_i2v_prompt,
+                minimax_h3_r2v_prompt=r2v_prompt,
             )
         except ValueError as e:
             issues = [str(e)]
@@ -8093,10 +8177,15 @@ class SceneEditorWindow(QMainWindow):
             "lora_strength": r2v_lora_strength,
             "lora_name_2": self.minimax_h3_r2v_lora_name_2_input.currentText().strip(),
             "lora_strength_2": r2v_lora_strength_2,
+            "fast_mode": self.minimax_h3_r2v_fast_mode_input.isChecked(),
             "special_mode": self.minimax_h3_r2v_special_mode_input.isChecked(),
             "h3_cache_enabled": self.minimax_h3_r2v_h3_cache_inputs["enabled"].isChecked(),
             "h3_cache": (
-                self._read_h3_cache_fields(self.minimax_h3_r2v_h3_cache_inputs, "MiniMax H3 R2V")
+                self._read_h3_cache_fields(
+                    self.minimax_h3_r2v_h3_cache_inputs,
+                    "MiniMax H3 R2V",
+                    unused_defaults=(DEFAULT_MINIMAX_H3_R2V_CACHE if self.minimax_h3_r2v_fast_mode_input.isChecked() else None),
+                )
                 if self.scene_type_combo.currentText().strip() == MINIMAX_H3_R2V_SCENE_TYPE
                 else copy.deepcopy(DEFAULT_MINIMAX_H3_R2V_CACHE)
             ),
