@@ -6,10 +6,9 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import requests
-from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, QThread, QObject, Signal
+from PySide6.QtCore import QProcess, Qt, QUrl, QTimer, QThread, QObject, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QDoubleValidator, QIcon, QPixmap, QIntValidator
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
@@ -22,9 +21,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTextEdit, QToolButton,
     QToolBar, QVBoxLayout, QWidget, QStyle, QSizePolicy, QSpacerItem,
 )
-from wan22_i2v.wan22_i2v import DEFAULT_PROMPT as DEFAULT_WAN_PROMPT
-from wan22_i2v.wan22_i2v import SIZE_OPTIONS as WAN_SIZE_OPTIONS
-from wan22_t2v.wan22_t2v import DEFAULT_PROMPT as DEFAULT_WAN22_T2V_PROMPT
 from flux2.flux2 import MODEL_FLUX2
 from z_image.z_image import IMAGE_MODEL_OPTIONS, MODEL_Z_IMAGE_TURBO
 from z_image.z_image import DEFAULT_PROMPT as DEFAULT_Z_IMAGE_PROMPT
@@ -32,7 +28,10 @@ from z_image.z_image import SIZE_OPTIONS as Z_IMAGE_SIZES
 from z_image.z_image import get_model_key as get_z_image_model_key
 from z_image.z_image import supports_negative_prompt as z_image_supports_negative_prompt
 from z_image.z_image import get_template_name as get_z_image_template_name
-from gemini.gemini_image import MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, list_gemini_image_models
+from gemini.gemini_image import (
+    MODEL_GEMINI_IMAGE, MODEL_GEMINI_FLASH_05K, MODEL_GEMINI_FALLBACKS,
+    list_gemini_image_models,
+)
 from qwen_image_edit.qwen_image_edit import (
     DEFAULT_PROMPT as QWEN_IMAGE_EDIT_DEFAULT_PROMPT,
     MAX_REFERENCE_IMAGES as QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES,
@@ -107,12 +106,6 @@ from scripts.runtime_service_controller import (
     RuntimeServiceController,
     ensure_comfyui,
 )
-from agentic.agentic_config import (
-    DEFAULT_AGENERIC_CONFIG,
-    IMAGE_EXTRA_MODES,
-    load_agentic_config,
-    save_agentic_config,
-)
 from prompt_localization import (
     GROUP_PROMPT_FIELDS,
     LORA_TRIGGER_WORDS_FIELD,
@@ -136,9 +129,7 @@ UPSCALE_VIDEO_SCRIPT = ROOT / "scripts" / "upscale_video.py"
 GAN_UPSCALE_SCENES_SCRIPT = ROOT / "scripts" / "upscale_scenes_gan.py"
 SEEDVR2_UPSCALE_SCENES_SCRIPT = ROOT / "scripts" / "upscale_scenes_seedvr2.py"
 COVER_IMAGE_SCRIPT = ROOT / "scripts" / "generate_cover_image.py"
-AGENTIC_SCRIPT = ROOT / "agentic" / "agentic_cli.py"
 BACKUP_SCRIPT = ROOT / "backup_production.py"
-KEYS_CFG = ROOT / "keys.cfg"
 VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
@@ -159,7 +150,7 @@ DEFAULT_SCENE_META = {
     "gemini_tts_voice_id": "",
     "gemini_tts_voice_label": "",
     "voice_character": DEFAULT_SCENE_VOICE_KEY,
-    "scene_type": "wan22_t2v", "upscale": False,
+    "scene_type": "i2v", "upscale": False,
     "i2v_continuations": 0,
 }
 DEFAULT_IMAGE_PAN_PROMPT = {
@@ -174,11 +165,6 @@ DEFAULT_IMAGE_ZOOM_PROMPT = {
     "focal_point": "center",
     "zoom_strength": 1.3,
 }
-DEFAULT_WEB_SEARCH_PROMPT = {
-    "width": 480,
-    "height": 848,
-    "search_term": "",
-}
 DEFAULT_QWEN_IMAGE_EDIT_PROMPT = copy.deepcopy(QWEN_IMAGE_EDIT_DEFAULT_PROMPT)
 DEFAULT_Z_IMAGE_EXTRA_PROMPTS = {
     "groups": [
@@ -189,8 +175,6 @@ DEFAULT_Z_IMAGE_EXTRA_PROMPTS = {
 }
 LORA_PREFIX_Z_IMAGE = "Z-IMAGE"
 LORA_PREFIX_FLUX2 = "FLUX.2"
-LORA_PREFIX_WAN_HIGH = "WAN2.2/HIGH"
-LORA_PREFIX_WAN_LOW = "WAN2.2/LOW"
 LORA_PREFIX_MINIMAX_H3 = "MINIMAX-H3"
 MINIMAX_H3_LORA_NAME_MIN_WIDTH = 360
 MINIMAX_H3_LORA_STRENGTH_WIDTH = 64
@@ -393,10 +377,8 @@ def populate_lora_combo(
     return selected_value
 
 
-def _collect_scene_lora_defaults(server: str, z_prompt: dict, wan_t2v_prompt: dict, wan_prompt: dict):
+def _collect_scene_lora_defaults(server: str, z_prompt: dict):
     z_prompt = copy.deepcopy(z_prompt or {})
-    wan_t2v_prompt = copy.deepcopy(wan_t2v_prompt or {})
-    wan_prompt = copy.deepcopy(wan_prompt or {})
 
     z_model = str(z_prompt.get("image_model", MODEL_Z_IMAGE_TURBO)).strip().lower()
     if z_model == MODEL_GEMINI_IMAGE:
@@ -414,63 +396,37 @@ def _collect_scene_lora_defaults(server: str, z_prompt: dict, wan_t2v_prompt: di
             str(z_prompt.get("lora_name", "")),
         )
 
-    wan_t2v_prompt["lora_high_name"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
-        wan_t2v_prompt.get("lora_high_name", ""),
-        DEFAULT_WAN22_T2V_PROMPT["lora_high_name"],
-    )
-    wan_t2v_prompt["lora_low_name"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
-        wan_t2v_prompt.get("lora_low_name", ""),
-        DEFAULT_WAN22_T2V_PROMPT["lora_low_name"],
-    )
-    wan_t2v_prompt["lora_high_name_2"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
-        wan_t2v_prompt.get("lora_high_name_2", ""),
-        DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"],
-    )
-    wan_t2v_prompt["lora_low_name_2"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
-        wan_t2v_prompt.get("lora_low_name_2", ""),
-        DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"],
-    )
+    return z_prompt
 
-    wan_prompt["lora_high_name"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
-        wan_prompt.get("lora_high_name", ""),
-        DEFAULT_WAN_PROMPT["lora_high_name"],
-    )
-    wan_prompt["lora_low_name"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
-        wan_prompt.get("lora_low_name", ""),
-        DEFAULT_WAN_PROMPT["lora_low_name"],
-    )
-    wan_prompt["lora_high_name_2"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH),
-        wan_prompt.get("lora_high_name_2", ""),
-        DEFAULT_WAN_PROMPT["lora_high_name_2"],
-    )
-    wan_prompt["lora_low_name_2"] = choose_lora_value(
-        get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW),
-        wan_prompt.get("lora_low_name_2", ""),
-        DEFAULT_WAN_PROMPT["lora_low_name_2"],
-    )
-
-    return z_prompt, wan_t2v_prompt, wan_prompt
-
-WAN22_T2V_SCENE_TYPE = "wan22_t2v"
 MINIMAX_H3_T2V_I2V_SCENE_TYPE = "minimax-h3_t2v_i2v"
 MINIMAX_H3_I2V_SCENE_TYPE = "minimax-h3_i2v"
 MINIMAX_H3_S2V_SCENE_TYPE = "minimax-h3_s2v"
 MINIMAX_H3_S2V_PROMPT_FILENAME = "minimax_h3_s2v_prompt.json"
 MINIMAX_H3_R2V_SCENE_TYPE = "minimax-h3_r2v"
 MINIMAX_H3_R2V_PROMPT_FILENAME = "minimax_h3_r2v_prompt.json"
+SUPPORTED_SCENE_TYPES = frozenset({
+    MINIMAX_H3_T2V_I2V_SCENE_TYPE,
+    MINIMAX_H3_I2V_SCENE_TYPE,
+    MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
+    MINIMAX_H3_S2V_SCENE_TYPE,
+    MINIMAX_H3_R2V_SCENE_TYPE,
+    "i2v",
+    "image_pan",
+    "image_zoom",
+})
 MINIMAX_H3_DURATION_SCENE_TYPES = {
     MINIMAX_H3_T2V_I2V_SCENE_TYPE,
     MINIMAX_H3_I2V_SCENE_TYPE,
     MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
     MINIMAX_H3_R2V_SCENE_TYPE,
 }
+
+
+def unsupported_scene_type_message(scene_type: str) -> str:
+    return (
+        f"Tipe adegan `{scene_type}` tidak didukung. "
+        "Pilih tipe adegan yang didukung sebelum menyimpan atau menjalankan."
+    )
 
 
 def s2v_prompt_filename(scene_type: str) -> str:
@@ -488,7 +444,6 @@ FREE_INTEGER_DURATION_SCENE_TYPES = {"i2v", "image_pan", "image_zoom"}
 FREE_INTEGER_DURATION_OPTIONS = list(range(1, 16))
 FREE_INTEGER_DURATION_MIN = 1
 FREE_INTEGER_DURATION_MAX = 15
-WAN22_T2V_DURATION_OPTIONS = [5, 10, 15]
 MINIMAX_H3_DURATION_OPTIONS = [0, 1, 5, 10, 15, 20, 25, 30]
 MINIMAX_H3_I2V_DURATION_OPTIONS = [0, 1, 5, 10, 15]
 MINIMAX_H3_DURATION_MIN = 0.0
@@ -504,8 +459,6 @@ def duration_options_for_scene_type(scene_type: str) -> list[int]:
         return list(MINIMAX_H3_I2V_DURATION_OPTIONS)
     if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
         return [0, 1, 5, 10, 15]
-    if scene_type == WAN22_T2V_SCENE_TYPE:
-        return list(WAN22_T2V_DURATION_OPTIONS)
     return list(DEFAULT_DURATION_OPTIONS)
 
 
@@ -545,27 +498,9 @@ def populate_duration_combo(combo: QComboBox, scene_type: str, selected_value: i
     combo.blockSignals(False)
 
 
-def agentic_create_initial_image_policy(scene_type: str) -> tuple[bool, bool | None]:
-    """Return (visible_in_ui, forced_value_or_none) for agentic create_initial_image."""
-    scene_type = str(scene_type or "").strip()
-    if scene_type in {"wan22", MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_S2V_SCENE_TYPE}:
-        return True, None
-    if scene_type in {"i2v", "image_pan", "image_zoom"}:
-        return False, True
-    if scene_type in {
-        WAN22_T2V_SCENE_TYPE,
-        MINIMAX_H3_T2V_I2V_SCENE_TYPE,
-        MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
-        MINIMAX_H3_R2V_SCENE_TYPE,
-    }:
-        return False, False
-    return False, True
-
-
 def scene_type_supports_initial_image(scene_type: str) -> bool:
     scene_type = str(scene_type or "").strip()
     return scene_type in {
-        "wan22",
         MINIMAX_H3_I2V_SCENE_TYPE,
         MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
         MINIMAX_H3_S2V_SCENE_TYPE,
@@ -787,12 +722,9 @@ def build_scene_templates(title: str, scene_type: str, duration: int | float):
     return (
         meta,
         copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT),
-        copy.deepcopy(DEFAULT_WAN22_T2V_PROMPT),
-        copy.deepcopy(DEFAULT_WAN_PROMPT),
         copy.deepcopy(DEFAULT_MINIMAX_H3_S2V_PROMPT),
         copy.deepcopy(DEFAULT_IMAGE_PAN_PROMPT),
         copy.deepcopy(DEFAULT_IMAGE_ZOOM_PROMPT),
-        copy.deepcopy(DEFAULT_WEB_SEARCH_PROMPT),
     )
 
 
@@ -800,11 +732,8 @@ def create_scene_files(
     scene_dir: Path,
     meta=None,
     z_prompt=None,
-    wan_t2v_prompt=None,
-    wan_prompt=None,
     image_pan_prompt=None,
     image_zoom_prompt=None,
-    web_search_prompt=None,
     z_image_extra_prompts=None,
     minimax_h3_t2v_prompt=None,
     minimax_h3_i2v_prompt=None,
@@ -817,17 +746,14 @@ def create_scene_files(
     resolved_meta = copy.deepcopy(DEFAULT_SCENE_META)
     if isinstance(meta, dict):
         resolved_meta.update(meta)
-    scene_type = str(resolved_meta.get("scene_type", "wan22_t2v")).strip()
+    scene_type = str(resolved_meta.get("scene_type", "i2v")).strip()
     write_prompt_json(scene_dir / "scene_meta.json", resolved_meta)
     sync_scene_prompt_files(
         scene_dir,
         scene_type=scene_type,
         z_prompt=z_prompt or DEFAULT_Z_IMAGE_PROMPT,
-        wan_t2v_prompt=wan_t2v_prompt or DEFAULT_WAN22_T2V_PROMPT,
-        wan_prompt=wan_prompt or DEFAULT_WAN_PROMPT,
         image_pan_prompt=image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT,
         image_zoom_prompt=image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT,
-        web_search_prompt=web_search_prompt or DEFAULT_WEB_SEARCH_PROMPT,
         qwen_image_edit_prompt=qwen_image_edit_prompt or DEFAULT_QWEN_IMAGE_EDIT_PROMPT,
         z_image_extra_prompts=z_image_extra_prompts or DEFAULT_Z_IMAGE_EXTRA_PROMPTS,
         minimax_h3_t2v_prompt=minimax_h3_t2v_prompt or DEFAULT_MINIMAX_H3_T2V_PROMPT,
@@ -852,11 +778,8 @@ def sync_scene_prompt_files(
     scene_dir: Path,
     scene_type: str,
     z_prompt: dict,
-    wan_t2v_prompt: dict,
-    wan_prompt: dict,
     image_pan_prompt: dict,
     image_zoom_prompt: dict | None = None,
-    web_search_prompt: dict | None = None,
     z_image_extra_prompts: dict | None = None,
     minimax_h3_t2v_prompt: dict | None = None,
     minimax_h3_i2v_prompt: dict | None = None,
@@ -869,13 +792,10 @@ def sync_scene_prompt_files(
 
     Rules:
     - z_image_prompt.json: always present
-    - wan22_t2v_prompt.json: always present
     """
     write_prompt_json(scene_dir / "z_image_prompt.json", z_prompt or DEFAULT_Z_IMAGE_PROMPT)
-    write_prompt_json(scene_dir / "wan22_t2v_prompt.json", wan_t2v_prompt or DEFAULT_WAN22_T2V_PROMPT)
     write_prompt_json(scene_dir / "image_pan_prompt.json", image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT)
     write_prompt_json(scene_dir / "image_zoom_prompt.json", image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT)
-    write_prompt_json(scene_dir / "web_search_prompt.json", web_search_prompt or DEFAULT_WEB_SEARCH_PROMPT)
     write_prompt_json(
         scene_dir / "qwen_image_edit_prompt.json",
         qwen_image_edit_prompt or DEFAULT_QWEN_IMAGE_EDIT_PROMPT,
@@ -941,9 +861,8 @@ def sync_project_size_to_scene_files(project_dir: Path, project_settings: dict |
 
     for scene_dir in list_scene_dirs_in_project(project_dir):
         meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
-        scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
+        scene_type = str(meta.get("scene_type", "i2v")).strip()
         prompt_files = [
-            "wan22_t2v_prompt.json",
             "minimax_h3_t2v_prompt.json",
             "minimax_h3_i2v_prompt.json",
             MINIMAX_H3_I2V_PANJANG_PROMPT_FILENAME,
@@ -951,8 +870,6 @@ def sync_project_size_to_scene_files(project_dir: Path, project_settings: dict |
             "image_pan_prompt.json",
             "image_zoom_prompt.json",
         ]
-        if scene_type == "wan22":
-            prompt_files.insert(1, "wan22_i2v_prompt.json")
         # MiniMax resolutions are scene-local overrides. Project-size
         # synchronization must never overwrite them, regardless of whether
         # the scene is T2V, standalone I2V, S2V, or R2V.
@@ -1022,7 +939,7 @@ def create_project_on_disk(
     saved_settings = save_project_settings_file(project_dir, initial_project_settings)
 
     if create_default_scene:
-        create_scene_in_project(project_dir, scene_type=WAN22_T2V_SCENE_TYPE, scene_title="", duration=10)
+        create_scene_in_project(project_dir, scene_type="i2v", scene_title="", duration=10)
     sync_project_size_to_scene_files(project_dir, saved_settings)
     return project_dir, saved_settings
 
@@ -1076,10 +993,8 @@ def create_scene_in_project(
         raise ValueError(
             "Durasi untuk scene minimax-h3_r2v harus antara 0.0 dan 15.0 detik dengan maksimal 4 angka desimal."
         )
-    if scene_type == WAN22_T2V_SCENE_TYPE and duration not in WAN22_T2V_DURATION_OPTIONS:
-        raise ValueError("Durasi untuk scene wan22_t2v hanya boleh 5, 10, atau 15 detik.")
     new_dir = project_dir / scene_dir_name(len(list_scene_dirs_in_project(project_dir)) + 1)
-    meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(
+    meta, z_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt = build_scene_templates(
         scene_title,
         scene_type,
         duration,
@@ -1091,21 +1006,16 @@ def create_scene_in_project(
         comfyui_server = str(project_settings.get("comfyui_server", DEFAULT_PROJECT_SETTINGS["comfyui_server"])).strip()
     except Exception:
         comfyui_server = DEFAULT_PROJECT_SETTINGS["comfyui_server"]
-    z_prompt, wan_t2v_prompt, wan_prompt = _collect_scene_lora_defaults(
+    z_prompt = _collect_scene_lora_defaults(
         comfyui_server,
         z_prompt,
-        wan_t2v_prompt,
-        wan_prompt,
     )
     create_scene_files(
         new_dir,
         meta=meta,
         z_prompt=z_prompt,
-        wan_t2v_prompt=wan_t2v_prompt,
-        wan_prompt=wan_prompt,
         image_pan_prompt=image_pan_prompt,
         image_zoom_prompt=image_zoom_prompt,
-        web_search_prompt=web_search_prompt,
         minimax_h3_r2v_prompt=DEFAULT_MINIMAX_H3_R2V_PROMPT,
     )
     sync_project_size_to_scene_files(project_dir)
@@ -1124,10 +1034,13 @@ def duplicate_directory(src: Path, dst: Path):
             "variasi*",
             "__pycache__",
             "*.pyc",
+            "agentic.json",
             "wan22_i2v_prompt.json",
             "wan22_s2v_prompt.json",
+            "wan22_t2v_prompt.json",
             "wan22_t2v_batch_extra_prompts.json",
             "web_scroll_prompt.json",
+            "web_search_prompt.json",
             "image_edit_prompt.json",
         ),
     )
@@ -1204,23 +1117,6 @@ def find_latest_speech_asset(scene_dir: Path):
     return items[0]
 
 
-def read_key_from_cfg(key_name: str) -> str:
-    if not KEYS_CFG.exists():
-        return ""
-    try:
-        with KEYS_CFG.open("r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                if k.strip().upper() == key_name.strip().upper():
-                    return v.strip()
-    except OSError:
-        return ""
-    return ""
-
-
 def _prompt_text_for_validation(value) -> str:
     """Return user-facing text from legacy or bilingual prompt data."""
     if isinstance(value, dict):
@@ -1238,8 +1134,6 @@ def _validate_minimax_mode_flags(prompt: dict | None, label: str, issues: list[s
 def validate_scene_data(
     meta: dict,
     z_prompt: dict,
-    wan_t2v_prompt: dict,
-    wan_prompt: dict,
     s2v_prompt: dict | None = None,
     image_pan_prompt: dict | None = None,
     image_zoom_prompt: dict | None = None,
@@ -1250,8 +1144,9 @@ def validate_scene_data(
     minimax_h3_i2v_panjang_prompt: dict | None = None,
 ):
     issues = []
-    scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
-    wan_t2v_prompt = wan_t2v_prompt or DEFAULT_WAN22_T2V_PROMPT
+    scene_type = str(meta.get("scene_type", "i2v")).strip()
+    if scene_type not in SUPPORTED_SCENE_TYPES:
+        return [unsupported_scene_type_message(scene_type)]
     s2v_prompt = s2v_prompt or DEFAULT_MINIMAX_H3_S2V_PROMPT
     image_pan_prompt = image_pan_prompt or DEFAULT_IMAGE_PAN_PROMPT
     image_zoom_prompt = image_zoom_prompt or DEFAULT_IMAGE_ZOOM_PROMPT
@@ -1286,15 +1181,6 @@ def validate_scene_data(
             FREE_INTEGER_DURATION_MIN <= duration_value <= FREE_INTEGER_DURATION_MAX
         ):
             issues.append("Durasi untuk scene i2v, image_pan, dan image_zoom harus berupa integer antara 1 dan 15 detik.")
-    if scene_type == WAN22_T2V_SCENE_TYPE:
-        try:
-            duration_value = int(meta.get("duration_seconds", 0))
-        except Exception:
-            duration_value = 0
-        if duration_value not in WAN22_T2V_DURATION_OPTIONS:
-            issues.append("Durasi scene wan22_t2v hanya boleh 5, 10, atau 15 detik.")
-        if not str(wan_t2v_prompt.get("positive_prompt", "")).strip():
-            issues.append("Prompt positif WAN22 T2V wajib diisi.")
     if scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE:
         _validate_minimax_mode_flags(minimax_h3_t2v_prompt, "MiniMax H3 T2V", issues)
         _validate_minimax_mode_flags(minimax_h3_i2v_prompt, "MiniMax H3 I2V", issues)
@@ -1420,13 +1306,6 @@ def validate_scene_data(
             missing = [name for name in selected_files if not (scene_dir / name).is_file()]
             if missing:
                 issues.append("Reference R2V tidak ditemukan: " + ", ".join(missing[:3]))
-    if scene_type == WAN22_T2V_SCENE_TYPE and not str(wan_t2v_prompt.get("positive_prompt", "")).strip():
-        issues.append("Prompt positif WAN22 T2V wajib diisi.")
-    if scene_type == "wan22":
-        if not str(wan_prompt.get("positive_prompt_one", "")).strip():
-            issues.append("Prompt positif WAN pertama wajib diisi.")
-        if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
-            issues.append("Adegan WAN membutuhkan minimal satu gambar lokal di folder scene.")
     if scene_type == MINIMAX_H3_S2V_SCENE_TYPE:
         _validate_minimax_mode_flags(s2v_prompt, "MiniMax H3 S2V", issues)
         if scene_dir and not find_latest_asset(scene_dir, IMAGE_EXTS):
@@ -1517,7 +1396,6 @@ class SceneTemplateDialog(QDialog):
         self.title_input = QLineEdit()
         self.type_combo = QComboBox()
         self.type_combo.addItems([
-            WAN22_T2V_SCENE_TYPE,
             MINIMAX_H3_T2V_I2V_SCENE_TYPE,
             MINIMAX_H3_I2V_SCENE_TYPE,
             MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
@@ -1624,22 +1502,159 @@ class UiLogHandler(logging.Handler):
             message = self.format(record)
         except Exception:
             message = record.getMessage()
+        try:
             self._emitter.message.emit(str(message))
+        except RuntimeError:
+            # A late worker log may arrive after its window has been destroyed.
+            pass
 
 
 class RuntimeTaskWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    completed = Signal()
 
     def __init__(self, task):
         super().__init__()
         self.task = task
 
+    @Slot()
     def run(self):
         try:
-            self.finished.emit(self.task())
+            if not QThread.currentThread().isInterruptionRequested():
+                self.finished.emit(self.task())
         except Exception as exc:
             self.failed.emit(str(exc))
+        finally:
+            self.completed.emit()
+
+
+_ACTIVE_BACKGROUND_TASKS = set()
+
+
+class BackgroundTask(QObject):
+    """Own an I/O worker until it stops and dispatch callbacks on the GUI thread."""
+
+    finished = Signal()
+
+    def __init__(self, task, on_finished, on_failed, owner):
+        # A dialog may close before its request ends. Keep the worker owned by
+        # the application, and disconnect its UI callbacks when the owner dies.
+        super().__init__(QApplication.instance())
+        self._on_finished = on_finished
+        self._on_failed = on_failed
+        self._cancelled = False
+        self.worker_thread = QThread(self)
+        self.worker = RuntimeTaskWorker(task)
+        self.worker.moveToThread(self.worker_thread)
+        self.worker_thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self._deliver_result, Qt.QueuedConnection)
+        self.worker.failed.connect(self._deliver_error, Qt.QueuedConnection)
+        # quit() is thread-safe; it must also work after app.exec() has returned.
+        self.worker.completed.connect(self.worker_thread.quit, Qt.DirectConnection)
+        self.worker_thread.finished.connect(self.worker.deleteLater)
+        self.worker_thread.finished.connect(self._thread_finished, Qt.QueuedConnection)
+        owner.destroyed.connect(self.cancel)
+
+    def start(self):
+        _ACTIVE_BACKGROUND_TASKS.add(self)
+        self.worker_thread.start()
+
+    @Slot(object)
+    def _deliver_result(self, result):
+        if not self._cancelled and self._on_finished is not None:
+            try:
+                self._on_finished(result)
+            except Exception:
+                logging.getLogger(__name__).exception("Background task UI callback failed")
+
+    @Slot(str)
+    def _deliver_error(self, error):
+        if not self._cancelled and self._on_failed is not None:
+            try:
+                self._on_failed(error)
+            except Exception:
+                logging.getLogger(__name__).exception("Background task error callback failed")
+
+    @Slot()
+    def cancel(self):
+        self._cancelled = True
+        self._on_finished = None
+        self._on_failed = None
+        self.worker_thread.requestInterruption()
+        self.worker_thread.quit()
+
+    @Slot()
+    def _thread_finished(self):
+        _ACTIVE_BACKGROUND_TASKS.discard(self)
+        self.finished.emit()
+        self.deleteLater()
+
+
+def shutdown_background_tasks():
+    """Drain in-flight I/O after the window closes, before destroying Qt objects."""
+    tasks = list(_ACTIVE_BACKGROUND_TASKS)
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        task.worker_thread.wait()
+        _ACTIVE_BACKGROUND_TASKS.discard(task)
+
+
+class GeminiImageModelCatalog(QObject):
+    models_changed = Signal(list)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.models = list(MODEL_GEMINI_FALLBACKS)
+        self._loaded = False
+        self._task = None
+
+    @Slot()
+    def refresh(self):
+        if self._loaded or self._task is not None:
+            return
+        self._task = BackgroundTask(
+            list_gemini_image_models, self._loaded_models, self._load_failed, self,
+        )
+        self._task.finished.connect(self._refresh_finished)
+        self._task.start()
+
+    def _loaded_models(self, models):
+        self.models = _dedupe_preserve_order(models or MODEL_GEMINI_FALLBACKS)
+        self._loaded = True
+        self.models_changed.emit(list(self.models))
+
+    def _load_failed(self, error):
+        self._loaded = True
+        logging.getLogger(__name__).warning("Gemini model discovery failed: %s", error)
+
+    @Slot()
+    def _refresh_finished(self):
+        self._task = None
+
+
+def gemini_image_model_catalog():
+    app = QApplication.instance()
+    catalog = getattr(app, "_gemini_image_model_catalog", None)
+    if catalog is None:
+        catalog = GeminiImageModelCatalog(app)
+        app._gemini_image_model_catalog = catalog
+    return catalog
+
+
+def update_gemini_model_combo(combo, models):
+    selected = str(combo.currentData() or combo.currentText() or "").strip()
+    options = _dedupe_preserve_order([*models, selected])
+    blocked = combo.blockSignals(True)
+    try:
+        combo.clear()
+        for model in options:
+            combo.addItem(model, model)
+        index = combo.findData(selected)
+        combo.setCurrentIndex(index if index >= 0 else (0 if options else -1))
+    finally:
+        combo.blockSignals(blocked)
 
 
 class RuntimeLogDialog(QDialog):
@@ -1655,6 +1670,7 @@ class RuntimeLogDialog(QDialog):
         self._refresh_timer.timeout.connect(self.refresh)
         self._refresh_thread = None
         self._refresh_worker = None
+        self._refresh_task = None
 
         screen = self.screen() or QApplication.primaryScreen()
         if screen is not None:
@@ -1683,30 +1699,28 @@ class RuntimeLogDialog(QDialog):
 
     def closeEvent(self, event):
         self._refresh_timer.stop()
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
         super().closeEvent(event)
 
     def refresh(self):
-        if self._refresh_thread is not None and self._refresh_thread.isRunning():
+        if self._refresh_task is not None:
             return
         self.info_label.setText("Mengambil log... · refresh otomatis setiap 5 detik")
-        thread = QThread(self)
-        worker = RuntimeTaskWorker(
-            lambda: RuntimeServiceController.from_config().logs(self.service)
+        task = BackgroundTask(
+            lambda: RuntimeServiceController.from_config().logs(self.service),
+            self._on_logs_loaded,
+            self._on_logs_failed,
+            self,
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_logs_loaded)
-        worker.failed.connect(self._on_logs_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._refresh_finished)
-        self._refresh_thread = thread
-        self._refresh_worker = worker
-        thread.start()
+        task.finished.connect(self._refresh_finished)
+        self._refresh_task = task
+        self._refresh_thread = task.worker_thread
+        self._refresh_worker = task.worker
+        task.start()
 
     def _refresh_finished(self):
+        self._refresh_task = None
         self._refresh_thread = None
         self._refresh_worker = None
 
@@ -1795,146 +1809,6 @@ class PromptGenerationWorker(QObject):
             self.failed.emit(str(e))
 
 
-class WebSearchWorker(QObject):
-    finished = Signal(dict)
-    failed = Signal(str)
-
-    def __init__(self, api_key: str, search_term: str, width: int, height: int, scene_dir: str):
-        super().__init__()
-        self.api_key = str(api_key or "").strip()
-        self.search_term = str(search_term or "").strip()
-        self.width = int(width)
-        self.height = int(height)
-        self.scene_dir = Path(scene_dir)
-
-    def run(self):
-        logger = logging.getLogger(__name__)
-        try:
-            if not self.api_key:
-                raise ValueError("API key Firecrawl tidak ditemukan. Tambahkan FIRECRAWLKEY di keys.cfg.")
-            orientation_hint = "landscape orientation" if int(self.width) >= int(self.height) else "portrait orientation"
-            ratio_hint = f"aspect ratio around {int(self.width)}:{int(self.height)}"
-            query = f"{self.search_term} {orientation_hint} {ratio_hint} larger:{int(self.width)}x{int(self.height)}"
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-
-            logger.info(
-                "[web_search] request firecrawl: query='%s', limit=%s, filter='larger:%sx%s', orientation_hint='%s'.",
-                self.search_term,
-                10,
-                int(self.width),
-                int(self.height),
-                orientation_hint,
-            )
-            used_endpoint = "https://api.firecrawl.dev/v2/search"
-            payload_v2 = {"query": query, "limit": 10, "sources": ["images"]}
-            response = None
-            try:
-                response = self._post_with_retry(used_endpoint, headers, payload_v2, logger)
-                response.raise_for_status()
-            except requests.HTTPError as exc:
-                status_code = getattr(exc.response, "status_code", None)
-                if status_code in {400, 401, 403, 404, 405}:
-                    logger.warning("[web_search] v2 search gagal (%s), fallback ke v1/search.", status_code)
-                    used_endpoint = "https://api.firecrawl.dev/v1/search"
-                    payload_v1 = {"query": query, "limit": 10}
-                    response = self._post_with_retry(used_endpoint, headers, payload_v1, logger)
-                    response.raise_for_status()
-                else:
-                    raise
-            data = response.json() if response is not None else {}
-            logger.info("[web_search] endpoint digunakan: %s", used_endpoint)
-
-            data_root = data.get("data", {}) if isinstance(data, dict) else {}
-            urls = []
-            if isinstance(data_root, dict):
-                image_results = data_root.get("images", [])
-                if isinstance(image_results, list):
-                    for item in image_results:
-                        if isinstance(item, str) and item.startswith(("http://", "https://")):
-                            urls.append(item.strip())
-                            continue
-                        if isinstance(item, dict):
-                            for key in ("imageUrl", "url", "image", "src"):
-                                value = item.get(key)
-                                if isinstance(value, str) and value.startswith(("http://", "https://")):
-                                    urls.append(value.strip())
-                                    break
-            raw_items = data_root if isinstance(data_root, list) else []
-            if raw_items:
-                for item in raw_items:
-                    if not isinstance(item, dict):
-                        continue
-                    for key in ("imageUrl", "url", "image", "src"):
-                        value = item.get(key)
-                        if isinstance(value, str) and value.startswith(("http://", "https://")):
-                            urls.append(value.strip())
-                    image_candidates = item.get("images", [])
-                    if isinstance(image_candidates, list):
-                        for image_url in image_candidates:
-                            if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
-                                urls.append(image_url.strip())
-            logger.info("[web_search] response firecrawl: data_type=%s, total_url_kandidat=%s.", type(data_root).__name__, len(urls))
-
-            unique_urls = []
-            seen = set()
-            for url in urls:
-                if url in seen:
-                    continue
-                seen.add(url)
-                unique_urls.append(url)
-                if len(unique_urls) >= 10:
-                    break
-            logger.info("[web_search] url unik gambar: %s.", len(unique_urls))
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            downloaded = []
-            logger.info("[web_search] mulai download: total=%s, scene=%s", len(unique_urls), self.scene_dir)
-            for index, url in enumerate(unique_urls, start=1):
-                try:
-                    parsed = urlparse(url)
-                    suffix = Path(parsed.path).suffix.lower()
-                    if suffix not in IMAGE_EXTS:
-                        suffix = ".jpg"
-                    filename = f"web_search_{timestamp}_{index:02d}{suffix}"
-                    output_path = self.scene_dir / filename
-                    with requests.get(url, timeout=30, stream=True) as image_response:
-                        image_response.raise_for_status()
-                        with output_path.open("wb") as f:
-                            for chunk in image_response.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
-                    downloaded.append(str(output_path))
-                except Exception as exc:
-                    logger.warning("[web_search] gagal download image: url=%s, error=%s", url, exc)
-            logger.info("[web_search] selesai download: %s file berhasil disimpan.", len(downloaded))
-            self.finished.emit({
-                "downloaded_count": len(downloaded),
-                "width": int(self.width),
-                "height": int(self.height),
-                "scene_dir": str(self.scene_dir),
-            })
-        except Exception as e:
-            self.failed.emit(str(e))
-
-    def _post_with_retry(self, url: str, headers: dict, payload: dict, logger: logging.Logger):
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                # Firecrawl search kadang lambat; pakai timeout baca lebih longgar.
-                return requests.post(url, headers=headers, json=payload, timeout=(15, 90))
-            except (requests.Timeout, requests.ConnectionError) as exc:
-                last_error = exc
-                logger.warning("[web_search] request attempt %s/3 gagal: %s", attempt, exc)
-                if attempt < 3:
-                    QThread.msleep(1200 * attempt)
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Request Firecrawl gagal tanpa detail error.")
-
-
 class ComposeMusicDialog(QDialog):
     def __init__(
         self,
@@ -1964,7 +1838,7 @@ class ComposeMusicDialog(QDialog):
         self.compose_song_input.setToolTip(
             "Gunakan audio S2V tanpa audio ganda."
             if compose_song_enabled
-            else "Compose Lagu hanya tersedia jika semua scene bertipe WAN22/MiniMax S2V atau MiniMax R2V."
+            else "Compose Lagu hanya tersedia jika semua scene bertipe MiniMax S2V atau MiniMax R2V."
         )
 
         layout = QFormLayout(self)
@@ -2008,47 +1882,6 @@ class UpscaleChoiceDialog(QDialog):
         return float(self.scale_input.currentData() or 1.5)
 
 
-class MultiProjectAgenticDialog(QDialog):
-    def __init__(self, project_names: list[str], parent=None, on_run=None):
-        super().__init__(parent)
-        self.setWindowTitle("Jalankan Agentic Multi Project")
-        self.resize(420, 520)
-        self.on_run = on_run
-        self.checkboxes: list[QCheckBox] = []
-
-        root_layout = QVBoxLayout(self)
-        info = QLabel("Pilih project yang ingin dijalankan agentic execute secara berurutan.", self)
-        info.setWordWrap(True)
-        root_layout.addWidget(info)
-
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        container = QWidget(self)
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        for project_name in sorted(project_names, key=lambda value: value.lower()):
-            checkbox = QCheckBox(project_name, container)
-            self.checkboxes.append(checkbox)
-            container_layout.addWidget(checkbox)
-        container_layout.addStretch(1)
-        scroll.setWidget(container)
-        root_layout.addWidget(scroll, 1)
-
-        self.run_button = QToolButton(self)
-        self.run_button.setText("Agentic")
-        self.run_button.clicked.connect(self._handle_run_clicked)
-        root_layout.addWidget(self.run_button, 0, Qt.AlignLeft)
-
-    def selected_projects(self) -> list[str]:
-        return [checkbox.text().strip() for checkbox in self.checkboxes if checkbox.isChecked()]
-
-    def _handle_run_clicked(self):
-        callback = self.on_run
-        if callback is None:
-            return
-        callback(self.selected_projects())
-
-
 class ProjectSettingsDialog(QDialog):
     def __init__(
         self,
@@ -2056,8 +1889,6 @@ class ProjectSettingsDialog(QDialog):
         parent=None,
         project_dir: str | Path | None = None,
         on_generate_cover=None,
-        on_run_agentic_generate=None,
-        on_run_agentic_execute=None,
         on_run_clear_vram=None,
     ):
         super().__init__(parent)
@@ -2067,8 +1898,6 @@ class ProjectSettingsDialog(QDialog):
         self.setSizeGripEnabled(True)
         self.saved_data = None
         self.on_generate_cover = on_generate_cover
-        self.on_run_agentic_generate = on_run_agentic_generate
-        self.on_run_agentic_execute = on_run_agentic_execute
         self.on_run_clear_vram = on_run_clear_vram
         self.project_dir = Path(project_dir) if project_dir else None
         self._existing_cover_data = copy.deepcopy(DEFAULT_Z_IMAGE_PROMPT)
@@ -2122,8 +1951,10 @@ class ProjectSettingsDialog(QDialog):
         for model_key, label in IMAGE_MODEL_OPTIONS:
             self.cover_model_input.addItem(label, model_key)
         self.cover_gemini_model_input = QComboBox(self)
-        for model_id in list_gemini_image_models():
+        self._gemini_image_models = gemini_image_model_catalog()
+        for model_id in self._gemini_image_models.models:
             self.cover_gemini_model_input.addItem(model_id, model_id)
+        self._gemini_image_models.models_changed.connect(self._update_gemini_image_models)
         self.cover_size_input = QComboBox(self)
         for label, width, height in Z_IMAGE_SIZES:
             self.cover_size_input.addItem(label, (width, height))
@@ -2170,12 +2001,6 @@ class ProjectSettingsDialog(QDialog):
         self.generate_cover_button = QToolButton(self)
         self.generate_cover_button.setText("Generate Cover")
         self.generate_cover_button.clicked.connect(self._on_generate_cover_clicked)
-        self.run_agentic_generate_button = QToolButton(self)
-        self.run_agentic_generate_button.setText("Generate Config Agentic")
-        self.run_agentic_generate_button.clicked.connect(self._on_run_agentic_generate_clicked)
-        self.run_agentic_execute_button = QToolButton(self)
-        self.run_agentic_execute_button.setText("Execute Agentic")
-        self.run_agentic_execute_button.clicked.connect(self._on_run_agentic_execute_clicked)
         self.clear_vram_button = QToolButton(self)
         self.clear_vram_button.setText("Clear VRAM")
         self.clear_vram_button.setToolTip("Jalankan VRAM cleaner di ComfyUI untuk project aktif.")
@@ -2186,8 +2011,6 @@ class ProjectSettingsDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         button_row = QHBoxLayout()
         button_row.addWidget(self.generate_cover_button)
-        button_row.addWidget(self.run_agentic_generate_button)
-        button_row.addWidget(self.run_agentic_execute_button)
         button_row.addWidget(self.clear_vram_button)
         button_row.addStretch(1)
         button_row.addWidget(self.buttons)
@@ -2207,6 +2030,11 @@ class ProjectSettingsDialog(QDialog):
         self._update_cover_model_fields()
         self._update_prompt_generation_fields()
         self._is_loading_project_settings = False
+        QTimer.singleShot(0, self._gemini_image_models.refresh)
+
+    @Slot(list)
+    def _update_gemini_image_models(self, models):
+        update_gemini_model_combo(self.cover_gemini_model_input, models)
 
     def _set_model_combo_value(self, combo: QComboBox, value: str):
         value = str(value or "").strip()
@@ -2578,24 +2406,6 @@ class ProjectSettingsDialog(QDialog):
         if callable(self.on_generate_cover):
             self.on_generate_cover(data)
 
-    def _on_run_agentic_generate_clicked(self):
-        try:
-            data = self.get_data()
-        except ValueError as e:
-            QMessageBox.warning(self, "Konfigurasi Project Tidak Valid", str(e))
-            return
-        if callable(self.on_run_agentic_generate):
-            self.on_run_agentic_generate(data)
-
-    def _on_run_agentic_execute_clicked(self):
-        try:
-            data = self.get_data()
-        except ValueError as e:
-            QMessageBox.warning(self, "Konfigurasi Project Tidak Valid", str(e))
-            return
-        if callable(self.on_run_agentic_execute):
-            self.on_run_agentic_execute(data)
-
     def _on_run_clear_vram_clicked(self):
         try:
             data = self.get_data()
@@ -2771,14 +2581,12 @@ class SceneEditorWindow(QMainWindow):
         self.process_context = None
         self.runtime_task_thread = None
         self.runtime_task_worker = None
-        self.multi_project_agentic_queue: list[str] = []
-        self.multi_project_agentic_completed: list[str] = []
+        self._runtime_task = None
+        self._closing = False
         self.loading_scene = False
         self.editor_tabs = None
         self.meta_tab = None
         self.z_tab = None
-        self.wan_t2v_tab = None
-        self.wan_tab = None
         self.minimax_h3_t2v_tab = None
         self.minimax_h3_i2v_tab = None
         self.minimax_h3_r2v_tab = None
@@ -2787,9 +2595,7 @@ class SceneEditorWindow(QMainWindow):
         self.minimax_h3_r2v_h3_cache_group = None
         self.minimax_h3_s2v_h3_cache_group = None
         self.s2v_tab = None
-        self.web_search_tab = None
         self.qwen_image_edit_tab = None
-        self.agentic_tab = None
         self.assets_tab = None
         self.generate_initial_image_button = None
         self.duration_label = None
@@ -2802,8 +2608,6 @@ class SceneEditorWindow(QMainWindow):
         self.prompt_generation_thread = None
         self.prompt_generation_worker = None
         self.prompt_generation_context = None
-        self.web_search_thread = None
-        self.web_search_worker = None
         self._loading_variation_view = False
         self.project_action_group_widget = None
         self.scene_action_group_widget = None
@@ -2825,7 +2629,7 @@ class SceneEditorWindow(QMainWindow):
         self.scene_description_input.setFixedHeight(80)
         self.scene_description_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.duration_input = QComboBox()
-        populate_duration_combo(self.duration_input, WAN22_T2V_SCENE_TYPE, selected_value=10)
+        populate_duration_combo(self.duration_input, "i2v", selected_value=10)
         self.duration_integer_input = QSpinBox()
         self.duration_integer_input.setRange(FREE_INTEGER_DURATION_MIN, FREE_INTEGER_DURATION_MAX)
         self.duration_integer_input.setValue(10)
@@ -2840,7 +2644,6 @@ class SceneEditorWindow(QMainWindow):
         self.duration_input_stack.setFixedHeight(self.duration_input.sizeHint().height())
         self.scene_type_combo = QComboBox()
         self.scene_type_combo.addItems([
-            WAN22_T2V_SCENE_TYPE,
             MINIMAX_H3_T2V_I2V_SCENE_TYPE,
             MINIMAX_H3_I2V_SCENE_TYPE,
             MINIMAX_H3_I2V_PANJANG_SCENE_TYPE,
@@ -2868,13 +2671,12 @@ class SceneEditorWindow(QMainWindow):
         for model_key, label in IMAGE_MODEL_OPTIONS:
             self.z_model_input.addItem(label, model_key)
         self.z_gemini_model_input = QComboBox()
-        self.z_gemini_model_ids = list_gemini_image_models()
+        self._gemini_image_models = gemini_image_model_catalog()
+        self.z_gemini_model_ids = list(self._gemini_image_models.models)
         for model_id in self.z_gemini_model_ids:
             self.z_gemini_model_input.addItem(model_id, model_id)
+        self._gemini_image_models.models_changed.connect(self._update_gemini_image_models)
         self.z_negative_input = QTextEdit()
-        self.z_clipboard_button = QToolButton()
-        self.z_clipboard_button.setText("Image Gen Prompt")
-        self.z_clipboard_button.clicked.connect(self.copy_z_image_skill_prompt_to_clipboard)
         self.z_generate_prompt_button = QToolButton()
         self.z_generate_prompt_button.setText("Buat Prompt")
         self.z_generate_prompt_button.clicked.connect(self.generate_z_prompt_from_ui)
@@ -2883,7 +2685,6 @@ class SceneEditorWindow(QMainWindow):
         self.copy_z_variations_button.clicked.connect(self.copy_z_config_to_variations)
         self.z_extra_positive_inputs = []
         self.z_extra_negative_inputs = []
-        self.z_extra_clipboard_buttons = []
         self.z_extra_generate_prompt_buttons = []
         self.z_extra_buttons = []
         self.z_size_input = QComboBox()
@@ -2900,11 +2701,6 @@ class SceneEditorWindow(QMainWindow):
         for slot_index in range(3):
             positive_input = QTextEdit()
             negative_input = QTextEdit()
-            clipboard_button = QToolButton()
-            clipboard_button.setText("Image Gen Prompt")
-            clipboard_button.clicked.connect(
-                lambda _checked=False, idx=slot_index: self.copy_extra_image_skill_prompt_to_clipboard(idx)
-            )
             generate_button = QToolButton()
             generate_button.setText("Buat Prompt")
             generate_button.clicked.connect(lambda _checked=False, idx=slot_index: self.generate_extra_prompt_from_ui(idx))
@@ -2913,65 +2709,8 @@ class SceneEditorWindow(QMainWindow):
             button.clicked.connect(lambda _checked=False, idx=slot_index: self.run_extra_image_slot(idx))
             self.z_extra_positive_inputs.append(positive_input)
             self.z_extra_negative_inputs.append(negative_input)
-            self.z_extra_clipboard_buttons.append(clipboard_button)
             self.z_extra_generate_prompt_buttons.append(generate_button)
             self.z_extra_buttons.append(button)
-        self.wan_size_input = QComboBox()
-        for label, width, height in WAN_SIZE_OPTIONS:
-            self.wan_size_input.addItem(label, (width, height))
-        self.wan_lora_high_name_input = QComboBox()
-        self.wan_lora_high_name_input.setEditable(False)
-        self.wan_lora_high_strength_input = QLineEdit()
-        self.wan_lora_low_name_input = QComboBox()
-        self.wan_lora_low_name_input.setEditable(False)
-        self.wan_lora_low_strength_input = QLineEdit()
-        self.wan_lora_high2_name_input = QComboBox()
-        self.wan_lora_high2_name_input.setEditable(False)
-        self.wan_lora_high2_strength_input = QLineEdit()
-        self.wan_lora_low2_name_input = QComboBox()
-        self.wan_lora_low2_name_input.setEditable(False)
-        self.wan_lora_low2_strength_input = QLineEdit()
-        self.wan_lora_trigger_words_input = QLineEdit()
-        self.wan_t2v_size_input = QComboBox()
-        for label, width, height in WAN_SIZE_OPTIONS:
-            self.wan_t2v_size_input.addItem(label, (width, height))
-        self.wan_t2v_lora_high_name_input = QComboBox()
-        self.wan_t2v_lora_high_name_input.setEditable(False)
-        self.wan_t2v_lora_high_strength_input = QLineEdit()
-        self.wan_t2v_lora_low_name_input = QComboBox()
-        self.wan_t2v_lora_low_name_input.setEditable(False)
-        self.wan_t2v_lora_low_strength_input = QLineEdit()
-        self.wan_t2v_lora_high2_name_input = QComboBox()
-        self.wan_t2v_lora_high2_name_input.setEditable(False)
-        self.wan_t2v_lora_high2_strength_input = QLineEdit()
-        self.wan_t2v_lora_low2_name_input = QComboBox()
-        self.wan_t2v_lora_low2_name_input.setEditable(False)
-        self.wan_t2v_lora_low2_strength_input = QLineEdit()
-        self.wan_t2v_lora_trigger_words_input = QLineEdit()
-        self.wan_t2v_positive_input = QTextEdit()
-        self.wan_t2v_negative_input = QTextEdit()
-        self.wan_t2v_generate_prompt_button = QToolButton()
-        self.wan_t2v_generate_prompt_button.setText("Buat Prompt")
-        self.wan_t2v_generate_prompt_button.clicked.connect(
-            lambda _checked=False: self.generate_wan_prompt_from_ui("positive_prompt", prompt_kind="wan_t2v")
-        )
-        self.copy_wan_t2v_variations_button = QToolButton()
-        self.copy_wan_t2v_variations_button.setText("Edit Variasi")
-        self.copy_wan_t2v_variations_button.clicked.connect(self.copy_wan_t2v_config_to_variations)
-        self.wan_prompt_inputs = {}
-        self.wan_generate_prompt_buttons = {}
-        for key in [
-            "positive_prompt_one", "negative_prompt_one", "positive_prompt_two", "negative_prompt_two",
-        ]:
-            self.wan_prompt_inputs[key] = QTextEdit()
-            if key.startswith("positive_"):
-                button = QToolButton()
-                button.setText("Buat Prompt")
-                button.clicked.connect(lambda _checked=False, prompt_key=key: self.generate_wan_prompt_from_ui(prompt_key))
-                self.wan_generate_prompt_buttons[key] = button
-        self.copy_wan_i2v_variations_button = QToolButton()
-        self.copy_wan_i2v_variations_button.setText("Edit Variasi")
-        self.copy_wan_i2v_variations_button.clicked.connect(self.copy_wan_i2v_config_to_variations)
         self.minimax_h3_t2v_size_input = QComboBox()
         for label, width, height in MINIMAX_H3_SIZE_OPTIONS:
             self.minimax_h3_t2v_size_input.addItem(label, (width, height))
@@ -3196,14 +2935,6 @@ class SceneEditorWindow(QMainWindow):
         self.image_zoom_strength_input.setSingleStep(0.1)
         self.image_zoom_strength_input.setDecimals(1)
         self.image_zoom_strength_input.setValue(1.3)
-        self.web_search_size_input = QComboBox()
-        for label, width, height in Z_IMAGE_SIZES:
-            self.web_search_size_input.addItem(label, (width, height))
-        self.web_search_term_input = QLineEdit()
-        self.web_search_run_button = QToolButton()
-        self.web_search_run_button.setText("Cari Gambar Web")
-        self.web_search_run_button.clicked.connect(self.run_web_search_images)
-        self.web_search_result_label = QLabel("Hasil akan langsung disimpan ke folder scene dan terlihat di tab Aset.")
         self.qwen_image_edit_image_inputs = []
         self.qwen_image_edit_prompt_image_inputs = []
         self.qwen_image_edit_size_input = QComboBox()
@@ -3230,16 +2961,6 @@ class SceneEditorWindow(QMainWindow):
         for _ in range(QWEN_IMAGE_EDIT_MAX_REFERENCE_IMAGES):
             self.qwen_image_edit_image_inputs.append(QComboBox())
             self.qwen_image_edit_prompt_image_inputs.append(QComboBox())
-        self.agentic_number_of_variations_input = QSpinBox()
-        self.agentic_number_of_variations_input.setRange(0, 999)
-        self.agentic_special_command_input = QTextEdit()
-        self.agentic_special_command_input.setFixedHeight(264)
-        self.agentic_special_command_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.agentic_create_initial_image_input = QCheckBox("Buat image awal", self)
-        self.agentic_create_initial_image_input.setChecked(bool(DEFAULT_AGENERIC_CONFIG.get("create_initial_image", True)))
-        self.agentic_image_extra_mode_input = QComboBox()
-        for label, mode in IMAGE_EXTRA_MODES:
-            self.agentic_image_extra_mode_input.addItem(label, mode)
         self.status_label = QPlainTextEdit()
         self.status_label.setReadOnly(True)
         self.variation_view_input = QComboBox()
@@ -3277,7 +2998,7 @@ class SceneEditorWindow(QMainWindow):
         self._lora_options_initialized = False
         self._lora_options_server = ""
         self._ui_log_emitter = UiLogEmitter(self)
-        self._ui_log_emitter.message.connect(self.append_log)
+        self._ui_log_emitter.message.connect(self.append_log, Qt.QueuedConnection)
         self._ui_log_handler = UiLogHandler(self._ui_log_emitter)
         self._ui_log_handler.setFormatter(
             logging.Formatter(
@@ -3302,14 +3023,30 @@ class SceneEditorWindow(QMainWindow):
         self.build_ui()
         self.update_seed_fields_enabled()
         self.update_lora_fields_enabled()
-        self.update_wan_lora_fields_enabled()
         self.update_scene_type_tabs()
         self.update_scene_type_specific_fields()
         self.update_run_action_buttons_state()
         self.reload_scene_list()
         self.refresh_project_state()
         QTimer.singleShot(0, self.initialize_lora_options_once)
+        QTimer.singleShot(0, self._gemini_image_models.refresh)
         self.setMinimumSize(0, 0)
+
+    @Slot(list)
+    def _update_gemini_image_models(self, models):
+        if self._closing:
+            return
+        self.z_gemini_model_ids = list(models)
+        update_gemini_model_combo(self.z_gemini_model_input, models)
+
+    def closeEvent(self, event):
+        self._closing = True
+        if self._runtime_task is not None:
+            self._runtime_task.cancel()
+        for dialog in self.runtime_log_dialogs.values():
+            dialog.close()
+        logging.getLogger().removeHandler(self._ui_log_handler)
+        super().closeEvent(event)
 
     def install_field_watchers(self):
         for signal in [
@@ -3320,8 +3057,7 @@ class SceneEditorWindow(QMainWindow):
             self.scene_voice_character_input.currentTextChanged,
             self.z_model_input.currentIndexChanged,
             self.z_gemini_model_input.currentIndexChanged,
-            self.z_size_input.currentTextChanged, self.wan_size_input.currentTextChanged,
-            self.wan_t2v_size_input.currentTextChanged,
+            self.z_size_input.currentTextChanged,
             self.minimax_h3_t2v_size_input.currentTextChanged,
             self.minimax_h3_i2v_size_input.currentTextChanged,
             self.minimax_h3_r2v_size_input.currentTextChanged,
@@ -3344,17 +3080,12 @@ class SceneEditorWindow(QMainWindow):
             self.image_zoom_direction_input.currentIndexChanged,
             self.image_zoom_focal_input.currentIndexChanged,
             self.image_zoom_strength_input.valueChanged,
-            self.web_search_size_input.currentTextChanged,
-            self.web_search_term_input.textChanged,
             self.qwen_image_edit_size_input.currentTextChanged,
             self.qwen_image_edit_use_random_seed_input.checkStateChanged,
             *(widget.currentTextChanged for widget in self.qwen_image_edit_image_inputs),
             self.qwen_image_edit_number_of_edits_input.valueChanged,
             *(widget.currentTextChanged for widget in self.qwen_image_edit_prompt_image_inputs),
             self.z_use_random_seed_input.checkStateChanged, self.z_use_lora_input.checkStateChanged,
-            self.agentic_number_of_variations_input.valueChanged,
-            self.agentic_create_initial_image_input.checkStateChanged,
-            self.agentic_image_extra_mode_input.currentIndexChanged,
         ]:
             signal.connect(self.refresh_scene_status)
         self.gemini_tts_model_input.currentIndexChanged.connect(self._on_gemini_tts_model_changed)
@@ -3363,15 +3094,6 @@ class SceneEditorWindow(QMainWindow):
             self.z_negative_input, self.z_seed_input, self.z_lora_name_input, self.z_lora_strength_input,
             self.qwen_image_edit_seed_input, self.qwen_image_edit_positive_input,
             self.qwen_image_edit_negative_input, self.qwen_image_edit_prompt_instruction_input,
-            self.wan_lora_high_name_input, self.wan_lora_high_strength_input,
-            self.wan_lora_low_name_input, self.wan_lora_low_strength_input,
-            self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input,
-            self.wan_lora_low2_name_input, self.wan_lora_low2_strength_input,
-            self.wan_t2v_positive_input, self.wan_t2v_negative_input,
-            self.wan_t2v_lora_high_name_input, self.wan_t2v_lora_high_strength_input,
-            self.wan_t2v_lora_low_name_input, self.wan_t2v_lora_low_strength_input,
-            self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input,
-            self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input,
             self.minimax_h3_t2v_lora_name_input, self.minimax_h3_t2v_lora_strength_input,
             self.minimax_h3_t2v_lora_name_2_input, self.minimax_h3_t2v_lora_strength_2_input,
             self.minimax_h3_i2v_lora_name_input, self.minimax_h3_i2v_lora_strength_input,
@@ -3383,9 +3105,7 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_r2v_positive_input,
             self.minimax_h3_r2v_lora_name_input, self.minimax_h3_r2v_lora_name_2_input,
             self.minimax_h3_r2v_lora_strength_input, self.minimax_h3_r2v_lora_strength_2_input,
-            *self.wan_prompt_inputs.values(),
             *self.z_extra_positive_inputs, *self.z_extra_negative_inputs,
-            self.agentic_special_command_input,
         ]:
             signal = getattr(widget, "textChanged", None) or getattr(widget, "currentTextChanged", None)
             if signal is not None:
@@ -3564,7 +3284,7 @@ class SceneEditorWindow(QMainWindow):
         z_layout.addRow("Trigger Word Lora", self.z_lora_trigger_words_input)
         z_layout.addRow("", self.copy_z_variations_button)
         z_layout.addRow("Prompt Positif", self.z_positive_input)
-        z_layout.addRow("", button_row(self.z_clipboard_button, self.z_generate_prompt_button))
+        z_layout.addRow("", self.z_generate_prompt_button)
         z_layout.addRow("Prompt Negatif", self.z_negative_input)
         tabs.addTab(self.z_tab, "Gambar Awal")
 
@@ -3574,75 +3294,12 @@ class SceneEditorWindow(QMainWindow):
             group = QGroupBox(f"Prompt Tambahan {idx + 1}")
             group_layout = QFormLayout(group)
             group_layout.addRow("Prompt Positif", self.z_extra_positive_inputs[idx])
-            group_layout.addRow(
-                "",
-                button_row(self.z_extra_clipboard_buttons[idx], self.z_extra_generate_prompt_buttons[idx]),
-            )
+            group_layout.addRow("", self.z_extra_generate_prompt_buttons[idx])
             group_layout.addRow("Prompt Negatif", self.z_extra_negative_inputs[idx])
             group_layout.addRow("", self.z_extra_buttons[idx])
             z_extra_layout.addWidget(group)
         z_extra_layout.addStretch(1)
         tabs.addTab(self.z_extra_tab, "Prompt Tambahan")
-
-        self.wan_t2v_tab = QWidget()
-        wan_t2v_layout = QGridLayout(self.wan_t2v_tab)
-
-        def add_t2v_lora_row(row: int, title: str, name_widget, strength_widget):
-            strength_widget.setFixedWidth(84)
-            strength_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            wan_t2v_layout.addWidget(QLabel(title), row, 0)
-            wan_t2v_layout.addWidget(name_widget, row, 1)
-            wan_t2v_layout.addWidget(QLabel("Kekuatan"), row, 2)
-            wan_t2v_layout.addWidget(strength_widget, row, 3)
-
-        wan_t2v_layout.addWidget(QLabel("Ukuran"), 0, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_size_input, 0, 1, 1, 3)
-        add_t2v_lora_row(1, "Lora High 1", self.wan_t2v_lora_high_name_input, self.wan_t2v_lora_high_strength_input)
-        add_t2v_lora_row(2, "Lora Low 1", self.wan_t2v_lora_low_name_input, self.wan_t2v_lora_low_strength_input)
-        add_t2v_lora_row(3, "Lora High 2", self.wan_t2v_lora_high2_name_input, self.wan_t2v_lora_high2_strength_input)
-        add_t2v_lora_row(4, "Lora Low 2", self.wan_t2v_lora_low2_name_input, self.wan_t2v_lora_low2_strength_input)
-        wan_t2v_layout.addWidget(QLabel("Trigger Word Lora"), 5, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_lora_trigger_words_input, 5, 1, 1, 3)
-        wan_t2v_layout.addWidget(self.copy_wan_t2v_variations_button, 6, 1, 1, 3, Qt.AlignLeft)
-        wan_t2v_layout.addWidget(QLabel("Prompt Positif"), 7, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_positive_input, 7, 1, 1, 3)
-        wan_t2v_layout.addWidget(self.wan_t2v_generate_prompt_button, 8, 1, 1, 3, Qt.AlignLeft)
-        wan_t2v_layout.addWidget(QLabel("Prompt Negatif"), 9, 0)
-        wan_t2v_layout.addWidget(self.wan_t2v_negative_input, 9, 1, 1, 3)
-        tabs.addTab(self.wan_t2v_tab, "WAN22_T2V")
-
-        self.wan_tab = QWidget()
-        wan_layout = QGridLayout(self.wan_tab)
-        def add_lora_row(row: int, title: str, name_widget, strength_widget):
-            strength_widget.setFixedWidth(84)
-            strength_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            wan_layout.addWidget(QLabel(title), row, 0)
-            wan_layout.addWidget(name_widget, row, 1)
-            wan_layout.addWidget(QLabel("Kekuatan"), row, 2)
-            wan_layout.addWidget(strength_widget, row, 3)
-
-        wan_layout.addWidget(QLabel("Ukuran"), 0, 0)
-        wan_layout.addWidget(self.wan_size_input, 0, 1, 1, 3)
-        add_lora_row(1, "Lora High 1", self.wan_lora_high_name_input, self.wan_lora_high_strength_input)
-        add_lora_row(2, "Lora Low 1", self.wan_lora_low_name_input, self.wan_lora_low_strength_input)
-        add_lora_row(3, "Lora High 2", self.wan_lora_high2_name_input, self.wan_lora_high2_strength_input)
-        add_lora_row(4, "Lora Low 2", self.wan_lora_low2_name_input, self.wan_lora_low2_strength_input)
-        wan_layout.addWidget(QLabel("Trigger Word Lora"), 5, 0)
-        wan_layout.addWidget(self.wan_lora_trigger_words_input, 5, 1, 1, 3)
-        wan_layout.addWidget(self.copy_wan_i2v_variations_button, 6, 1, 1, 3, Qt.AlignLeft)
-        row = 7
-        for slot in ("one", "two"):
-            positive_key = f"positive_prompt_{slot}"
-            negative_key = f"negative_prompt_{slot}"
-            wan_layout.addWidget(QLabel(positive_key.replace("_", " ").title()), row, 0)
-            wan_layout.addWidget(self.wan_prompt_inputs[positive_key], row, 1, 1, 3)
-            row += 1
-            wan_layout.addWidget(self.wan_generate_prompt_buttons[positive_key], row, 1, 1, 3, Qt.AlignLeft)
-            row += 1
-            wan_layout.addWidget(QLabel(negative_key.replace("_", " ").title()), row, 0)
-            wan_layout.addWidget(self.wan_prompt_inputs[negative_key], row, 1, 1, 3)
-            row += 1
-        tabs.addTab(self.wan_tab, "WAN22_I2V")
 
         self.minimax_h3_t2v_tab = QWidget()
         minimax_t2v_layout = QGridLayout(self.minimax_h3_t2v_tab)
@@ -3865,16 +3522,6 @@ class SceneEditorWindow(QMainWindow):
         image_zoom_layout.addRow("Kekuatan Zoom", self.image_zoom_strength_input)
         tabs.addTab(self.image_zoom_tab, "Image Zoom")
 
-        self.web_search_tab = QWidget()
-        web_search_layout = QVBoxLayout(self.web_search_tab)
-        web_search_form = QFormLayout()
-        web_search_form.addRow("Ukuran", self.web_search_size_input)
-        web_search_form.addRow("Search term", self.web_search_term_input)
-        web_search_form.addRow("", self.web_search_run_button)
-        web_search_layout.addLayout(web_search_form)
-        web_search_layout.addWidget(self.web_search_result_label)
-        web_search_layout.addStretch(1)
-        tabs.addTab(self.web_search_tab, "Web Search")
 
         self.qwen_image_edit_tab = QWidget()
         qwen_layout = QVBoxLayout(self.qwen_image_edit_tab)
@@ -3929,16 +3576,6 @@ class SceneEditorWindow(QMainWindow):
         assets_layout.addWidget(self.asset_info_label)
         tabs.addTab(self.assets_tab, "Aset")
 
-        self.agentic_tab = QWidget()
-        agentic_layout = QFormLayout(self.agentic_tab)
-        agentic_layout.setContentsMargins(12, 12, 12, 12)
-        agentic_layout.setHorizontalSpacing(12)
-        agentic_layout.setVerticalSpacing(8)
-        agentic_layout.addRow("Jumlah Variasi", self.agentic_number_of_variations_input)
-        agentic_layout.addRow("Buat Image Awal", self.agentic_create_initial_image_input)
-        agentic_layout.addRow("Mode Variasi Tambahan", self.agentic_image_extra_mode_input)
-        agentic_layout.addRow("Perintah Khusus", self.agentic_special_command_input)
-        tabs.addTab(self.agentic_tab, "Agentic")
         return tabs
 
     def _handle_minimax_mode_toggle(self, selected: QCheckBox, other: QCheckBox, checked: bool):
@@ -3985,7 +3622,6 @@ class SceneEditorWindow(QMainWindow):
         # on the navigation history.
         self._reset_editor_tab_order()
         scene_type = self.scene_type_combo.currentText().strip()
-        is_wan22_t2v = scene_type == WAN22_T2V_SCENE_TYPE
         is_minimax_h3 = scene_type == MINIMAX_H3_T2V_I2V_SCENE_TYPE
         is_minimax_h3_i2v = scene_type == MINIMAX_H3_I2V_SCENE_TYPE
         is_minimax_h3_i2v_panjang = scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE
@@ -3998,47 +3634,42 @@ class SceneEditorWindow(QMainWindow):
             self.minimax_h3_s2v_h3_cache_group.setVisible(is_minimax_h3_s2v)
         visible_map = {
             self.meta_tab: True,
-            self.z_tab: not is_wan22_t2v and not is_minimax_h3,
+            self.z_tab: not is_minimax_h3,
             self.z_extra_tab: scene_type == "i2v",
-            self.wan_t2v_tab: is_wan22_t2v,
-            self.wan_tab: scene_type == "wan22",
             self.minimax_h3_t2v_tab: is_minimax_h3,
             self.minimax_h3_i2v_tab: is_minimax_h3 or is_minimax_h3_i2v or is_minimax_h3_i2v_panjang,
             self.minimax_h3_r2v_tab: is_minimax_h3_r2v,
             self.s2v_tab: is_s2v,
             self.image_pan_tab: scene_type == "image_pan",
             self.image_zoom_tab: scene_type == "image_zoom",
-            self.web_search_tab: scene_type in {"i2v", "image_pan", "image_zoom"},
             self.qwen_image_edit_tab: scene_type not in {
                 MINIMAX_H3_T2V_I2V_SCENE_TYPE,
-            } and not is_wan22_t2v,
-            self.agentic_tab: not is_minimax_h3_i2v_panjang,
+            },
             self.assets_tab: True,
         }
+        if scene_type not in SUPPORTED_SCENE_TYPES:
+            visible_map = {
+                widget: widget in (self.meta_tab, self.assets_tab) for widget in visible_map
+            }
         current_widget = self.editor_tabs.currentWidget()
         self.editor_tabs.setTabText(self.editor_tabs.indexOf(self.s2v_tab), "MINIMAX-H3_S2V")
         self.editor_tabs.setTabText(
             self.editor_tabs.indexOf(self.minimax_h3_i2v_tab),
             "MINIMAX-H3_I2V-PANJANG" if is_minimax_h3_i2v_panjang else "MINIMAX-H3_I2V",
         )
-        if self.web_search_tab is not None and self.z_tab is not None:
-            self._move_tab_after(self.web_search_tab, self.z_tab)
         if is_minimax_h3:
             self._move_tab_after(self.minimax_h3_t2v_tab, self.meta_tab)
             self._move_tab_after(self.minimax_h3_i2v_tab, self.minimax_h3_t2v_tab)
-            self._move_tab_after(self.agentic_tab, self.minimax_h3_i2v_tab)
-            self._move_tab_after(self.assets_tab, self.agentic_tab)
+            self._move_tab_after(self.assets_tab, self.minimax_h3_i2v_tab)
         elif is_minimax_h3_r2v:
             self._move_tab_after(self.minimax_h3_r2v_tab, self.z_tab)
-            self._move_tab_after(self.agentic_tab, self.minimax_h3_r2v_tab)
-            self._move_tab_after(self.assets_tab, self.agentic_tab)
+            self._move_tab_after(self.assets_tab, self.minimax_h3_r2v_tab)
         elif is_minimax_h3_i2v:
             if self.qwen_image_edit_tab is not None:
                 self._move_tab_after(self.minimax_h3_i2v_tab, self.qwen_image_edit_tab)
             else:
                 self._move_tab_after(self.minimax_h3_i2v_tab, self.z_tab)
-            self._move_tab_after(self.agentic_tab, self.minimax_h3_i2v_tab)
-            self._move_tab_after(self.assets_tab, self.agentic_tab)
+            self._move_tab_after(self.assets_tab, self.minimax_h3_i2v_tab)
         elif is_minimax_h3_i2v_panjang:
             if self.qwen_image_edit_tab is not None:
                 self._move_tab_after(self.minimax_h3_i2v_tab, self.qwen_image_edit_tab)
@@ -4050,8 +3681,6 @@ class SceneEditorWindow(QMainWindow):
         # a scene-specific reorder cannot move them elsewhere.
         if self.qwen_image_edit_tab is not None and self.z_tab is not None:
             self._move_tab_after(self.qwen_image_edit_tab, self.z_tab)
-        if self.assets_tab is not None and self.agentic_tab is not None:
-            self._move_tab_after(self.assets_tab, self.agentic_tab)
         for widget, visible in visible_map.items():
             if widget is None:
                 continue
@@ -4268,18 +3897,14 @@ class SceneEditorWindow(QMainWindow):
             self.meta_tab,
             self.z_tab,
             self.z_extra_tab,
-            self.wan_t2v_tab,
-            self.wan_tab,
             self.minimax_h3_t2v_tab,
             self.minimax_h3_i2v_tab,
             self.minimax_h3_r2v_tab,
             self.s2v_tab,
             self.image_pan_tab,
             self.image_zoom_tab,
-            self.web_search_tab,
             self.qwen_image_edit_tab,
             self.assets_tab,
-            self.agentic_tab,
         ]
         base_order = [widget for widget in base_order if widget is not None]
         tab_widget = self.editor_tabs
@@ -4384,16 +4009,6 @@ class SceneEditorWindow(QMainWindow):
         if self.s2v_cfg_label is not None:
             self.s2v_cfg_label.setVisible(False)
         self.s2v_tab.setWindowTitle("MINIMAX-H3_S2V")
-        agentic_visible, forced_agentic_value = agentic_create_initial_image_policy(scene_type)
-        if self.agentic_tab is not None:
-            layout = self.agentic_tab.layout()
-            self._set_form_field_visible(layout, self.agentic_create_initial_image_input, agentic_visible)
-            self._set_form_field_visible(layout, self.agentic_image_extra_mode_input, scene_type == "i2v")
-        if forced_agentic_value is not None:
-            self.agentic_create_initial_image_input.setChecked(bool(forced_agentic_value))
-        if scene_type != "i2v":
-            default_mode_index = self.agentic_image_extra_mode_input.findData("image_extra")
-            self.agentic_image_extra_mode_input.setCurrentIndex(default_mode_index if default_mode_index >= 0 else 0)
         self.apply_project_size_constraints_to_ui()
 
     def update_gemini_tts_voice_options(self, selected_voice_id="", selected_voice_label=""):
@@ -4699,8 +4314,6 @@ class SceneEditorWindow(QMainWindow):
         )
         for button in (
             getattr(self, "copy_z_variations_button", None),
-            getattr(self, "copy_wan_t2v_variations_button", None),
-            getattr(self, "copy_wan_i2v_variations_button", None),
             getattr(self, "copy_minimax_h3_t2v_variations_button", None),
             getattr(self, "copy_minimax_h3_i2v_variations_button", None),
             getattr(self, "copy_minimax_h3_s2v_variations_button", None),
@@ -4776,33 +4389,11 @@ class SceneEditorWindow(QMainWindow):
             return
         QMessageBox.information(self, action_title, summary)
 
-    def copy_wan_t2v_config_to_variations(self):
-        if not self.save_current_scene(silent=True, reload_list=False):
-            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
-            return
-        _meta, _z_prompt, wan_t2v_prompt, _wan_prompt, *_rest = self.gather_scene_data()
-        self._copy_selected_keys_to_variations(
-            filename="wan22_t2v_prompt.json",
-            source_data=wan_t2v_prompt,
-            keys=[
-                LORA_TRIGGER_WORDS_FIELD,
-                "lora_high_name",
-                "lora_high_strength",
-                "lora_low_name",
-                "lora_low_strength",
-                "lora_high_name_2",
-                "lora_high_strength_2",
-                "lora_low_name_2",
-                "lora_low_strength_2",
-            ],
-            action_title="Edit Variasi WAN22_T2V",
-        )
-
     def copy_z_config_to_variations(self):
         if not self.save_current_scene(silent=True, reload_list=False):
             QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
             return
-        _meta, z_prompt, _wan_t2v_prompt, _wan_prompt, *_rest = self.gather_scene_data()
+        _meta, z_prompt, *_rest = self.gather_scene_data()
         self._copy_selected_keys_to_variations(
             filename="z_image_prompt.json",
             source_data=z_prompt,
@@ -4817,28 +4408,6 @@ class SceneEditorWindow(QMainWindow):
                 LORA_TRIGGER_WORDS_FIELD,
             ],
             action_title="Edit Variasi Gambar Awal",
-        )
-
-    def copy_wan_i2v_config_to_variations(self):
-        if not self.save_current_scene(silent=True, reload_list=False):
-            QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
-            return
-        _meta, _z_prompt, _wan_t2v_prompt, wan_prompt, *_rest = self.gather_scene_data()
-        self._copy_selected_keys_to_variations(
-            filename="wan22_i2v_prompt.json",
-            source_data=wan_prompt,
-            keys=[
-                LORA_TRIGGER_WORDS_FIELD,
-                "lora_high_name",
-                "lora_high_strength",
-                "lora_low_name",
-                "lora_low_strength",
-                "lora_high_name_2",
-                "lora_high_strength_2",
-                "lora_low_name_2",
-                "lora_low_strength_2",
-            ],
-            action_title="Edit Variasi WAN22_I2V",
         )
 
     def copy_minimax_h3_t2v_config_to_variations(self):
@@ -4875,7 +4444,7 @@ class SceneEditorWindow(QMainWindow):
         if not self.save_current_scene(silent=True, reload_list=False):
             QMessageBox.warning(self, "Data Tidak Valid", "Simpan scene aktif gagal. Periksa dulu konfigurasi scene.")
             return
-        _meta, _z_prompt, _wan_t2v_prompt, _wan_prompt, s2v_prompt, *_rest = self.gather_scene_data()
+        _meta, _z_prompt, s2v_prompt, *_rest = self.gather_scene_data()
         self._copy_selected_keys_to_variations(
             filename=MINIMAX_H3_S2V_PROMPT_FILENAME,
             source_data=s2v_prompt,
@@ -5165,15 +4734,12 @@ class SceneEditorWindow(QMainWindow):
 
         width, height = self._project_video_size()
         for combo in (
-            self.wan_size_input,
-            self.wan_t2v_size_input,
             self.minimax_h3_t2v_size_input,
             self.minimax_h3_i2v_size_input,
             self.minimax_h3_r2v_size_input,
             self.s2v_size_input,
             self.image_pan_size_input,
             self.image_zoom_size_input,
-            self.web_search_size_input,
         ):
             self._set_locked_size_combo(combo, width, height)
 
@@ -5229,11 +4795,9 @@ class SceneEditorWindow(QMainWindow):
         width, height = self._project_video_size()
         for scene_dir in list_scene_dirs_in_project(pdir):
             meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
-            scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
+            scene_type = str(meta.get("scene_type", "i2v")).strip()
             if scene_type in {MINIMAX_H3_I2V_SCENE_TYPE, MINIMAX_H3_I2V_PANJANG_SCENE_TYPE, "i2v"}:
                 self._sync_project_size_to_scene_file(scene_dir, "z_image_prompt.json", width, height)
-            if scene_type == "wan22":
-                self._sync_project_size_to_scene_file(scene_dir, "wan22_i2v_prompt.json", width, height)
             # MiniMax sizes are explicit per-scene overrides. Changing the
             # project master size must not overwrite them.
             if scene_type != MINIMAX_H3_T2V_I2V_SCENE_TYPE:
@@ -5279,8 +4843,6 @@ class SceneEditorWindow(QMainWindow):
             self,
             project_dir=self.project_dir(),
             on_generate_cover=self.generate_cover_from_project_settings_dialog,
-            on_run_agentic_generate=self.run_agentic_generate_from_project_settings_dialog,
-            on_run_agentic_execute=self.run_agentic_execute_from_project_settings_dialog,
             on_run_clear_vram=self.run_clear_vram_from_project_settings_dialog,
         )
         if dialog.exec() != QDialog.Accepted:
@@ -5297,66 +4859,6 @@ class SceneEditorWindow(QMainWindow):
         project_dir = API_PRODUCTION / project_name
         settings = load_project_settings_file(project_dir)
         return str(settings.get("comfyui_server", DEFAULT_PROJECT_SETTINGS.get("comfyui_server", "nextgenserver:8188"))).strip()
-
-    def open_multi_project_agentic_dialog(self):
-        project_names = self.list_projects()
-        if not project_names:
-            QMessageBox.information(self, "Belum Ada Project", "Belum ada project yang bisa dipilih.")
-            return
-        dialog = MultiProjectAgenticDialog(project_names, self, on_run=self.run_multi_project_agentic)
-        dialog.exec()
-
-    def run_multi_project_agentic(self, selected_projects: list[str]):
-        selected = sorted(
-            [str(project_name or "").strip() for project_name in selected_projects if str(project_name or "").strip()],
-            key=lambda value: value.lower(),
-        )
-        if not selected:
-            QMessageBox.information(self, "Belum Ada Pilihan", "Pilih minimal satu project terlebih dahulu.")
-            return
-        if self.process is not None and self.process.state() != QProcess.NotRunning:
-            QMessageBox.information(self, "Proses Sedang Berjalan", "Tunggu proses yang sedang berjalan selesai terlebih dahulu.")
-            return
-        reply = QMessageBox.question(
-            self,
-            "Jalankan Agentic",
-            "Jalankan agentic execute untuk project terpilih secara berurutan?\n\n- " + "\n- ".join(selected),
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-        self.multi_project_agentic_queue = list(selected)
-        self.multi_project_agentic_completed = []
-        self._start_next_multi_project_agentic()
-
-    def _start_next_multi_project_agentic(self):
-        if not self.multi_project_agentic_queue:
-            completed = list(self.multi_project_agentic_completed)
-            self.multi_project_agentic_completed = []
-            QMessageBox.information(
-                self,
-                "Agentic Selesai",
-                "Agentic execute selesai untuk semua project terpilih.\n\n- " + "\n- ".join(completed),
-            )
-            self.statusBar().showMessage("Agentic multi project selesai.", 5000)
-            return
-        project_name = self.multi_project_agentic_queue.pop(0)
-        server = self._comfyui_server_for_project_name(project_name)
-        project_dir = API_PRODUCTION / project_name
-        scene_dirs = list_scene_dirs_in_project(project_dir)
-        started = self.start_process(
-            AGENTIC_SCRIPT,
-            ["--server", server, "--project", project_name, "--mode", "execute"],
-            f"Execute agentic untuk project {project_name}",
-            watch_dirs=scene_dirs,
-            extra_context={
-                "kind": "multi_project_agentic",
-                "project_name": project_name,
-            },
-        )
-        if not started:
-            self.multi_project_agentic_queue = []
-            self.multi_project_agentic_completed = []
 
     def apply_project_settings_and_refresh(self, settings: dict, notify: bool = False):
         self.save_project_settings(settings, sync_scene_sizes=True)
@@ -5378,27 +4880,6 @@ class SceneEditorWindow(QMainWindow):
             f"Membuat cover project {self.current_project_name}",
             watch_dirs=watch_dirs,
         )
-
-    def _start_agentic_mode(self, settings: dict, mode: str, action_label: str):
-        if not self.ensure_project_selected():
-            return
-        self.apply_project_settings_and_refresh(settings, notify=False)
-        if self.current_scene_dir:
-            self.save_current_scene(silent=True, reload_list=False)
-        project_dir = self.project_dir()
-        watch_dirs = self.list_scene_dirs_current() if project_dir else []
-        self.start_process(
-            AGENTIC_SCRIPT,
-            ["--server", self.comfyui_server_address(), "--project", self.current_project_name, "--mode", mode],
-            f"{action_label} untuk project {self.current_project_name}",
-            watch_dirs=watch_dirs,
-        )
-
-    def run_agentic_generate_from_project_settings_dialog(self, settings: dict):
-        self._start_agentic_mode(settings, "generate", "Generate konfigurasi agentic")
-
-    def run_agentic_execute_from_project_settings_dialog(self, settings: dict):
-        self._start_agentic_mode(settings, "execute", "Execute agentic")
 
     def run_clear_vram_from_project_settings_dialog(self, settings: dict):
         if not self.ensure_project_selected():
@@ -5595,11 +5076,6 @@ class SceneEditorWindow(QMainWindow):
                 self.batch_scene_action_buttons.append(button)
 
         add_button(
-            "Jalankan agentic execute untuk beberapa project yang dipilih.",
-            QStyle.SP_MediaPlay,
-            self.open_multi_project_agentic_dialog,
-        )
-        add_button(
             "Jalankan semua adegan secara berurutan.",
             QStyle.SP_MediaSkipForward,
             self.run_all_scenes,
@@ -5737,7 +5213,7 @@ class SceneEditorWindow(QMainWindow):
         target = str(target or "").strip().lower()
         if target not in {"hipfire", "comfyui"}:
             return
-        if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
+        if self.runtime_task_thread is not None:
             self.statusBar().showMessage("Operasi runtime lain masih berjalan.", 4000)
             return
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
@@ -5775,7 +5251,7 @@ class SceneEditorWindow(QMainWindow):
         self.statusBar().showMessage(f"Switch ke {target} gagal.", 5000)
 
     def check_runtime_status(self):
-        if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
+        if self.runtime_task_thread is not None:
             self.statusBar().showMessage("Operasi runtime lain masih berjalan.", 4000)
             return
         for button in [*self.runtime_switch_buttons, self.runtime_status_button]:
@@ -5835,6 +5311,7 @@ class SceneEditorWindow(QMainWindow):
                 "QToolButton { background: #2563eb; color: white; font-weight: 700; }"
             )
 
+    @Slot(str)
     def append_log(self, text: str):
         self.log_output.appendPlainText(text.rstrip())
 
@@ -5860,8 +5337,9 @@ class SceneEditorWindow(QMainWindow):
             value = str(DEFAULT_PROJECT_SETTINGS.get("comfyui_server", "nextgenserver:8188")).strip()
         return value
 
+    @Slot()
     def initialize_lora_options_once(self):
-        if self._lora_options_initialized:
+        if self._closing or self._lora_options_initialized:
             return
         server = self.comfyui_server_address()
         normalized_server = _normalize_server_url(server)
@@ -5906,26 +5384,21 @@ class SceneEditorWindow(QMainWindow):
         )
 
     def _start_runtime_task(self, task, on_finished, on_failed):
-        if self.runtime_task_thread is not None and self.runtime_task_thread.isRunning():
+        if self._closing:
+            return False
+        if self.runtime_task_thread is not None:
             self.append_log("[runtime] Operasi runtime async masih berjalan; permintaan baru diabaikan.")
             return False
-        thread = QThread(self)
-        worker = RuntimeTaskWorker(task)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(on_finished)
-        worker.failed.connect(on_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._runtime_task_finished)
-        self.runtime_task_thread = thread
-        self.runtime_task_worker = worker
-        thread.start()
+        background_task = BackgroundTask(task, on_finished, on_failed, self)
+        background_task.finished.connect(self._runtime_task_finished)
+        self._runtime_task = background_task
+        self.runtime_task_thread = background_task.worker_thread
+        self.runtime_task_worker = background_task.worker
+        background_task.start()
         return True
 
     def _runtime_task_finished(self):
+        self._runtime_task = None
         self.runtime_task_thread = None
         self.runtime_task_worker = None
 
@@ -6026,68 +5499,6 @@ class SceneEditorWindow(QMainWindow):
             self.z_lora_name_input,
             options,
             current_value=current_value,
-            preserve_missing=preserve_missing,
-        )
-
-    def _refresh_wan_lora_options(self, current_values: dict[str, str] | None = None, *, preserve_missing: bool = False):
-        current_values = current_values or {}
-        server = self.comfyui_server_address()
-        high_options = get_lora_options_by_prefix(server, LORA_PREFIX_WAN_HIGH)
-        low_options = get_lora_options_by_prefix(server, LORA_PREFIX_WAN_LOW)
-        populate_lora_combo(
-            self.wan_lora_high_name_input,
-            high_options,
-            current_value=current_values.get("lora_high_name", ""),
-            template_default=DEFAULT_WAN_PROMPT["lora_high_name"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_lora_low_name_input,
-            low_options,
-            current_value=current_values.get("lora_low_name", ""),
-            template_default=DEFAULT_WAN_PROMPT["lora_low_name"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_lora_high2_name_input,
-            high_options,
-            current_value=current_values.get("lora_high_name_2", ""),
-            template_default=DEFAULT_WAN_PROMPT["lora_high_name_2"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_lora_low2_name_input,
-            low_options,
-            current_value=current_values.get("lora_low_name_2", ""),
-            template_default=DEFAULT_WAN_PROMPT["lora_low_name_2"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_t2v_lora_high_name_input,
-            high_options,
-            current_value=current_values.get("t2v_lora_high_name", ""),
-            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_high_name"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_t2v_lora_low_name_input,
-            low_options,
-            current_value=current_values.get("t2v_lora_low_name", ""),
-            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_low_name"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_t2v_lora_high2_name_input,
-            high_options,
-            current_value=current_values.get("t2v_lora_high_name_2", ""),
-            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"],
-            preserve_missing=preserve_missing,
-        )
-        populate_lora_combo(
-            self.wan_t2v_lora_low2_name_input,
-            low_options,
-            current_value=current_values.get("t2v_lora_low_name_2", ""),
-            template_default=DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"],
             preserve_missing=preserve_missing,
         )
 
@@ -6204,19 +5615,6 @@ class SceneEditorWindow(QMainWindow):
         self.update_seed_fields_enabled()
         self.update_lora_fields_enabled()
 
-    def update_wan_lora_fields_enabled(self):
-        for widget in [
-            self.wan_lora_high_name_input,
-            self.wan_lora_high_strength_input,
-            self.wan_lora_low_name_input,
-            self.wan_lora_low_strength_input,
-            self.wan_lora_high2_name_input,
-            self.wan_lora_high2_strength_input,
-            self.wan_lora_low2_name_input,
-            self.wan_lora_low2_strength_input,
-        ]:
-            widget.setEnabled(True)
-
     def _set_form_field_visible(self, form_layout, widget, visible: bool):
         widget.setVisible(visible)
         if isinstance(form_layout, QFormLayout):
@@ -6284,8 +5682,6 @@ class SceneEditorWindow(QMainWindow):
         for scene_dir in self.list_scene_dirs_current():
             meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
-            wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
-            wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             minimax_h3_t2v_prompt = load_json(
                 scene_dir / "minimax_h3_t2v_prompt.json",
                 DEFAULT_MINIMAX_H3_T2V_PROMPT,
@@ -6306,7 +5702,7 @@ class SceneEditorWindow(QMainWindow):
                 scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME,
                 DEFAULT_MINIMAX_H3_R2V_PROMPT,
             )
-            scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
+            scene_type = str(meta.get("scene_type", "i2v")).strip()
             if scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE:
                 chained_entries = (
                     minimax_h3_i2v_panjang_prompt.get("prompts", [])
@@ -6325,8 +5721,6 @@ class SceneEditorWindow(QMainWindow):
             issues = validate_scene_data(
                 meta,
                 z_prompt,
-                wan_t2v_prompt,
-                wan_prompt,
                 s2v_prompt,
                 image_pan_prompt,
                 image_zoom_prompt,
@@ -6411,8 +5805,6 @@ class SceneEditorWindow(QMainWindow):
             fallback_dir = None if self._scene_paths_equal(scene_dir, root_scene_dir) else root_scene_dir
             meta = load_json_with_fallback(scene_dir / "scene_meta.json", (fallback_dir / "scene_meta.json") if fallback_dir else None, DEFAULT_SCENE_META)
             z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
-            wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
-            wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
             minimax_h3_t2v_prompt = load_json(
                 scene_dir / "minimax_h3_t2v_prompt.json",
                 DEFAULT_MINIMAX_H3_T2V_PROMPT,
@@ -6431,7 +5823,7 @@ class SceneEditorWindow(QMainWindow):
                 (fallback_dir / MINIMAX_H3_R2V_PROMPT_FILENAME) if fallback_dir else None,
                 DEFAULT_MINIMAX_H3_R2V_PROMPT,
             )
-            scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
+            scene_type = str(meta.get("scene_type", "i2v")).strip()
             if scene_type == MINIMAX_H3_I2V_PANJANG_SCENE_TYPE:
                 chained_entries = (
                     minimax_h3_i2v_panjang_prompt.get("prompts", [])
@@ -6449,12 +5841,24 @@ class SceneEditorWindow(QMainWindow):
             s2v_prompt = load_json_with_fallback(scene_dir / s2v_filename, (fallback_dir / s2v_filename) if fallback_dir else None, s2v_default)
             image_pan_prompt = load_json_with_fallback(scene_dir / "image_pan_prompt.json", (fallback_dir / "image_pan_prompt.json") if fallback_dir else None, DEFAULT_IMAGE_PAN_PROMPT)
             image_zoom_prompt = load_json_with_fallback(scene_dir / "image_zoom_prompt.json", (fallback_dir / "image_zoom_prompt.json") if fallback_dir else None, DEFAULT_IMAGE_ZOOM_PROMPT)
-            web_search_prompt = load_json_with_fallback(scene_dir / "web_search_prompt.json", (fallback_dir / "web_search_prompt.json") if fallback_dir else None, DEFAULT_WEB_SEARCH_PROMPT)
             self.scene_title_input.setText(str(meta.get("scene_title", "")))
             self.scene_description_input.setPlainText(str(meta.get("scene_description", "")))
             self.scene_type_combo.blockSignals(True)
             try:
-                self.scene_type_combo.setCurrentText(str(meta.get("scene_type", "wan22_t2v")))
+                # A removed type must not inherit the previously selected type.
+                # Keep it visible until the user explicitly selects a supported
+                # replacement, and discard temporary entries on the next load.
+                for index in reversed(range(self.scene_type_combo.count())):
+                    if self.scene_type_combo.itemText(index) not in SUPPORTED_SCENE_TYPES:
+                        self.scene_type_combo.removeItem(index)
+                index = self.scene_type_combo.findText(scene_type)
+                if index < 0:
+                    self.scene_type_combo.addItem(scene_type)
+                    index = self.scene_type_combo.count() - 1
+                    item = self.scene_type_combo.model().item(index)
+                    item.setEnabled(False)
+                    item.setToolTip(unsupported_scene_type_message(scene_type))
+                self.scene_type_combo.setCurrentIndex(index)
             finally:
                 self.scene_type_combo.blockSignals(False)
             self.update_scene_type_tabs()
@@ -6529,52 +5933,6 @@ class SceneEditorWindow(QMainWindow):
             self.z_lora_trigger_words_input.setText(str(z_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")))
             self.z_positive_input.setPlainText(str(z_prompt.get("positive_prompt", "")))
             self.z_negative_input.setPlainText(str(z_prompt.get("negative_prompt", "")))
-            wan_t2v_width = int(wan_t2v_prompt.get("width", DEFAULT_WAN22_T2V_PROMPT["width"]))
-            wan_t2v_height = int(wan_t2v_prompt.get("height", DEFAULT_WAN22_T2V_PROMPT["height"]))
-            index = -1
-            for i in range(self.wan_t2v_size_input.count()):
-                size_value = self.wan_t2v_size_input.itemData(i)
-                if isinstance(size_value, tuple) and size_value == (wan_t2v_width, wan_t2v_height):
-                    index = i
-                    break
-            self.wan_t2v_size_input.setCurrentIndex(max(index, 0))
-            self._refresh_wan_lora_options(
-                {
-                    "t2v_lora_high_name": str(wan_t2v_prompt.get("lora_high_name", DEFAULT_WAN22_T2V_PROMPT["lora_high_name"])),
-                    "t2v_lora_low_name": str(wan_t2v_prompt.get("lora_low_name", DEFAULT_WAN22_T2V_PROMPT["lora_low_name"])),
-                    "t2v_lora_high_name_2": str(wan_t2v_prompt.get("lora_high_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_name_2"])),
-                    "t2v_lora_low_name_2": str(wan_t2v_prompt.get("lora_low_name_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_name_2"])),
-                    "lora_high_name": str(wan_prompt.get("lora_high_name", DEFAULT_WAN_PROMPT["lora_high_name"])),
-                    "lora_low_name": str(wan_prompt.get("lora_low_name", DEFAULT_WAN_PROMPT["lora_low_name"])),
-                    "lora_high_name_2": str(wan_prompt.get("lora_high_name_2", DEFAULT_WAN_PROMPT["lora_high_name_2"])),
-                    "lora_low_name_2": str(wan_prompt.get("lora_low_name_2", DEFAULT_WAN_PROMPT["lora_low_name_2"])),
-                },
-                preserve_missing=True,
-            )
-            self.wan_t2v_lora_high_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength"])))
-            self.wan_t2v_lora_low_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength"])))
-            self.wan_t2v_lora_high2_strength_input.setText(str(wan_t2v_prompt.get("lora_high_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_high_strength_2"])))
-            self.wan_t2v_lora_low2_strength_input.setText(str(wan_t2v_prompt.get("lora_low_strength_2", DEFAULT_WAN22_T2V_PROMPT["lora_low_strength_2"])))
-            self.wan_t2v_lora_trigger_words_input.setText(str(wan_t2v_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")))
-            self.wan_t2v_positive_input.setPlainText(str(wan_t2v_prompt.get("positive_prompt", "")))
-            self.wan_t2v_negative_input.setPlainText(str(wan_t2v_prompt.get("negative_prompt", "")))
-            wan_width = int(wan_prompt.get("width", DEFAULT_WAN_PROMPT["width"]))
-            wan_height = int(wan_prompt.get("height", DEFAULT_WAN_PROMPT["height"]))
-            index = -1
-            for i in range(self.wan_size_input.count()):
-                size_value = self.wan_size_input.itemData(i)
-                if isinstance(size_value, tuple) and size_value == (wan_width, wan_height):
-                    index = i
-                    break
-            self.wan_size_input.setCurrentIndex(max(index, 0))
-            self.wan_lora_high_strength_input.setText(str(wan_prompt.get("lora_high_strength", DEFAULT_WAN_PROMPT["lora_high_strength"])))
-            self.wan_lora_low_strength_input.setText(str(wan_prompt.get("lora_low_strength", DEFAULT_WAN_PROMPT["lora_low_strength"])))
-            self.wan_lora_high2_strength_input.setText(str(wan_prompt.get("lora_high_strength_2", DEFAULT_WAN_PROMPT["lora_high_strength_2"])))
-            self.wan_lora_low2_strength_input.setText(str(wan_prompt.get("lora_low_strength_2", DEFAULT_WAN_PROMPT["lora_low_strength_2"])))
-            self.wan_lora_trigger_words_input.setText(str(wan_prompt.get(LORA_TRIGGER_WORDS_FIELD, "")))
-            self.update_wan_lora_fields_enabled()
-            for key, widget in self.wan_prompt_inputs.items():
-                widget.setPlainText(str(wan_prompt.get(key, "")))
             minimax_t2v_width = int(minimax_h3_t2v_prompt.get("width", DEFAULT_MINIMAX_H3_T2V_PROMPT["width"]))
             minimax_t2v_height = int(minimax_h3_t2v_prompt.get("height", DEFAULT_MINIMAX_H3_T2V_PROMPT["height"]))
             # The combo may still contain only the project-locked size from the
@@ -6868,26 +6226,8 @@ class SceneEditorWindow(QMainWindow):
             except (TypeError, ValueError):
                 zoom_strength = float(DEFAULT_IMAGE_ZOOM_PROMPT["zoom_strength"])
             self.image_zoom_strength_input.setValue(max(1.0, min(1.5, zoom_strength)))
-            try:
-                ws_width = int(web_search_prompt.get("width", DEFAULT_WEB_SEARCH_PROMPT["width"]))
-            except (TypeError, ValueError):
-                ws_width = int(DEFAULT_WEB_SEARCH_PROMPT["width"])
-            try:
-                ws_height = int(web_search_prompt.get("height", DEFAULT_WEB_SEARCH_PROMPT["height"]))
-            except (TypeError, ValueError):
-                ws_height = int(DEFAULT_WEB_SEARCH_PROMPT["height"])
-            index = -1
-            for i in range(self.web_search_size_input.count()):
-                size_value = self.web_search_size_input.itemData(i)
-                if isinstance(size_value, tuple) and size_value == (ws_width, ws_height):
-                    index = i
-                    break
-            self.web_search_size_input.setCurrentIndex(max(index, 0))
-            self.web_search_term_input.setText(str(web_search_prompt.get("search_term", "")))
-            self.web_search_result_label.setText("Hasil akan langsung disimpan ke folder scene dan terlihat di tab Aset.")
             self.load_z_image_extra_prompts_into_ui(scene_dir)
             self.load_qwen_image_edit_into_ui(scene_dir)
-            self.load_agentic_config_into_ui(scene_dir)
         finally:
             self.loading_scene = False
         self.apply_project_size_constraints_to_ui()
@@ -7258,6 +6598,9 @@ class SceneEditorWindow(QMainWindow):
         return entry
 
     def gather_scene_data(self):
+        scene_type = self.scene_type_combo.currentText().strip()
+        if scene_type not in SUPPORTED_SCENE_TYPES:
+            raise ValueError(unsupported_scene_type_message(scene_type))
         gemini_tts_model = str(
             self.gemini_tts_model_input.currentData() or "gemini-3.1-flash-tts-preview"
         ).strip()
@@ -7306,36 +6649,6 @@ class SceneEditorWindow(QMainWindow):
             LORA_TRIGGER_WORDS_FIELD: self.z_lora_trigger_words_input.text().strip(),
         }
         z_prompt["json_api"] = get_z_image_template_name(z_prompt)
-        wan_t2v_prompt = {
-            "width": int((self.wan_t2v_size_input.currentData() or (368, 640))[0]),
-            "height": int((self.wan_t2v_size_input.currentData() or (368, 640))[1]),
-            "positive_prompt": self.wan_t2v_positive_input.toPlainText().strip(),
-            "negative_prompt": self.wan_t2v_negative_input.toPlainText().strip(),
-            "lora_high_name": self.wan_t2v_lora_high_name_input.currentText().strip(),
-            "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high_strength_input, "High 1"),
-            "lora_low_name": self.wan_t2v_lora_low_name_input.currentText().strip(),
-            "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low_strength_input, "Low 1"),
-            "lora_high_name_2": self.wan_t2v_lora_high2_name_input.currentText().strip(),
-            "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_high2_strength_input, "High 2"),
-            "lora_low_name_2": self.wan_t2v_lora_low2_name_input.currentText().strip(),
-            "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_t2v_lora_low2_strength_input, "Low 2"),
-            LORA_TRIGGER_WORDS_FIELD: self.wan_t2v_lora_trigger_words_input.text().strip(),
-        }
-        wan_prompt = {
-            "width": int((self.wan_size_input.currentData() or (368, 640))[0]),
-            "height": int((self.wan_size_input.currentData() or (368, 640))[1]),
-            "lora_high_name": self.wan_lora_high_name_input.currentText().strip(),
-            "lora_high_strength": self.parse_wan_lora_strength_value(self.wan_lora_high_strength_input, "High 1"),
-            "lora_low_name": self.wan_lora_low_name_input.currentText().strip(),
-            "lora_low_strength": self.parse_wan_lora_strength_value(self.wan_lora_low_strength_input, "Low 1"),
-            "lora_high_name_2": self.wan_lora_high2_name_input.currentText().strip(),
-            "lora_high_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_high2_strength_input, "High 2"),
-            "lora_low_name_2": self.wan_lora_low2_name_input.currentText().strip(),
-            "lora_low_strength_2": self.parse_wan_lora_strength_value(self.wan_lora_low2_strength_input, "Low 2"),
-            LORA_TRIGGER_WORDS_FIELD: self.wan_lora_trigger_words_input.text().strip(),
-        }
-        for key, widget in self.wan_prompt_inputs.items():
-            wan_prompt[key] = widget.toPlainText().strip()
         current_scene_type = self.scene_type_combo.currentText().strip()
         s2v_default = s2v_prompt_default(current_scene_type)
         s2v_prompt = {
@@ -7396,249 +6709,7 @@ class SceneEditorWindow(QMainWindow):
             "focal_point": str(self.image_zoom_focal_input.currentData() or "center").strip(),
             "zoom_strength": round(float(self.image_zoom_strength_input.value()), 1),
         }
-        return meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt
-
-    def gather_web_search_prompt(self):
-        size_data = self.web_search_size_input.currentData() or (480, 848)
-        return {
-            "width": int(size_data[0]),
-            "height": int(size_data[1]),
-            "search_term": self.web_search_term_input.text().strip(),
-        }
-
-    def _firecrawl_search_image_urls(self, search_term: str, width: int, height: int, limit: int = 10):
-        logger = logging.getLogger(__name__)
-        api_key = read_key_from_cfg("FIRECRAWLKEY")
-        if not api_key:
-            api_key = read_key_from_cfg("FIRECRAWL_API_KEY")
-        if not api_key:
-            logger.error("[web_search] gagal: FIRECRAWLKEY/FIRECRAWL_API_KEY tidak ditemukan di keys.cfg.")
-            raise RuntimeError("API key Firecrawl tidak ditemukan. Tambahkan FIRECRAWLKEY di keys.cfg.")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        orientation_hint = "landscape orientation" if int(width) >= int(height) else "portrait orientation"
-        ratio_hint = f"aspect ratio around {int(width)}:{int(height)}"
-        query = f"{search_term.strip()} {orientation_hint} {ratio_hint} larger:{int(width)}x{int(height)}"
-        logger.info(
-            "[web_search] request firecrawl: query='%s', limit=%s, filter='larger:%sx%s', orientation_hint='%s'.",
-            search_term.strip(),
-            max(10, int(limit)),
-            int(width),
-            int(height),
-            orientation_hint,
-        )
-        payload_v2 = {
-            "query": query,
-            "limit": max(10, int(limit)),
-            "sources": ["images"],
-        }
-        response = None
-        used_endpoint = ""
-        try:
-            used_endpoint = "https://api.firecrawl.dev/v2/search"
-            response = requests.post(
-                used_endpoint,
-                headers=headers,
-                json=payload_v2,
-                timeout=45,
-            )
-            response.raise_for_status()
-        except requests.HTTPError as exc:
-            status_code = getattr(exc.response, "status_code", None)
-            # Backward-compatible fallback when v2 is not available for a given account.
-            if status_code in {400, 401, 403, 404, 405}:
-                logger.warning("[web_search] v2 search gagal (%s), fallback ke v1/search.", status_code)
-                used_endpoint = "https://api.firecrawl.dev/v1/search"
-                payload_v1 = {
-                    "query": query,
-                    "limit": max(10, int(limit)),
-                }
-                response = requests.post(
-                    used_endpoint,
-                    headers=headers,
-                    json=payload_v1,
-                    timeout=45,
-                )
-                response.raise_for_status()
-            else:
-                raise
-        data = response.json()
-        logger.info("[web_search] endpoint digunakan: %s", used_endpoint)
-        data_root = data.get("data", {}) if isinstance(data, dict) else {}
-        urls = []
-
-        # Format A (common): data.images -> [{imageUrl: "..."}] or ["..."]
-        if isinstance(data_root, dict):
-            image_results = data_root.get("images", [])
-            if isinstance(image_results, list):
-                for item in image_results:
-                    if isinstance(item, str) and item.startswith(("http://", "https://")):
-                        urls.append(item.strip())
-                        continue
-                    if isinstance(item, dict):
-                        for key in ("imageUrl", "url", "image", "src"):
-                            value = item.get(key)
-                            if isinstance(value, str) and value.startswith(("http://", "https://")):
-                                urls.append(value.strip())
-                                break
-
-        # Format B (older): data is list of web results with image fields per item.
-        raw_items = data_root if isinstance(data_root, list) else []
-        if raw_items:
-            for item in raw_items:
-                if not isinstance(item, dict):
-                    continue
-                for key in ("imageUrl", "url", "image", "src"):
-                    value = item.get(key)
-                    if isinstance(value, str) and value.startswith(("http://", "https://")):
-                        urls.append(value.strip())
-                image_candidates = item.get("images", [])
-                if isinstance(image_candidates, list):
-                    for image_url in image_candidates:
-                        if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
-                            urls.append(image_url.strip())
-
-        logger.info(
-            "[web_search] response firecrawl: data_type=%s, total_url_kandidat=%s.",
-            type(data_root).__name__,
-            len(urls),
-        )
-        unique_urls = []
-        seen = set()
-        for url in urls:
-            if url in seen:
-                continue
-            seen.add(url)
-            unique_urls.append(url)
-            if len(unique_urls) >= limit:
-                break
-        logger.info("[web_search] url unik gambar: %s.", len(unique_urls))
-        return unique_urls
-
-    def _download_web_search_images(self, scene_dir: Path, urls: list[str]):
-        logger = logging.getLogger(__name__)
-        if not urls:
-            logger.info("[web_search] download dilewati: daftar URL kosong.")
-            return []
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        downloaded = []
-        logger.info("[web_search] mulai download: total=%s, scene=%s", len(urls), scene_dir)
-        for index, url in enumerate(urls, start=1):
-            try:
-                parsed = urlparse(url)
-                suffix = Path(parsed.path).suffix.lower()
-                if suffix not in IMAGE_EXTS:
-                    suffix = ".jpg"
-                filename = f"web_search_{timestamp}_{index:02d}{suffix}"
-                output_path = scene_dir / filename
-                with requests.get(url, timeout=30, stream=True) as response:
-                    response.raise_for_status()
-                    with output_path.open("wb") as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                downloaded.append(output_path)
-            except Exception as exc:
-                logger.warning("[web_search] gagal download image: url=%s, error=%s", url, exc)
-        logger.info("[web_search] selesai download: %s file berhasil disimpan.", len(downloaded))
-        return downloaded
-
-    def run_web_search_images(self):
-        logger = logging.getLogger(__name__)
-        if not self.current_scene_dir:
-            QMessageBox.information(self, "Belum Ada Adegan", "Pilih adegan terlebih dahulu.")
-            return
-        scene_type = self.scene_type_combo.currentText().strip()
-        if scene_type not in {"i2v", "image_pan", "image_zoom"}:
-            QMessageBox.information(self, "Tipe Adegan Tidak Didukung", "Web Search hanya untuk i2v, image_pan, dan image_zoom.")
-            return
-        if not self.save_current_scene(silent=True, reload_list=False):
-            return
-        search_term = self.web_search_term_input.text().strip()
-        if not search_term:
-            QMessageBox.warning(self, "Data Tidak Valid", "Search term wajib diisi.")
-            return
-        if self.web_search_thread is not None and self.web_search_thread.isRunning():
-            QMessageBox.information(self, "Web Search Berjalan", "Proses Web Search sebelumnya masih berjalan.")
-            return
-
-        api_key = read_key_from_cfg("FIRECRAWLKEY") or read_key_from_cfg("FIRECRAWL_API_KEY")
-        if not api_key:
-            logger.error("[web_search] gagal: FIRECRAWLKEY/FIRECRAWL_API_KEY tidak ditemukan di keys.cfg.")
-            QMessageBox.warning(self, "Web Search Gagal", "API key Firecrawl tidak ditemukan di keys.cfg.")
-            return
-
-        web_search_prompt = self.gather_web_search_prompt()
-        width = int(web_search_prompt.get("width", 480))
-        height = int(web_search_prompt.get("height", 848))
-        logger.info(
-            "[web_search] mulai: scene=%s, scene_type=%s, search_term='%s', width=%s, height=%s.",
-            self.current_scene_dir,
-            scene_type,
-            search_term,
-            width,
-            height,
-        )
-        self.web_search_run_button.setEnabled(False)
-        self.statusBar().showMessage("Web Search sedang berjalan...", 0)
-        self.web_search_result_label.setText("Web Search sedang berjalan...")
-
-        self.web_search_thread = QThread(self)
-        self.web_search_worker = WebSearchWorker(
-            api_key=api_key,
-            search_term=search_term,
-            width=width,
-            height=height,
-            scene_dir=str(self.current_scene_dir),
-        )
-        self.web_search_worker.moveToThread(self.web_search_thread)
-        self.web_search_thread.started.connect(self.web_search_worker.run)
-        self.web_search_worker.finished.connect(self._on_web_search_finished)
-        self.web_search_worker.failed.connect(self._on_web_search_failed)
-        self.web_search_worker.finished.connect(self.web_search_thread.quit)
-        self.web_search_worker.failed.connect(self.web_search_thread.quit)
-        self.web_search_thread.finished.connect(self._cleanup_web_search_thread)
-        self.web_search_thread.start()
-
-    def _on_web_search_finished(self, result: dict):
-        downloaded_count = int(result.get("downloaded_count", 0)) if isinstance(result, dict) else 0
-        width = int(result.get("width", 480)) if isinstance(result, dict) else 480
-        height = int(result.get("height", 848)) if isinstance(result, dict) else 848
-        self.refresh_assets_and_previews()
-        self.refresh_scene_status()
-        self.web_search_result_label.setText(
-            f"Hasil: {downloaded_count} gambar tersimpan ke scene. Filter: larger:{width}x{height}."
-        )
-        QMessageBox.information(
-            self,
-            "Proses Berhasil",
-            f"Web Search berhasil.\n\n{downloaded_count} gambar tersimpan ke folder scene.",
-        )
-        self.statusBar().showMessage("Proses selesai.", 5000)
-        logging.getLogger(__name__).info(
-            "[web_search] sukses: downloaded=%s, scene=%s, filter='larger:%sx%s'.",
-            downloaded_count,
-            self.current_scene_dir,
-            width,
-            height,
-        )
-
-    def _on_web_search_failed(self, error: str):
-        logging.getLogger(__name__).error("[web_search] gagal: %s", error)
-        self.web_search_result_label.setText("Web Search gagal.")
-        QMessageBox.critical(self, "Proses Gagal", f"Web Search gagal.\n\n{error}")
-        self.statusBar().showMessage("Proses gagal.", 5000)
-
-    def _cleanup_web_search_thread(self):
-        self.web_search_run_button.setEnabled(True)
-        if self.web_search_worker is not None:
-            self.web_search_worker.deleteLater()
-        if self.web_search_thread is not None:
-            self.web_search_thread.deleteLater()
-        self.web_search_worker = None
-        self.web_search_thread = None
+        return meta, z_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt
 
     def _uses_decimal_duration_input(self) -> bool:
         return self.scene_type_combo.currentText().strip() in {
@@ -7733,18 +6804,6 @@ class SceneEditorWindow(QMainWindow):
             raise ValueError("Seed statik Qwen Image Edit harus berupa bilangan bulat positif.")
         if parsed <= 0:
             raise ValueError("Seed statik Qwen Image Edit harus berupa bilangan bulat positif.")
-        return parsed
-
-    def parse_wan_lora_strength_value(self, widget: QLineEdit, label: str):
-        value = widget.text().strip()
-        if not value:
-            return 0.0
-        try:
-            parsed = float(value)
-        except ValueError:
-            raise ValueError(f"Kekuatan Lora {label} WAN harus berupa bilangan desimal.")
-        if parsed < 0:
-            raise ValueError(f"Kekuatan Lora {label} WAN tidak boleh negatif.")
         return parsed
 
     def load_qwen_image_edit_prompt(self, scene_dir: Path):
@@ -7932,50 +6991,18 @@ class SceneEditorWindow(QMainWindow):
             self.z_extra_positive_inputs[index].setPlainText(str(group_data.get("positive_prompt", "")))
             self.z_extra_negative_inputs[index].setPlainText(str(group_data.get("negative_prompt", "")))
 
-    def load_agentic_config_into_ui(self, scene_dir: Path):
-        data = load_agentic_config(scene_dir)
-        self.agentic_number_of_variations_input.setValue(int(data.get("number_of_variations", 0)))
-        self.agentic_special_command_input.setPlainText(str(data.get("special_command", "")))
-        scene_type = self.scene_type_combo.currentText().strip()
-        visible_in_ui, forced_value = agentic_create_initial_image_policy(scene_type)
-        resolved_create_initial_image = bool(data.get("create_initial_image", True)) if forced_value is None else bool(forced_value)
-        self.agentic_create_initial_image_input.setChecked(resolved_create_initial_image)
-        if self.agentic_tab is not None:
-            layout = self.agentic_tab.layout()
-            self._set_form_field_visible(layout, self.agentic_create_initial_image_input, visible_in_ui)
-        mode = str(data.get("image_extra_mode", DEFAULT_AGENERIC_CONFIG.get("image_extra_mode", "image_extra"))).strip()
-        mode_index = self.agentic_image_extra_mode_input.findData(mode)
-        self.agentic_image_extra_mode_input.setCurrentIndex(mode_index if mode_index >= 0 else 0)
-
-    def gather_agentic_config(self):
-        scene_type = self.scene_type_combo.currentText().strip()
-        _, forced_create_initial_image = agentic_create_initial_image_policy(scene_type)
-        create_initial_image = (
-            bool(self.agentic_create_initial_image_input.isChecked())
-            if forced_create_initial_image is None
-            else bool(forced_create_initial_image)
-        )
-        return {
-            "number_of_variations": int(self.agentic_number_of_variations_input.value()),
-            "special_command": self.agentic_special_command_input.toPlainText().strip(),
-            "create_initial_image": create_initial_image,
-            "image_extra_mode": str(self.agentic_image_extra_mode_input.currentData() or "image_extra").strip(),
-        }
-
     def refresh_scene_status(self):
         scene_dir = self.active_scene_dir()
         if not scene_dir:
             self.status_label.setPlainText("Belum ada adegan yang dipilih.")
             return
         try:
-            meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
+            meta, z_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
             minimax_h3_t2v_prompt, minimax_h3_i2v_prompt = self.gather_minimax_h3_prompts()
             r2v_prompt = self.gather_minimax_h3_r2v_prompt()
             issues = validate_scene_data(
                 meta,
                 z_prompt,
-                wan_t2v_prompt,
-                wan_prompt,
                 s2v_prompt,
                 image_pan_prompt,
                 image_zoom_prompt,
@@ -7998,9 +7025,7 @@ class SceneEditorWindow(QMainWindow):
     def get_scene_issues(self, scene_dir: Path):
         meta = load_json(scene_dir / "scene_meta.json", DEFAULT_SCENE_META)
         z_prompt = load_json(scene_dir / "z_image_prompt.json", DEFAULT_Z_IMAGE_PROMPT)
-        wan_t2v_prompt = load_json(scene_dir / "wan22_t2v_prompt.json", DEFAULT_WAN22_T2V_PROMPT)
-        wan_prompt = load_json(scene_dir / "wan22_i2v_prompt.json", DEFAULT_WAN_PROMPT)
-        scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
+        scene_type = str(meta.get("scene_type", "i2v")).strip()
         s2v_prompt = load_json(scene_dir / s2v_prompt_filename(scene_type), s2v_prompt_default(scene_type))
         image_pan_prompt = load_json(scene_dir / "image_pan_prompt.json", DEFAULT_IMAGE_PAN_PROMPT)
         image_zoom_prompt = load_json(scene_dir / "image_zoom_prompt.json", DEFAULT_IMAGE_ZOOM_PROMPT)
@@ -8023,8 +7048,6 @@ class SceneEditorWindow(QMainWindow):
         return validate_scene_data(
             meta,
             z_prompt,
-            wan_t2v_prompt,
-            wan_prompt,
             s2v_prompt,
             image_pan_prompt,
             image_zoom_prompt,
@@ -8208,7 +7231,7 @@ class SceneEditorWindow(QMainWindow):
                 )
             return False
         try:
-            meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
+            meta, z_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt = self.gather_scene_data()
             qwen_image_edit_prompt = self.gather_qwen_image_edit_prompt()
             minimax_h3_t2v_prompt, minimax_h3_i2v_prompt = self.gather_minimax_h3_prompts()
             minimax_h3_i2v_panjang_prompt = None
@@ -8263,8 +7286,6 @@ class SceneEditorWindow(QMainWindow):
         issues = validate_scene_data(
             meta,
             z_prompt,
-            wan_t2v_prompt,
-            wan_prompt,
             s2v_prompt,
             image_pan_prompt,
             image_zoom_prompt,
@@ -8282,19 +7303,15 @@ class SceneEditorWindow(QMainWindow):
             )
             if reply != QMessageBox.Yes:
                 return False
-        scene_type = str(meta.get("scene_type", "wan22_t2v")).strip()
+        scene_type = str(meta.get("scene_type", "i2v")).strip()
         z_image_extra_prompts = self.gather_z_image_extra_prompts()
-        agentic_config = self.gather_agentic_config()
         write_prompt_json(self.current_scene_dir / "scene_meta.json", meta)
         sync_scene_prompt_files(
             self.current_scene_dir,
             scene_type=scene_type,
             z_prompt=z_prompt,
-            wan_t2v_prompt=wan_t2v_prompt,
-            wan_prompt=wan_prompt,
             image_pan_prompt=image_pan_prompt,
             image_zoom_prompt=image_zoom_prompt,
-            web_search_prompt=self.gather_web_search_prompt(),
             qwen_image_edit_prompt=qwen_image_edit_prompt,
             z_image_extra_prompts=z_image_extra_prompts,
             minimax_h3_t2v_prompt=minimax_h3_t2v_prompt,
@@ -8307,7 +7324,6 @@ class SceneEditorWindow(QMainWindow):
             minimax_h3_t2v_prompt,
             minimax_h3_i2v_prompt,
         )
-        save_agentic_config(self.current_scene_dir, agentic_config)
         self.refresh_scene_status()
         if reload_list:
             self.reload_scene_list()
@@ -8373,17 +7389,16 @@ class SceneEditorWindow(QMainWindow):
         for scene in scenes:
             target_index = int(scene.name.split("_", 1)[1])
             name = scene_dir_name(target_index + 1) if target_index >= insert_index else scene.name
-            duplicate_directory(scene, temp_root / name)
-        meta, z_prompt, wan_t2v_prompt, wan_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt, web_search_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
+            # Relocation must preserve all user files and variations. The
+            # duplicate-scene filter intentionally excludes legacy content.
+            shutil.copytree(scene, temp_root / name)
+        meta, z_prompt, s2v_prompt, image_pan_prompt, image_zoom_prompt = build_scene_templates(data["scene_title"], data["scene_type"], data["duration_seconds"])
         create_scene_files(
             temp_root / scene_dir_name(insert_index),
             meta=meta,
             z_prompt=z_prompt,
-            wan_t2v_prompt=wan_t2v_prompt,
-            wan_prompt=wan_prompt,
             image_pan_prompt=image_pan_prompt,
             image_zoom_prompt=image_zoom_prompt,
-            web_search_prompt=web_search_prompt,
             minimax_h3_r2v_prompt=DEFAULT_MINIMAX_H3_R2V_PROMPT,
         )
         for scene in scenes:
@@ -8529,56 +7544,6 @@ class SceneEditorWindow(QMainWindow):
             rel_path = path.relative_to(ROOT) if ROOT in path.parents or path == ROOT else path
             lines.append(str(rel_path))
         return "File output:\n- " + "\n- ".join(lines)
-
-    def build_z_image_skill_clipboard_text(self, positive_prompt: str, image_path: str | None = None):
-        if not self.current_project_name:
-            return None, "Belum ada project yang dibuka."
-        if not self.current_scene_dir:
-            return None, "Belum ada scene yang dipilih."
-
-        size_label = self.z_size_input.currentText().strip()
-        project_dir = self.project_dir()
-        if project_dir is None:
-            return None, "Belum ada project yang dibuka."
-        codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
-        imagegen_skill_path = codex_home / "skills" / ".system" / "imagegen" / "SKILL.md"
-
-        if image_path:
-            prompt_text = (
-                f"Gunakan skill Image Gen untuk mengedit gambar {image_path} dengan prompt :\n"
-                f"{positive_prompt}. Ukuran gambar {size_label}.\n\n"
-                f"Kemudian kopikan hasil image yang dibuat direktori project {project_dir.resolve()} "
-                f"dalam scene {self.current_scene_dir.name}. Jangan lupa scale ke ukuran diminta tanpa strecth."
-            )
-        else:
-            prompt_text = (
-                f"[$imagegen]({imagegen_skill_path}) {positive_prompt}. "
-                f"Ukuran gambar {size_label}.\n\n"
-                f"Kemudian kopikan hasil image yang dibuat direktori project {project_dir.resolve()} "
-                f"dalam scene {self.current_scene_dir.name}. Jangan lupa scale ke ukuran diminta tanpa strecth."
-            )
-        return prompt_text, None
-
-    def copy_z_image_skill_prompt_to_clipboard(self):
-        prompt_text, error = self.build_z_image_skill_clipboard_text(self.z_positive_input.toPlainText().strip())
-        if error:
-            QMessageBox.information(self, "Belum Siap", error)
-            return
-        QApplication.clipboard().setText(prompt_text)
-        self.statusBar().showMessage("Teks Image Gen disalin ke clipboard.", 3000)
-
-    def copy_extra_image_skill_prompt_to_clipboard(self, slot_index: int):
-        if slot_index < 0 or slot_index >= len(self.z_extra_positive_inputs):
-            QMessageBox.information(self, "Belum Siap", "Slot prompt tambahan tidak valid.")
-            return
-        prompt_text, error = self.build_z_image_skill_clipboard_text(
-            self.z_extra_positive_inputs[slot_index].toPlainText().strip()
-        )
-        if error:
-            QMessageBox.information(self, "Belum Siap", error)
-            return
-        QApplication.clipboard().setText(prompt_text)
-        self.statusBar().showMessage(f"Teks Image Gen slot {slot_index + 1} disalin ke clipboard.", 3000)
 
     def _minimax_h3_prompt_reference_lines(self, stage: str, scene_type: str | None = None) -> list[str]:
         stage = str(stage or "").strip().lower()
@@ -8736,20 +7701,6 @@ class SceneEditorWindow(QMainWindow):
                 ),
                 "Only describe an edit compatible with the selected reference images; do not invent unavailable image references.",
             ])
-        elif prompt_kind == "wan_t2v":
-            size_data = self.wan_t2v_size_input.currentData() or (368, 640)
-            lines.extend([
-                f"Target: WAN22 T2V prompt field `{prompt_key or 'unknown'}`",
-                f"Scene duration: {self._duration_text() or '10'}",
-                f"WAN22 T2V size: {int(size_data[0])}x{int(size_data[1])}",
-            ])
-        elif prompt_kind == "wan_i2v":
-            size_data = self.wan_size_input.currentData() or (368, 640)
-            lines.extend([
-                f"Target: WAN I2V prompt field `{prompt_key or 'unknown'}`",
-                f"WAN duration: from scene_meta.json",
-                f"WAN size: {int(size_data[0])}x{int(size_data[1])}",
-            ])
         elif prompt_kind == "minimax_h3_t2v":
             size_data = self.minimax_h3_t2v_size_input.currentData() or (368, 640)
             lines.extend([
@@ -8825,16 +7776,6 @@ class SceneEditorWindow(QMainWindow):
         if prompt_kind == "qwen_image_edit" and prompt_key == "positive_prompt":
             self.qwen_image_edit_positive_input.setPlainText(text)
             return
-        if prompt_kind == "wan_t2v":
-            if prompt_key == "positive_prompt":
-                self.wan_t2v_positive_input.setPlainText(text)
-                return
-            if prompt_key == "negative_prompt":
-                self.wan_t2v_negative_input.setPlainText(text)
-                return
-        if prompt_kind == "wan_i2v" and prompt_key in self.wan_prompt_inputs:
-            self.wan_prompt_inputs[prompt_key].setPlainText(text)
-            return
         if prompt_kind == "minimax_h3_t2v" and prompt_key == "positive_prompt":
             self.minimax_h3_t2v_positive_input.setPlainText(text)
             return
@@ -8860,10 +7801,6 @@ class SceneEditorWindow(QMainWindow):
             return self.current_scene_dir / "z_image_extra_prompts.json", "positive_prompt", None
         if prompt_kind == "qwen_image_edit":
             return self.current_scene_dir / "qwen_image_edit_prompt.json", "positive_prompt", None
-        if prompt_kind == "wan_t2v":
-            return self.current_scene_dir / "wan22_t2v_prompt.json", str(prompt_key or "").strip(), None
-        if prompt_kind == "wan_i2v":
-            return self.current_scene_dir / "wan22_i2v_prompt.json", str(prompt_key or "").strip(), None
         if prompt_kind == "minimax_h3_t2v":
             return self.current_scene_dir / "minimax_h3_t2v_prompt.json", "positive_prompt", None
         if prompt_kind == "minimax_h3_i2v":
@@ -9025,8 +7962,6 @@ class SceneEditorWindow(QMainWindow):
             "z_extra": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
             "qwen_image_edit": "Qwen Image Edit",
             "qwen_image_edit_multimodal": "Qwen Image Edit multimodal",
-            "wan_t2v": f"WAN T2V ({prompt_key or 'prompt'})",
-            "wan_i2v": f"WAN I2V ({prompt_key or 'prompt'})",
             "minimax_h3_t2v": "MiniMax H3 T2VA",
             "minimax_h3_i2v": "MiniMax H3 I2VA",
             "minimax_h3_s2v": "MiniMax H3 Ref2VA",
@@ -9324,27 +8259,6 @@ class SceneEditorWindow(QMainWindow):
             multimodal_image_paths=selected_paths,
         )
 
-    def generate_wan_prompt_from_ui(self, prompt_key: str, prompt_kind: str = "wan_i2v"):
-        key = str(prompt_key or "").strip()
-        prompt_kind = str(prompt_kind or "wan_i2v").strip()
-        if prompt_kind == "wan_t2v":
-            if key != "positive_prompt":
-                QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN22 T2V.")
-                return
-            widget = self.wan_t2v_positive_input
-        elif prompt_kind == "wan_i2v":
-            if not key.startswith("positive_prompt_"):
-                QMessageBox.information(self, "Belum Siap", "Buat Prompt hanya tersedia untuk Prompt Positif WAN.")
-                return
-            widget = self.wan_prompt_inputs.get(key)
-        else:
-            QMessageBox.information(self, "Belum Siap", "Buat Prompt tidak tersedia untuk field ini.")
-            return
-        if widget is None:
-            QMessageBox.information(self, "Belum Siap", "Field prompt WAN tidak valid.")
-            return
-        self._start_prompt_generation(prompt_kind, None, widget.toPlainText().strip(), prompt_key=key)
-
     def generate_minimax_h3_prompt_from_ui(self, stage: str):
         stage = str(stage or "").strip().lower()
         scene_type = self.scene_type_combo.currentText().strip()
@@ -9607,8 +8521,6 @@ class SceneEditorWindow(QMainWindow):
         prompt_label = {
             "z_image": "Gambar Awal",
             "z_extra": f"Prompt Tambahan {slot_index + 1 if slot_index is not None else 1}",
-            "wan_t2v": f"WAN T2V ({prompt_key or 'prompt'})",
-            "wan_i2v": f"WAN I2V ({prompt_key or 'prompt'})",
             "minimax_h3_t2v": "MiniMax H3 T2VA",
             "minimax_h3_i2v": "MiniMax H3 I2VA",
             "minimax_h3_i2v_standalone": "MiniMax H3 I2VA",
@@ -10039,27 +8951,20 @@ class SceneEditorWindow(QMainWindow):
     def on_process_finished(self, exit_code, exit_status):
         self.append_log(f"\nProses selesai dengan kode keluar {exit_code}")
         context = self.process_context or {}
-        process_kind = str(context.get("kind", "")).strip()
-        finished_project_name = str(context.get("project_name", "")).strip()
         if self.current_scene_dir:
             self.refresh_assets_and_previews()
             self.refresh_scene_status()
         if exit_code == 0:
-            if process_kind == "multi_project_agentic":
-                if finished_project_name:
-                    self.multi_project_agentic_completed.append(finished_project_name)
-                self.statusBar().showMessage(f"Agentic selesai untuk {finished_project_name}.", 4000)
-            else:
-                outputs = self.collect_changed_outputs(
-                    context.get("watch_dirs", []),
-                    context.get("before_snapshot", {}),
-                )
-                QMessageBox.information(
-                    self,
-                    "Proses Berhasil",
-                    f"{context.get('title', 'Proses')} berhasil.\n\n{self.format_output_summary(outputs)}",
-                )
-                self.statusBar().showMessage("Proses selesai.", 5000)
+            outputs = self.collect_changed_outputs(
+                context.get("watch_dirs", []),
+                context.get("before_snapshot", {}),
+            )
+            QMessageBox.information(
+                self,
+                "Proses Berhasil",
+                f"{context.get('title', 'Proses')} berhasil.\n\n{self.format_output_summary(outputs)}",
+            )
+            self.statusBar().showMessage("Proses selesai.", 5000)
         else:
             tail_log = self.tail_process_log()
             message = f"{context.get('title', 'Proses')} gagal dengan kode keluar {exit_code}."
@@ -10067,13 +8972,8 @@ class SceneEditorWindow(QMainWindow):
                 message += f"\n\nRingkasan log terakhir:\n{tail_log}"
             QMessageBox.critical(self, "Proses Gagal", message)
             self.statusBar().showMessage("Proses gagal.", 5000)
-            if process_kind == "multi_project_agentic":
-                self.multi_project_agentic_queue = []
-                self.multi_project_agentic_completed = []
         self.process_context = None
         self.process = None
-        if exit_code == 0 and process_kind == "multi_project_agentic":
-            self._start_next_multi_project_agentic()
 
 
 def main():
@@ -10081,7 +8981,18 @@ def main():
     app = QApplication(sys.argv)
     window = SceneEditorWindow()
     window.showMaximized()
-    sys.exit(app.exec())
+    try:
+        exit_code = app.exec()
+    finally:
+        # Keep the application alive until I/O returns. Never destroy a running
+        # QThread or deliver late results to widgets from a closed window.
+        logging.getLogger().removeHandler(window._ui_log_handler)
+        shutdown_background_tasks()
+        for thread in window.findChildren(QThread):
+            thread.requestInterruption()
+            thread.quit()
+            thread.wait()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

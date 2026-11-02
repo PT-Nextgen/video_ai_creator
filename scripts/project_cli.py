@@ -17,7 +17,6 @@ from scene_manager_ui import (
 )
 
 SCENE_TYPE_CHOICES = [
-    "wan22_t2v",
     "minimax-h3_t2v_i2v",
     "minimax-h3_i2v",
     "minimax-h3_i2v-panjang",

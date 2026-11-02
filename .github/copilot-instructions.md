@@ -14,17 +14,16 @@ This file gives concise, repository-specific guidance so an AI coding agent can 
   - Output polling is done via `get_history_for_prompt()` and `wait_for_output()`.
 
 - **Major components & responsibilities**:
-  - `main.py`: high-level orchestration for scene types (`wan22_t2v`, `minimax-h3_*`, `i2v`, `web_scroll`, `image_pan`).
+  - `main.py`: high-level orchestration for scene types (`minimax-h3_*`, `i2v`, `web_scroll`, `image_pan`).
   - `scene_manager_ui.py`: GUI for editing projects and scenes (useful to see JSON conventions and validations).
   - `prompt_localization.py`: handles bilingual prompt storage and runtime translation (`id_old` / `id_new` / `en`).
   - `scripts/workflow_builders.py`: utilities to load/validate JSON prompts used by workflows.
   - Image/flow modules:
     - `z_image/z_image.py` — build/send initial image workflows for ComfyUI.
-    - `wan22_t2v/wan22_t2v.py` — build/send WAN text-to-video workflows.
     - `gemini/*` — Gemini image and TTS special-case handling.
 
 - **Data flow summary**:
-  1. Read scene JSONs from `api_production/<project>/<scene>/` (`scene_meta.json`, `z_image_prompt.json`, `wan22_*_prompt.json`, etc.).
+  1. Read scene JSONs from `api_production/<project>/<scene>/` (`scene_meta.json`, `z_image_prompt.json`, and scene-type-specific prompt files).
   2. Generate or pick source image(s) (Gemini direct API or ComfyUI workflow).
   3. Upload assets to ComfyUI via `comfyui_api.upload_file()`.
   4. Post workflow (`post_workflow_api`) and poll history for outputs.
@@ -55,4 +54,4 @@ This file gives concise, repository-specific guidance so an AI coding agent can 
   - Upload a file: `comfyui_api.upload_file(server, path, file_type='audio')`.
   - Read server address: `scripts.server_config.get_server_address('comfyui')`.
 
-If anything here is unclear or you'd like more detail on a particular module/workflow, tell me which area (e.g., WAN two-stage processing, prompt localization, ComfyUI API behavior) and I will expand or adjust the instructions.
+If anything here is unclear or you'd like more detail on a particular module/workflow, tell me which area (e.g., MiniMax H3 processing, prompt localization, or ComfyUI API behavior) and I will expand or adjust the instructions.

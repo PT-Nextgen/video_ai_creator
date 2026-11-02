@@ -10,11 +10,11 @@ Scene ini adalah workflow I2V mandiri dengan dua kemungkinan tahap persiapan:
 1. `Gambar Awal` membuat gambar awal dari `z_image_prompt.json` bila diperlukan.
 2. Workflow MiniMax H3 I2VA memakai gambar terbaru di root folder scene sebagai `Picture 1`.
 
-Gunakan aturan umum scene, aturan I2V MiniMax H3, dan aturan khusus prompt I2V yang diberikan pada input Agentic.
+Gunakan aturan umum scene, aturan I2V MiniMax H3, dan aturan khusus prompt I2V dalam dokumen ini.
 
 ## File output
 
-Agentic wajib menghasilkan dua file JSON:
+Scene harus menyediakan dua file JSON:
 
 - `z_image_prompt.json`
 - `minimax_h3_i2v_prompt.json`
@@ -85,15 +85,10 @@ Aturan MiniMax H3:
 - Jangan menambahkan `negative_prompt` ke `minimax_h3_i2v_prompt.json`.
 - Ukuran mengikuti ukuran project dan diterapkan ke node `ResolutionSelector`.
 
-### Kontrak respons Agentic MiniMax
-
-Khusus saat Agentic membuat variasi, LLM hanya mengembalikan `positive_prompt.en` sebagai object JSON nested I2VA berbahasa Inggris. LLM tidak membuat dan tidak mengembalikan `positive_prompt.id_new` maupun `positive_prompt.id_old`.
-
-Pipeline Agentic kemudian memvalidasi `en`, menerjemahkan setiap field teks natural-language satu per satu menjadi object Indonesia `id_new`, serta menyalin key, array, angka, timing, `shot_id`, `mode`, dan object `reference` tanpa perubahan. Object `id_old` dibuat sebagai deep-copy dari `id_new`. File variasi yang disimpan tetap mempunyai `positive_prompt.id_old`, `positive_prompt.id_new`, dan `positive_prompt.en` lengkap.
-
 ## Aturan durasi dan sumber gambar
 
-- Durasi scene hanya `1`, `5`, `10`, atau `15` detik.
+- Durasi scene menerima angka `0.0` sampai `15.0` detik dengan maksimal 4 angka desimal, misalnya `7.5` atau `7.1234`.
+- Gunakan durasi yang diberikan pada `Scene duration` tanpa membulatkannya ke pilihan preset. Nilai `0.0` tetap menghasilkan output minimum 5 frame pada runtime.
 - Scene tidak menjalankan T2V.
 - Ambil satu gambar terbaru dari root folder scene.
 - Gambar tersebut menjadi `Picture 1` dan first frame workflow MiniMax H3 I2VA.
@@ -125,26 +120,16 @@ Ketentuan:
 - Kembangkan aksi secara kontinu dari first frame menuju akhir video.
 - Pertahankan identitas karakter, warna, objek penting, hubungan ruang, dan gaya visual.
 - Jelaskan shot, aksi, kamera, dialog, suara diegetic, ambience, dan musik sesuai aturan base-en.
-- Seluruh timing harus berada di dalam durasi 1, 5, 10, atau 15 detik.
+- Untuk durasi positif, seluruh timing harus berada di dalam durasi scene yang diberikan. Untuk `0.0`, gunakan timeline singkat sesuai output minimum 5 frame pada 24 FPS.
 - Jangan memakai format T2VA, FL2VA, L2VA, atau Ref2VA.
 
 ## Qwen Image Edit
 
-Jika perlu menyiapkan gambar referensi baru, gunakan tab `Qwen Image Edit`. Proses ini terpisah dari workflow video MiniMax dan tidak mengubah file output Agentic scene.
+Jika perlu menyiapkan gambar referensi baru, gunakan tab `Qwen Image Edit`. Proses ini terpisah dari workflow video MiniMax dan tidak mengubah file prompt scene.
 
-## Agentic
+## Checklist file hasil akhir
 
-- `Jumlah Variasi` menentukan jumlah folder `variasiN` yang dibuat.
-- `Perintah Khusus` wajib diteruskan ke agentic sebagai instruksi tambahan.
-- `Buat Image Awal` dapat diaktifkan atau dimatikan.
-- Jika aktif, Agentic menghasilkan `z_image_prompt.json`, lalu tahap execute membuat gambar awal sebelum MiniMax H3 I2VA dijalankan.
-- Jangan menghasilkan file T2V, file WAN22, atau file prompt tambahan untuk scene ini.
-- Setiap variasi harus mempertahankan schema, ukuran, LoRA, dan kekuatan LoRA; perubahan utama dilakukan pada field prompt.
-- Hasil variasi harus berbeda dari variasi sebelumnya tetapi tetap konsisten dengan scene.
-
-## Checklist file hasil akhir Agentic
-
-- Durasi scene adalah `1`, `5`, `10`, atau `15`.
+- Durasi scene berada pada rentang `0.0` sampai `15.0` detik dengan maksimal 4 angka desimal; timing mengikuti durasi aktif atau output minimum untuk `0.0`.
 - `z_image_prompt.json` dan `minimax_h3_i2v_prompt.json` tersedia.
 - `minimax_h3_i2v_prompt.json.positive_prompt` memiliki `id_old`, `id_new`, dan `en`.
 - Prompt Inggris MiniMax dimulai dengan instruksi `<Picture 1>` yang diwajibkan.

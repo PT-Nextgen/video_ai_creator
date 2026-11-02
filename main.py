@@ -29,16 +29,6 @@ from z_image.z_image import (
     send_workflow as send_z_image_workflow,
 )
 from gemini.gemini_image import MODEL_GEMINI_IMAGE, generate_scene_image, is_gemini_prompt
-from wan22_i2v.wan22_i2v import (
-    DEFAULT_PROMPT as DEFAULT_WAN_PROMPT,
-    build_wan_workflow,
-    send_workflow as send_wan_workflow,
-)
-from wan22_t2v.wan22_t2v import (
-    DEFAULT_PROMPT as DEFAULT_WAN22_T2V_PROMPT,
-    build_wan_t2v_workflow,
-    send_workflow as send_wan22_t2v_workflow,
-)
 from minimax_h3_t2v.minimax_h3_t2v import (
     DEFAULT_PROMPT as DEFAULT_MINIMAX_H3_T2V_PROMPT,
     build_minimax_h3_t2v_workflow,
@@ -247,7 +237,7 @@ def _concat_video_segments(segment_paths: list[str], output_path: str, *, preser
             )
         return output_path
 
-    with tempfile.TemporaryDirectory(prefix="wan22_concat_") as td:
+    with tempfile.TemporaryDirectory(prefix="video_concat_") as td:
         normalized_paths = []
         for idx, src in enumerate(valid_segments):
             dst = os.path.join(td, f"norm_{idx:02d}.mp4")
@@ -524,8 +514,8 @@ def process_scene(scene_dir, server):
 
     Steps:
     1. Send `z_image_api.json` to ComfyUI and wait for an image output.
-    2. Download the image, upload it back to the server for WAN workflow.
-    3. Send WAN workflow and optionally wait/download video output.
+    2. Upload required media to the configured workflow service.
+    3. Send the scene workflow and optionally wait/download video output.
 
     Returns True on success, False on failure.
     """
@@ -536,7 +526,7 @@ def process_scene(scene_dir, server):
         write_log(f"Failed to read scene_meta.json for {scene_dir}: {e}")
         return False
 
-    scene_type = scene_meta.get('scene_type', 'wan22_t2v')
+    scene_type = scene_meta.get('scene_type', 'i2v')
 
     def _safe_error_text(err):
         text = str(err)
@@ -561,8 +551,6 @@ def process_scene(scene_dir, server):
         # These audio/video scene types are fully mixed here. Keep the marker
         # in a separate file so UI saves of scene_meta.json cannot erase it.
         if compose_audio and scene_type in {
-            'wan22',
-            'wan22_t2v',
             'minimax-h3_i2v',
             'minimax-h3_i2v-panjang',
             'minimax-h3_t2v_i2v',
@@ -795,78 +783,6 @@ def process_scene(scene_dir, server):
             except Exception:
                 pass
             return None
-
-    # Branch by scene_type
-    if scene_type == 'wan22_t2v':
-        try:
-            scene_duration = int(scene_meta.get('duration_seconds', 0))
-        except Exception:
-            scene_duration = 0
-        if scene_duration not in {5, 10, 15}:
-            write_log(f"wan22_t2v scene duration must be 5, 10, or 15 seconds: {scene_duration}")
-            return False
-
-        _ensure_scene_json(scene_dir, 'wan22_t2v_prompt.json', DEFAULT_WAN22_T2V_PROMPT)
-
-        try:
-            t2v_prompt = _read_scene_json(scene_dir, 'wan22_t2v_prompt.json', required=True)
-            # WAN's length input is expressed as frames at 16 fps. Keep the
-            # existing 5-second template value (81) and scale it for the
-            # scene's supported 10- and 15-second durations.
-            t2v_length = scene_duration * 16 + 1
-            t2v_workflow = build_wan_t2v_workflow(
-                t2v_prompt,
-                scene_meta,
-                length_override=t2v_length,
-            )
-        except Exception as e:
-            write_log(f"Failed to build wan22_t2v workflow for {scene_dir}: {e}")
-            return False
-
-        t2v_result = send_wan22_t2v_workflow(
-            t2v_workflow,
-            server,
-            log_file=LOG_FILE,
-            source_label=os.path.join(scene_dir, 'wan22_t2v_prompt.json'),
-        )
-        if not t2v_result:
-            write_log(f"send_wan22_t2v_workflow failed for {scene_dir}")
-            return False
-        prompt_id = t2v_result.get('prompt_id') or t2v_result.get('id')
-        write_log(f"Posted wan22_t2v workflow for {scene_dir}, prompt_id={prompt_id}")
-        video_out = None
-        if prompt_id:
-            video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
-        if not video_out:
-            write_log(f"No T2V video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-            return False
-        write_log(f"T2V video output info: {json.dumps(video_out)}")
-        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-        video_subfolder = video_out.get('subfolder')
-        video_type = video_out.get('type')
-        if not video_filename:
-            write_log(f"Cannot determine T2V video filename from output: {json.dumps(video_out)}")
-            return False
-        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
-        t2v_video_out_path = os.path.join(scene_dir, video_filename)
-        try:
-            comfyui_api.download_file_url(video_url, t2v_video_out_path)
-        except Exception as e:
-            write_log(f"Failed to download T2V video {video_filename} from {video_url}: {e}")
-            return False
-        try:
-            if not os.path.exists(t2v_video_out_path) or os.path.getsize(t2v_video_out_path) == 0:
-                write_log(f"Downloaded T2V file missing or empty: {t2v_video_out_path}")
-                return False
-        except Exception as e:
-            write_log(f"Error checking downloaded T2V file {t2v_video_out_path}: {e}")
-            return False
-
-        return _finalize_scene_success(
-            t2v_video_out_path,
-            is_s2v=False,
-            success_message=f"Completed wan22_t2v processing for {scene_dir}",
-        )
 
     if scene_type == 'minimax-h3_t2v_i2v':
         try:
@@ -1678,67 +1594,6 @@ def process_scene(scene_dir, server):
             preserve_comfy_audio=not bool(i2v_prompt.get("remove_sound", False)),
             compose_audio=True,
             success_message=f"Completed minimax-h3_i2v processing for {scene_dir}",
-        )
-
-    if scene_type == 'wan22':
-        img_path = _find_latest_root_image(scene_dir)
-        if not img_path:
-            write_log(f"{scene_type} scene requires at least one input image in root folder {scene_dir}")
-            return False
-        write_log(f"Using latest root image for {scene_dir}: {img_path}")
-        uploaded_name = _upload_to_comfy(img_path)
-        if not uploaded_name:
-            write_log(f"Failed to upload image for {scene_type} in {scene_dir}")
-            return False
-        try:
-            wan_prompt = _read_scene_json(scene_dir, 'wan22_i2v_prompt.json', required=True)
-            wan_workflow = build_wan_workflow(wan_prompt, scene_meta, uploaded_name=uploaded_name)
-        except Exception as e:
-            write_log(f"Failed to build wan22 workflow for {scene_dir}: {e}")
-            return False
-        wan_result = send_wan_workflow(
-            wan_workflow,
-            uploaded_name,
-            server,
-            log_file=LOG_FILE,
-            source_label=os.path.join(scene_dir, 'wan22_i2v_prompt.json'),
-        )
-        if not wan_result:
-            write_log(f"send_wan_workflow failed for {scene_dir}")
-            return False
-        prompt_id = wan_result.get('prompt_id') or wan_result.get('id')
-        write_log(f"Posted wan22 workflow for {scene_dir}, prompt_id={prompt_id}")
-        video_out = None
-        if prompt_id:
-                video_out = comfyui_api.wait_for_output(server, prompt_id, output_type='video', timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS, interval=POLL_INTERVAL)
-        if not video_out:
-            write_log(f"No video found for {scene_dir} (prompt_id={prompt_id}); stopping run")
-            return False
-        write_log(f"Video output info: {json.dumps(video_out)}")
-        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-        video_subfolder = video_out.get('subfolder')
-        video_type = video_out.get('type')
-        if not video_filename:
-            write_log(f"Cannot determine video filename from output: {json.dumps(video_out)}")
-            return False
-        video_url = comfyui_api.get_file_url(server, video_filename, subfolder=video_subfolder, type_=video_type)
-        video_out_path = os.path.join(scene_dir, video_filename)
-        try:
-            comfyui_api.download_file_url(video_url, video_out_path)
-        except Exception as e:
-            write_log(f"Failed to download video {video_filename} from {video_url}: {e}")
-            return False
-        try:
-            if not os.path.exists(video_out_path) or os.path.getsize(video_out_path) == 0:
-                write_log(f"Downloaded file missing or empty: {video_out_path}")
-                return False
-        except Exception as e:
-            write_log(f"Error checking downloaded file {video_out_path}: {e}")
-            return False
-        return _finalize_scene_success(
-            video_out_path,
-            is_s2v=False,
-            success_message=f"Completed processing {scene_dir}",
         )
 
     if scene_type == 'minimax-h3_r2v':

@@ -38,7 +38,7 @@ Untuk Audio, jelaskan apakah audio digunakan sebagai reference karakteristik ata
 
 ## Struktur file
 
-Agentic menggunakan satu file input dan output:
+Scene menggunakan satu file prompt:
 
 - `minimax_h3_r2v_prompt.json`
 
@@ -46,34 +46,17 @@ Struktur prompt bilingual harus memiliki `id_old`, `id_new`, dan `en` dengan str
 
 MiniMax H3 R2V hanya menggunakan prompt positif. Jangan menambahkan `negative_prompt` atau field baru di luar schema scene.
 
-## Kontrak Agentic
-
-Agentic menerima template JSON dari root scene dengan isi prompt dikosongkan, tetapi struktur dan parameter teknis tetap dipertahankan sebagai acuan.
-
-Output LLM wajib memiliki root JSON berikut:
-
-```json
-{
-  "minimax_h3_r2v_prompt.json": {
-    "positive_prompt": {
-      "en": {}
-    }
-  }
-}
-```
-
-LLM hanya membuat `positive_prompt.en`. Setelah validasi, pipeline menerjemahkan field teks `en` menjadi `id_new`, lalu membuat `id_old` sebagai salinan `id_new`. Key, angka, urutan array, timing, dan token reference tidak boleh diterjemahkan atau diubah.
-
 ## Durasi
 
-- Durasi yang valid: `1`, `5`, `10`, atau `15` detik.
-- Durasi lebih dari 15 detik tidak valid.
+- Durasi menerima angka `0.0` sampai `15.0` detik dengan maksimal 4 angka desimal, misalnya `7.5` atau `7.1234`.
+- Ikuti `Scene duration` tanpa membulatkannya ke pilihan preset. Untuk durasi positif, timing mengikuti durasi scene yang diberikan; nilai `0.0` memakai output minimum 5 frame pada 24 FPS.
+- Durasi di luar rentang tersebut atau dengan lebih dari 4 angka desimal tidak valid.
 - Video tidak boleh dipotong setelah output ComfyUI diterima.
 - Minimal satu reference aktif wajib tersedia sebelum scene dijalankan.
 
 ## Resolusi
 
-Ukuran video mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan scene MiniMax H3 lainnya. Agentic tidak boleh mengubah ukuran secara bebas; nilai ukuran mengikuti pilihan pada UI dan konfigurasi scene.
+Ukuran video mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan scene MiniMax H3 lainnya. Nilai ukuran mengikuti pilihan pada UI dan konfigurasi scene.
 
 ## Input UI
 
@@ -81,7 +64,6 @@ Ukuran video mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan 
 - Tab `Gambar Awal` menampilkan media reference yang dipilih jika tersedia.
 - Tab `MINIMAX-H3_R2V` berisi ukuran dan prompt positif R2V.
 - Tab `Aset` digunakan untuk memilih Picture, Audio, dan Video reference.
-- Tab `Agentic` digunakan untuk membuat variasi prompt.
 - Tidak ada checkbox `Buat Image Awal`.
 - Tidak ada checkbox `Hapus Sound`.
 

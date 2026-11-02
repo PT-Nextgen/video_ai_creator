@@ -1540,14 +1540,12 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             if compose_per_scene and not latest_video:
                 raise RuntimeError('No video found in scene folder.')
 
-            # WAN and MiniMax H3 audiovisual scene outputs already contain the
-            # complete scene mix produced during scene execution.  Export the
+            # MiniMax H3 audiovisual scene outputs already contain the complete
+            # scene mix produced during scene execution. Export the
             # existing video unchanged in normal final-compose mode; calling
             # compose_scene there would add the same voice and sound-effect
             # files for a second time.
             if not compose_per_scene and audio_composed and scene_type in {
-                'wan22',
-                'wan22_t2v',
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
                 'minimax-h3_t2v_i2v',
@@ -1555,8 +1553,6 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
                 export_scene_video_to_combined(scene_dir)
                 continue
             if compose_per_scene and audio_composed and scene_type in {
-                'wan22',
-                'wan22_t2v',
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
                 'minimax-h3_t2v_i2v',

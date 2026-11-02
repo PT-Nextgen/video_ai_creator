@@ -6,7 +6,7 @@ Gunakan aturan T2VA hanya untuk prompt T2V dan aturan I2VA hanya untuk prompt I2
 
 ## File output
 
-Agentic wajib menghasilkan dua file JSON:
+Scene harus menyediakan dua file JSON:
 
 - `minimax_h3_t2v_prompt.json`
 - `minimax_h3_i2v_prompt.json`
@@ -57,32 +57,22 @@ Aturan bilingual:
 - Jangan menghapus salah satu dari tiga field tersebut.
 - Jangan menaruh prompt dalam fenced code block atau menambahkan penjelasan di dalam nilai prompt.
 
-### Kontrak respons Agentic MiniMax
-
-Khusus saat Agentic membuat variasi, LLM hanya mengembalikan `positive_prompt.en` sebagai object JSON nested berbahasa Inggris. LLM tidak membuat dan tidak mengembalikan `positive_prompt.id_new` maupun `positive_prompt.id_old`.
-
-Setelah respons LLM diterima, pipeline Agentic melakukan langkah berikut:
-
-1. Memvalidasi object `en` terhadap mode T2VA atau I2VA yang sesuai.
-2. Menerjemahkan setiap field teks natural-language di dalam `en` satu per satu menjadi bahasa Indonesia untuk membentuk object `id_new`.
-3. Menyalin key, array, angka, timing, `shot_id`, `mode`, dan `reference` tanpa diterjemahkan atau diubah.
-4. Membuat `id_old` sebagai deep-copy dari object `id_new`.
-5. Menyimpan file variasi dalam bentuk lengkap `positive_prompt.id_old`, `positive_prompt.id_new`, dan `positive_prompt.en`.
-
-Dengan demikian, schema respons LLM Agentic untuk prompt MiniMax hanya memuat `positive_prompt: {"en": {...}}`, sedangkan schema file hasil variasi tetap memuat tiga field bilingual lengkap.
-
 File T2V dan I2V memiliki konfigurasi LoRA yang terpisah. Nilai `lora_name` dan `lora_strength` pada T2V tidak harus sama dengan nilai pada I2V. Masing-masing pilihan LoRA harus berasal dari folder `MINIMAX-H3` di ComfyUI.
 
 Jangan menambahkan field `negative_prompt`. MiniMax H3 scene ini hanya memakai prompt positif.
 
 ## Aturan durasi
 
-- `1`, `5`, `10`, atau `15` detik: jalankan workflow T2V dan gunakan hasilnya sebagai video final.
-- `20` detik: T2V `15` detik lalu I2V `5` detik.
-- `25` detik: T2V `15` detik lalu I2V `10` detik.
-- `30` detik: T2V `15` detik lalu I2V `15` detik.
+- Untuk scene `minimax-h3_t2v_i2v`, durasi total menerima angka `0.0` sampai `30.0` detik dengan maksimal 4 angka desimal. Gunakan nilai `Scene duration` tanpa membulatkannya ke pilihan preset.
+- Durasi total `<= 15.0` detik hanya menjalankan T2V selama durasi tersebut; hasil T2V menjadi video final.
+- Durasi total `> 15.0` detik menjalankan T2V selama `15.0` detik, lalu I2V selama `durasi total - 15.0` detik.
+- Contoh: `7.5` detik hanya T2V `7.5` detik; `17.5` detik menjadi T2V `15.0` detik dan I2V `2.5` detik; `23.1234` detik menjadi T2V `15.0` detik dan I2V `8.1234` detik.
+- Timing prompt dimulai dari `0.0` pada setiap stage dan mengikuti durasi stage aktif, bukan durasi total dua stage.
+- Durasi `0.0` tetap menghasilkan output minimum 5 frame pada 24 FPS; gunakan timeline singkat yang sesuai output minimum tersebut.
 
 Untuk durasi di atas 15 detik, frame terakhir hasil T2V menjadi `Picture 1` atau first frame untuk tahap I2V. Scene tidak membutuhkan gambar awal dari user.
+
+Pembagian T2V lalu I2V di atas hanya berlaku untuk scene `minimax-h3_t2v_i2v`. Jika dokumen ini disertakan untuk `minimax-h3_i2v-panjang`, gunakan aturan prompt I2VA dengan durasi `0.0` sampai `15.0` detik per stage, maksimal 4 angka desimal, dan gambar referensi yang ditetapkan konteks; jangan menerapkan pengurangan 15 detik atau menganggap gambar berasal dari T2V.
 
 ## Prompt T2VA
 
@@ -139,7 +129,7 @@ Ketentuan I2VA:
 
 ## Resolusi
 
-Ukuran tidak dibuat bebas oleh agentic. Nilainya mengikuti ukuran project dan akan diterapkan ke node `ResolutionSelector`:
+Ukuran tidak dibuat bebas. Nilainya mengikuti ukuran project dan akan diterapkan ke node `ResolutionSelector`:
 
 | Ukuran | `aspect_ratio` | `megapixels` |
 |---|---|---:|
@@ -150,7 +140,7 @@ Ukuran tidak dibuat bebas oleh agentic. Nilainya mengikuti ukuran project dan ak
 | `848x480` | `16:9 (Widescreen)` | `0.4` |
 | `1280x720` | `16:9 (Widescreen)` | `0.9` |
 
-## Checklist file hasil akhir Agentic
+## Checklist file hasil akhir
 
 - Kedua file JSON tersedia.
 - Kedua `positive_prompt` memiliki `id_old`, `id_new`, dan `en`.

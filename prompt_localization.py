@@ -34,8 +34,6 @@ from minimax_h3.minimax_h3_prompt import (
 
 RUNTIME_PROMPT_FILENAMES = (
     "z_image_prompt.json",
-    "wan22_t2v_prompt.json",
-    "wan22_i2v_prompt.json",
     "minimax_h3_t2v_prompt.json",
     "minimax_h3_i2v_prompt.json",
     "minimax_h3_s2v_prompt.json",
@@ -49,8 +47,6 @@ RUNTIME_PROMPT_FILENAMES = (
 # operation (for example, an incomplete MiniMax T2V prompt blocking Flux
 # initial-image generation in a MiniMax I2V scene).
 RUNTIME_PROMPTS_BY_SCENE_TYPE = {
-    "wan22_t2v": ("wan22_t2v_prompt.json",),
-    "wan22": ("z_image_prompt.json", "wan22_i2v_prompt.json"),
     "minimax-h3_t2v_i2v": ("minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"),
     "minimax-h3_i2v": ("z_image_prompt.json", "minimax_h3_i2v_prompt.json"),
     "minimax-h3_i2v-panjang": ("z_image_prompt.json", "minimax_h3_i2v_panjang_prompt.json"),
@@ -149,13 +145,6 @@ def format_llm_runtime_log(
 PROMPT_TOP_LEVEL_FIELDS = {
     "z_image_prompt.json": ["positive_prompt", "negative_prompt"],
     "qwen_image_edit_prompt.json": ["positive_prompt", "negative_prompt"],
-    "wan22_i2v_prompt.json": [
-        "positive_prompt_one",
-        "negative_prompt_one",
-        "positive_prompt_two",
-        "negative_prompt_two",
-    ],
-    "wan22_t2v_prompt.json": ["positive_prompt", "negative_prompt"],
     "minimax_h3_t2v_prompt.json": ["positive_prompt"],
     "minimax_h3_i2v_prompt.json": ["positive_prompt"],
     "minimax_h3_s2v_prompt.json": ["positive_prompt"],
@@ -174,8 +163,6 @@ LORA_TRIGGER_WORDS_FIELD = "lora_trigger_words"
 TRIGGER_WORD_PROMPT_FIELDS = {
     "z_image_prompt.json": ["positive_prompt"],
     "z_image_extra_prompts.json": ["positive_prompt"],
-    "wan22_i2v_prompt.json": ["positive_prompt_one", "positive_prompt_two"],
-    "wan22_t2v_prompt.json": ["positive_prompt"],
 }
 
 MINIMAX_H3_I2V_RUNTIME_CONTEXT = (
@@ -2188,7 +2175,7 @@ def prepare_project_prompts_for_runtime(
     for scene_dir in scene_paths:
         if not scene_dir.is_dir():
             continue
-        scene_type = "wan22_t2v"
+        scene_type = "i2v"
         meta_path = scene_dir / "scene_meta.json"
         try:
             if meta_path.exists():
