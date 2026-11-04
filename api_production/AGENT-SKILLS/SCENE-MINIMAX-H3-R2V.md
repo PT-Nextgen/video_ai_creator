@@ -34,6 +34,8 @@ Gunakan hanya token Picture, Audio, dan Video yang tercantum pada reference akti
 
 Reference media harus dipertahankan konsisten di seluruh enam section. Reference non-media seperti `<Subject 1>` tetap boleh digunakan dan tidak tunduk pada batas jumlah Picture, Audio, atau Video.
 
+Nomor `<Picture N>` dan `<Audio N>` mengikuti posisi dalam array `references.images` dan `references.audios`. Ikuti urutan file pada konteks aktif; jangan mengurutkan referensi terpilih berdasarkan nama file atau menukar nomor token.
+
 Untuk Audio, jelaskan apakah audio digunakan sebagai reference karakteristik atau disalin ke hasil. Gunakan `reference`, `fully_copy`, atau `partially_copy` sesuai kebutuhan scene.
 
 ## Struktur file
@@ -63,7 +65,8 @@ Ukuran video mengikuti mapping `ResolutionSelector` MiniMax H3 yang sama dengan 
 - Tab `Meta` berisi metadata scene dan durasi.
 - Tab `Gambar Awal` menampilkan media reference yang dipilih jika tersedia.
 - Tab `MINIMAX-H3_R2V` berisi ukuran dan prompt positif R2V.
-- Tab `Aset` digunakan untuk memilih Picture, Audio, dan Video reference.
+- Tab `MINIMAX-H3_R2V` menyediakan dropdown berurutan `Picture 1` sampai `Picture 5` dan `Audio 1` sampai `Audio 3`, dengan tombol naik/turun. Video tetap dipilih dari daftar reference video.
+- Tab `Aset` menampilkan file media yang tersedia. Urutan gambar dan audio terpilih tetap mengikuti array JSON ketika daftar aset diperbarui.
 - Tidak ada checkbox `Buat Image Awal`.
 - Tidak ada checkbox `Hapus Sound`.
 

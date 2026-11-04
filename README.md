@@ -1149,6 +1149,12 @@ Semua section ditulis dalam bahasa Inggris. Bahasa asli hanya dipertahankan untu
 
 Tab R2V dapat memilih maksimal 5 gambar, 3 audio, dan 1 video sebagai reference. Reference yang dipilih diberi nomor berurutan mulai dari `Picture 1`, `Audio 1`, atau `Video 1`; reference yang tidak dipilih tidak dikirim ke workflow.
 
+- Gambar memakai dropdown bernomor `Picture 1` sampai `Picture 5`; audio memakai `Audio 1` sampai `Audio 3`. Tombol naik/turun menukar urutan slot yang terisi.
+- Urutan slot mengikuti array `references.images` dan `references.audios` dalam `minimax_h3_r2v_prompt.json`. Struktur JSON tetap sama; hanya daftar pilihan file di dropdown yang diurutkan abjad, bukan referensi terpilih.
+- Slot diisi berurutan tanpa celah dan file yang sudah dipakai tidak ditawarkan pada slot lain. Memilih `(Tidak dipakai)` menghapus slot tersebut dan menggeser referensi sesudahnya ke atas.
+- Save, reload scene, dan refresh aset mempertahankan urutan. File referensi yang hilang tetap berada di slot semula dengan label `tidak ditemukan`, sehingga nomor referensi lain tidak berubah otomatis.
+- Buat Prompt memakai urutan yang sama dengan ComfyUI. Perubahan referensi menampilkan pengingat untuk memeriksa nomor pada prompt; hasil LLM tidak diterapkan jika scene atau susunan referensi berubah selama proses Buat Prompt.
+
 ### Pemetaan input R2V
 
 | Label prompt | Slot workflow |

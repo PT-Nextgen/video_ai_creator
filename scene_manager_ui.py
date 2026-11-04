@@ -1299,6 +1299,8 @@ def validate_scene_data(
             issues.append(
                 f"Reference R2V melebihi batas: maksimal {MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES} image, 3 audio, dan 1 video."
             )
+        if len(set(images)) != len(images) or len(set(audios)) != len(audios):
+            issues.append("Reference gambar atau audio R2V tidak boleh duplikat.")
         if not images and not audios and not video:
             issues.append("Scene MiniMax H3 R2V membutuhkan minimal satu reference image, audio, atau video.")
         if scene_dir:
@@ -1374,6 +1376,113 @@ def validate_scene_data(
         if voice_key not in supported_keys:
             issues.append("Pilihan suara scene wajib dipilih.")
     return issues
+
+
+class OrderedReferenceSlots(QWidget):
+    """Edit a compact JSON reference array without sorting its selected values."""
+
+    referencesChanged = Signal()
+
+    def __init__(self, label: str, maximum: int, parent=None):
+        super().__init__(parent)
+        self.label = label
+        self.maximum = maximum
+        self.combos = []
+        self.up_buttons = []
+        self.down_buttons = []
+        self._available = []
+        self._selected = []
+        self._read_only = False
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        for index in range(maximum):
+            row = QHBoxLayout()
+            title = QLabel(f"{label} {index + 1}")
+            title.setMinimumWidth(68)
+            combo = QComboBox()
+            combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(16)
+            up, down = QToolButton(), QToolButton()
+            up.setArrowType(Qt.UpArrow)
+            down.setArrowType(Qt.DownArrow)
+            up.setToolTip(f"Pindahkan {label} {index + 1} ke atas")
+            down.setToolTip(f"Pindahkan {label} {index + 1} ke bawah")
+            combo.currentIndexChanged.connect(lambda _value, slot=index: self._choose(slot))
+            up.clicked.connect(lambda _checked=False, slot=index: self.move_reference(slot, -1))
+            down.clicked.connect(lambda _checked=False, slot=index: self.move_reference(slot, 1))
+            row.addWidget(title)
+            row.addWidget(combo, 1)
+            row.addWidget(up)
+            row.addWidget(down)
+            layout.addLayout(row)
+            self.combos.append(combo)
+            self.up_buttons.append(up)
+            self.down_buttons.append(down)
+        self._render()
+
+    def selected_names(self) -> list[str]:
+        return list(self._selected)
+
+    def set_references(self, available: list[str], selected: list[str] | None = None):
+        self._available = sorted(_dedupe_preserve_order(available), key=str.lower)
+        if selected is not None:
+            self._selected = [str(name).strip() for name in selected if str(name).strip()][:self.maximum]
+        self._render()
+
+    def set_read_only(self, read_only: bool):
+        self._read_only = read_only
+        self._render()
+
+    def _render(self):
+        for index, combo in enumerate(self.combos):
+            selected = self._selected[index] if index < len(self._selected) else ""
+            blocked = combo.blockSignals(True)
+            try:
+                combo.clear()
+                combo.addItem("(Tidak dipakai)", "")
+                for name in self._available:
+                    if name == selected or name not in self._selected:
+                        combo.addItem(name, name)
+                if selected and selected not in self._available:
+                    combo.addItem(f"{selected} (tidak ditemukan)", selected)
+                combo.setCurrentIndex(max(combo.findData(selected), 0))
+            finally:
+                combo.blockSignals(blocked)
+            combo.setToolTip(selected or f"Pilih file untuk {self.label} {index + 1}")
+            combo.setEnabled(not self._read_only and index <= len(self._selected))
+            self.up_buttons[index].setEnabled(not self._read_only and 0 < index < len(self._selected))
+            self.down_buttons[index].setEnabled(not self._read_only and index + 1 < len(self._selected))
+
+    def _choose(self, index: int):
+        if self._read_only or index > len(self._selected):
+            self._render()
+            return
+        name = str(self.combos[index].currentData() or "").strip()
+        previous = list(self._selected)
+        current = previous[index] if index < len(previous) else ""
+        if name and name != current and name in previous:
+            self._render()
+            return
+        if index < len(self._selected):
+            if name:
+                self._selected[index] = name
+            else:
+                self._selected.pop(index)
+        elif name:
+            self._selected.append(name)
+        self._render()
+        if self._selected != previous:
+            self.referencesChanged.emit()
+
+    def move_reference(self, index: int, offset: int):
+        target = index + offset
+        if self._read_only or not (0 <= index < len(self._selected) and 0 <= target < len(self._selected)):
+            return
+        self._selected[index], self._selected[target] = self._selected[target], self._selected[index]
+        self._render()
+        self.referencesChanged.emit()
 
 
 class SceneListWidget(QListWidget):
@@ -2881,27 +2990,25 @@ class SceneEditorWindow(QMainWindow):
         self.copy_minimax_h3_r2v_variations_button.clicked.connect(
             self.copy_minimax_h3_r2v_config_to_variations
         )
-        self.minimax_h3_r2v_image_list = QListWidget()
-        self.minimax_h3_r2v_audio_list = QListWidget()
+        self.minimax_h3_r2v_image_slots = OrderedReferenceSlots("Picture", MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES)
+        self.minimax_h3_r2v_audio_slots = OrderedReferenceSlots("Audio", 3)
+        self._r2v_reference_notice_scenes = set()
         self.minimax_h3_r2v_video_list = QListWidget()
-        for widget in (
-            self.minimax_h3_r2v_image_list,
-            self.minimax_h3_r2v_audio_list,
-            self.minimax_h3_r2v_video_list,
-        ):
-            widget.setSelectionMode(QAbstractItemView.NoSelection)
-            widget.setMaximumHeight(120)
-        self.minimax_h3_r2v_image_list.itemChanged.connect(
-            lambda _item: self._limit_r2v_reference_selection(
-                self.minimax_h3_r2v_image_list, MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES
-            )
-        )
-        self.minimax_h3_r2v_audio_list.itemChanged.connect(
-            lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_audio_list, 3)
-        )
+        self.minimax_h3_r2v_video_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.minimax_h3_r2v_video_list.setMaximumHeight(120)
+        self.minimax_h3_r2v_image_slots.referencesChanged.connect(self._on_r2v_references_changed)
+        self.minimax_h3_r2v_audio_slots.referencesChanged.connect(self._on_r2v_references_changed)
         self.minimax_h3_r2v_video_list.itemChanged.connect(
             lambda _item: self._limit_r2v_reference_selection(self.minimax_h3_r2v_video_list, 1)
         )
+        self.minimax_h3_r2v_video_list.itemChanged.connect(self._on_r2v_references_changed)
+        self.r2v_reference_notice = QLabel(
+            "Referensi berubah. Periksa kembali nomor Picture/Audio pada prompt, "
+            "atau jalankan Buat Prompt kembali."
+        )
+        self.r2v_reference_notice.setTextFormat(Qt.PlainText)
+        self.r2v_reference_notice.setWordWrap(True)
+        self.r2v_reference_notice.hide()
         self.s2v_cfg_input = QDoubleSpinBox()
         self.s2v_cfg_input.setRange(1.0, 6.0)
         self.s2v_cfg_input.setSingleStep(0.1)
@@ -3460,18 +3567,19 @@ class SceneEditorWindow(QMainWindow):
         r2v_layout.addLayout(r2v_mode_layout, 3, 1, 1, 2)
         r2v_layout.addWidget(self.copy_minimax_h3_r2v_variations_button, 3, 3, Qt.AlignLeft)
         r2v_layout.addWidget(QLabel(f"Gambar (maks. {MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES})"), 4, 0)
-        r2v_layout.addWidget(self.minimax_h3_r2v_image_list, 4, 1, 1, 3)
+        r2v_layout.addWidget(self.minimax_h3_r2v_image_slots, 4, 1, 1, 3)
         r2v_layout.addWidget(QLabel("Video (maks. 1)"), 5, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_video_list, 5, 1, 1, 3)
         r2v_layout.addWidget(QLabel("Audio (maks. 3)"), 6, 0)
-        r2v_layout.addWidget(self.minimax_h3_r2v_audio_list, 6, 1, 1, 3)
+        r2v_layout.addWidget(self.minimax_h3_r2v_audio_slots, 6, 1, 1, 3)
         r2v_layout.addWidget(QLabel("Prompt Positif"), 7, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_positive_input, 7, 1, 1, 3)
         r2v_layout.addWidget(QLabel("Perintah kepada LLM"), 8, 0)
         r2v_layout.addWidget(self.minimax_h3_r2v_prompt_instruction_input, 8, 1, 1, 3)
         r2v_layout.addWidget(self.minimax_h3_r2v_generate_prompt_button, 9, 1, 1, 3, Qt.AlignLeft)
+        r2v_layout.addWidget(self.r2v_reference_notice, 10, 1, 1, 3)
         self.minimax_h3_r2v_h3_cache_group = self._h3_cache_group(self.minimax_h3_r2v_h3_cache_inputs)
-        r2v_layout.addWidget(self.minimax_h3_r2v_h3_cache_group, 10, 0, 1, 4)
+        r2v_layout.addWidget(self.minimax_h3_r2v_h3_cache_group, 11, 0, 1, 4)
         tabs.addTab(self.minimax_h3_r2v_tab, "MINIMAX-H3_R2V")
 
         self.s2v_tab = QWidget()
@@ -4550,6 +4658,9 @@ class SceneEditorWindow(QMainWindow):
         if self.editor_tabs is not None:
             for widget in self.editor_tabs.findChildren(QWidget):
                 self._set_widget_view_only_state(widget, read_only)
+
+        self.minimax_h3_r2v_image_slots.set_read_only(read_only)
+        self.minimax_h3_r2v_audio_slots.set_read_only(read_only)
 
         for group_widget in (
             self.scene_action_group_widget,
@@ -7109,13 +7220,39 @@ class SceneEditorWindow(QMainWindow):
         if not assets:
             self.viewer_info_label.setText("Tidak ada file media di scene ini.")
 
-    def _r2v_selected_names(self, widget: QListWidget) -> list[str]:
+    def _r2v_selected_names(self, widget: QListWidget | OrderedReferenceSlots) -> list[str]:
+        if isinstance(widget, OrderedReferenceSlots):
+            return widget.selected_names()
         selected = []
         for index in range(widget.count()):
             item = widget.item(index)
             if item.checkState() == Qt.Checked:
                 selected.append(str(item.data(Qt.UserRole) or item.text()).strip())
         return [name for name in selected if name]
+
+    def _gather_r2v_references(self) -> dict:
+        return {
+            "images": self.minimax_h3_r2v_image_slots.selected_names(),
+            "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
+            "audios": self.minimax_h3_r2v_audio_slots.selected_names(),
+        }
+
+    def _on_r2v_references_changed(self, *_args):
+        if self.loading_scene:
+            return
+        try:
+            prompt = _parse_prompt_json_from_ui(self.minimax_h3_r2v_positive_input.toPlainText())
+            has_prompt = isinstance(prompt, dict) and any(str(value).strip() for value in prompt.values())
+        except (ValueError, TypeError):
+            has_prompt = bool(self.minimax_h3_r2v_positive_input.toPlainText().strip())
+        self.r2v_reference_notice.setVisible(has_prompt)
+        scene_dir = self.active_scene_dir()
+        if scene_dir is not None:
+            if has_prompt:
+                self._r2v_reference_notice_scenes.add(scene_dir.resolve())
+            else:
+                self._r2v_reference_notice_scenes.discard(scene_dir.resolve())
+        self.refresh_scene_status()
 
     def _limit_r2v_reference_selection(self, widget: QListWidget, maximum: int):
         selected = [widget.item(index) for index in range(widget.count()) if widget.item(index).checkState() == Qt.Checked]
@@ -7147,23 +7284,17 @@ class SceneEditorWindow(QMainWindow):
         image_names = sorted([p.name for p in assets if p.suffix.lower() in IMAGE_EXTS], key=str.lower)
         video_names = sorted([p.name for p in assets if p.suffix.lower() in VIDEO_EXTS], key=str.lower)
         audio_names = sorted([p.name for p in assets if p.suffix.lower() in AUDIO_EXTS], key=str.lower)
-        current = preferred if isinstance(preferred, dict) else {
-            "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list),
-            "video": self._r2v_selected_names(self.minimax_h3_r2v_video_list)[:1],
-            "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list),
-        }
-        self._set_r2v_reference_list(
-            self.minimax_h3_r2v_image_list,
+        current = preferred if isinstance(preferred, dict) else self._gather_r2v_references()
+        self.minimax_h3_r2v_image_slots.set_references(
             image_names,
             list(current.get("images", []))[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES],
-            MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES,
         )
-        self._set_r2v_reference_list(
-            self.minimax_h3_r2v_audio_list, audio_names, list(current.get("audios", []))[:3], 3
-        )
+        self.minimax_h3_r2v_audio_slots.set_references(audio_names, list(current.get("audios", []))[:3])
         video_value = current.get("video", "")
         video_selected = [video_value] if isinstance(video_value, str) and video_value else list(video_value or [])[:1]
         self._set_r2v_reference_list(self.minimax_h3_r2v_video_list, video_names, video_selected, 1)
+        if isinstance(preferred, dict):
+            self.r2v_reference_notice.setVisible(scene_dir.resolve() in self._r2v_reference_notice_scenes)
 
     def gather_minimax_h3_r2v_prompt(self) -> dict:
         size = self.minimax_h3_r2v_size_input.currentData() or (368, 640)
@@ -7176,17 +7307,14 @@ class SceneEditorWindow(QMainWindow):
             raise ValueError("id_new MiniMax H3 R2V harus berupa object.")
         existing = load_json(self.current_scene_dir / MINIMAX_H3_R2V_PROMPT_FILENAME, DEFAULT_MINIMAX_H3_R2V_PROMPT)
         existing_entry = existing.get("positive_prompt", {}) if isinstance(existing, dict) else {}
-        references = {
-            "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES],
-            "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
-            "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
-        }
+        references = self._gather_r2v_references()
         try:
             r2v_lora_strength = float(self.minimax_h3_r2v_lora_strength_input.text().strip() or 0)
             r2v_lora_strength_2 = float(self.minimax_h3_r2v_lora_strength_2_input.text().strip() or 0)
         except ValueError as exc:
             raise ValueError("Kekuatan LoRA MiniMax H3 R2V harus berupa angka.") from exc
         return {
+            **(existing if isinstance(existing, dict) else {}),
             "prompt_instruction": self.minimax_h3_r2v_prompt_instruction_input.toPlainText().strip(),
             "positive_prompt": {
                 "id_old": copy.deepcopy(existing_entry.get("id_old", id_new)) if isinstance(existing_entry, dict) else copy.deepcopy(id_new),
@@ -7611,8 +7739,8 @@ class SceneEditorWindow(QMainWindow):
         ])
         if stage == "r2v":
             if scene_type == MINIMAX_H3_R2V_SCENE_TYPE:
-                active_images = self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES]
-                active_audios = self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3]
+                active_images = self.minimax_h3_r2v_image_slots.selected_names()
+                active_audios = self.minimax_h3_r2v_audio_slots.selected_names()
                 active_video = bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list))
                 active_picture_tokens = ", ".join(f"<Picture {i + 1}>" for i, _ in enumerate(active_images)) or "none"
                 active_audio_tokens = ", ".join(f"<Audio {i + 1}>" for i, _ in enumerate(active_audios)) or "none"
@@ -7736,11 +7864,7 @@ class SceneEditorWindow(QMainWindow):
             lines.extend(self._minimax_h3_prompt_reference_lines("r2v", scene_type=scene_type))
         elif prompt_kind == "minimax_h3_r2v":
             size_data = self.minimax_h3_r2v_size_input.currentData() or (368, 640)
-            references = {
-                "images": self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES],
-                "video": (self._r2v_selected_names(self.minimax_h3_r2v_video_list) or [""])[0],
-                "audios": self._r2v_selected_names(self.minimax_h3_r2v_audio_list)[:3],
-            }
+            references = self._gather_r2v_references()
             lines.extend([
                 "Target: MiniMax H3 R2V Ref2VA positive prompt",
                 "Active MiniMax H3 mode: Ref2VA",
@@ -7748,6 +7872,12 @@ class SceneEditorWindow(QMainWindow):
                 f"Active image references: {', '.join(f'<Picture {i + 1}>' for i, _ in enumerate(references['images'])) or '(none)'}",
                 f"Active video reference: {'<Video 1>' if references['video'] else '(none)'}",
                 f"Active audio references: {', '.join(f'<Audio {i + 1}>' for i, _ in enumerate(references['audios'])) or '(none)'}",
+                "Ordered image files: " + ", ".join(
+                    f"<Picture {i + 1}>={name}" for i, name in enumerate(references["images"])
+                ),
+                "Ordered audio files: " + ", ".join(
+                    f"<Audio {i + 1}>={name}" for i, name in enumerate(references["audios"])
+                ),
                 "If a category is marked (none), do not mention that reference category.",
                 "Do not use any unavailable <Picture N>, <Video N>, or <Audio N> token.",
                 "Non-reference semantic tokens such as <Subject N>, <Shot N>, <d>, </d>, and speaker IDs remain allowed.",
@@ -7890,7 +8020,7 @@ class SceneEditorWindow(QMainWindow):
                 QMessageBox.warning(self, "Referensi Tidak Tersedia", str(exc))
                 return None
         elif prompt_kind == "minimax_h3_r2v":
-            names = self._r2v_selected_names(self.minimax_h3_r2v_image_list)[:MINIMAX_H3_R2V_MAX_IMAGE_REFERENCES]
+            names = self.minimax_h3_r2v_image_slots.selected_names()
             paths = [str((scene_dir / name).resolve()) for name in names]
         else:
             return []
@@ -8002,6 +8132,8 @@ class SceneEditorWindow(QMainWindow):
             "multimodal_image_paths": [str(path) for path in (multimodal_image_paths or [])],
             "additional_instruction": additional_instruction,
         }
+        if prompt_kind == "minimax_h3_r2v":
+            self.prompt_generation_context["r2v_references"] = self._gather_r2v_references()
 
         self.prompt_generation_thread = QThread(self)
         self.prompt_generation_worker = PromptGenerationWorker(
@@ -8049,6 +8181,12 @@ class SceneEditorWindow(QMainWindow):
         if not isinstance(result, dict):
             self.append_log("[gagal] Hasil LLM tidak valid.")
             return
+        if prompt_kind == "minimax_h3_r2v" and "r2v_references" in ctx:
+            scene_changed = not self.current_scene_dir or Path(self.current_scene_dir).resolve() != scene_dir.resolve()
+            if scene_changed or ctx["r2v_references"] != self._gather_r2v_references():
+                self.append_log("[gagal] Scene atau urutan referensi R2V berubah selama Buat Prompt; hasil tidak diterapkan.")
+                self.statusBar().showMessage("Referensi berubah. Jalankan Buat Prompt kembali.", 6000)
+                return
         if prompt_kind == "qwen_image_edit_multimodal":
             english = str(result.get("en", "")).strip()
             indonesian = str(result.get("id_new", "")).strip()
@@ -8097,8 +8235,8 @@ class SceneEditorWindow(QMainWindow):
                 if not errors and prompt_kind == "minimax_h3_r2v":
                     errors.extend(validate_ref2va_reference_tokens(
                         entry.get("en"),
-                        image_count=len(self._r2v_selected_names(self.minimax_h3_r2v_image_list)),
-                        audio_count=len(self._r2v_selected_names(self.minimax_h3_r2v_audio_list)),
+                        image_count=len(self.minimax_h3_r2v_image_slots.selected_names()),
+                        audio_count=len(self.minimax_h3_r2v_audio_slots.selected_names()),
                         has_video=bool(self._r2v_selected_names(self.minimax_h3_r2v_video_list)),
                     ))
                 elif not errors and prompt_kind == "minimax_h3_s2v":
@@ -8144,6 +8282,9 @@ class SceneEditorWindow(QMainWindow):
                 id_new_value,
             )
             if loaded_into_ui:
+                if prompt_kind == "minimax_h3_r2v":
+                    self._r2v_reference_notice_scenes.discard(scene_dir.resolve())
+                    self.r2v_reference_notice.hide()
                 # Run once more after the current signal callback returns so a
                 # pending paint/layout event cannot leave the old text visible.
                 QTimer.singleShot(
