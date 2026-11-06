@@ -36,8 +36,8 @@ File utama:
 - `z_image_prompt.json`
 - `z_image_extra_prompts.json`
 - `qwen_image_edit_prompt.json` (untuk tab `Qwen Image Edit`)
-- `minimax_h3_t2v_prompt.json` (untuk stage T2V `minimax-h3_t2v_i2v`)
-- `minimax_h3_i2v_prompt.json` (untuk scene `minimax-h3_i2v` dan stage I2V `minimax-h3_t2v_i2v`)
+- `minimax_h3_t2v_prompt.json` (untuk scene `minimax-h3_t2v`)
+- `minimax_h3_i2v_prompt.json` (untuk scene `minimax-h3_i2v`)
 - `minimax_h3_i2v_panjang_prompt.json` (untuk scene `minimax-h3_i2v-panjang`)
 - `minimax_h3_s2v_prompt.json` (untuk scene `minimax-h3_s2v`)
 - `image_pan_prompt.json` (untuk `image_pan`)
@@ -185,12 +185,11 @@ Nilai `image_model` yang didukung:
   - `focal_point` (`center`, `top_left`, `top_center`, `top_right`, `center_left`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`)
   - `zoom_strength` (`1.0` sampai `1.5`)
 Kebutuhan prompt per `scene_type`:
-- `minimax-h3_t2v_i2v`
-  - membutuhkan `scene_meta.json`, `minimax_h3_t2v_prompt.json`, dan `minimax_h3_i2v_prompt.json`
+- `minimax-h3_t2v`
+  - membutuhkan `scene_meta.json` dan `minimax_h3_t2v_prompt.json`
   - durasi scene berupa angka desimal `0.0` sampai `30.0` dengan maksimal 4 angka desimal; durasi `0.0` menghasilkan output minimum 5 frame
-  - durasi sampai `15.0` detik hanya menjalankan stage MiniMax H3 T2V
-  - durasi di atas `15.0` detik menjalankan T2V `15.0` detik lalu I2V dengan frame terakhir T2V sebagai gambar awal; sisa durasi dikirim ke stage I2V
-  - FPS MiniMax H3 ditetapkan `24`, dan nilainya berlaku untuk stage T2V maupun I2V
+  - seluruh durasi dijalankan oleh satu workflow MiniMax H3 T2V
+  - FPS MiniMax H3 ditetapkan `24`
 - `minimax-h3_i2v`
   - membutuhkan `scene_meta.json`, `z_image_prompt.json`, `minimax_h3_i2v_prompt.json`, dan minimal satu gambar di root folder scene
   - durasi scene berupa angka desimal `0.0` sampai `15.0` dengan maksimal 4 angka desimal; durasi `0.0` menghasilkan output minimum 5 frame
@@ -201,6 +200,7 @@ Kebutuhan prompt per `scene_type`:
   - durasi scene berupa angka desimal `0.0` sampai `15.0` dengan maksimal 4 angka desimal; durasi `0.0` menghasilkan output minimum 5 frame per stage
   - memakai alur MiniMax H3 I2VA berantai; `continuations` bernilai integer `0` sampai `3`
   - `continuations=0` menjalankan satu stage; nilai `1`, `2`, dan `3` menjalankan masing-masing 2, 3, dan 4 stage
+  - setiap stage aktif wajib memilih image referensi awal dan image referensi akhir; tidak ada opsi untuk meniadakan last frame
   - frame terakhir setiap stage dipakai sebagai `Picture 1` untuk stage berikutnya
   - setiap stage memakai prompt berbeda dari array `prompts` yang berisi tepat 4 prompt
   - prompt stage aktif menggunakan `id_new`, `id_old`, dan `en` dengan aturan translasi yang sama seperti MiniMax H3 I2V
@@ -222,11 +222,11 @@ Kebutuhan prompt per `scene_type`:
 
 Mode MiniMax H3:
 - `Mode Cepat` tersedia pada tab T2V, I2V, R2V, dan S2V. Pada `minimax-h3_i2v-panjang`, pilihan ini berlaku untuk seluruh stage I2V yang dijalankan.
-- `Mode Cepat` memakai workflow Fast MiniMax H3, tidak menggunakan H3 Cache, dan tidak menyediakan pengaturan jumlah step.
+- `Mode Cepat` memakai workflow Fast MiniMax H3 dan selalu memakai 8 step; pengaturan jumlah step normal tidak digunakan pada mode ini.
 - FastH3 R2V/S2V memakai `api_template/minimax_fasth3_r2v_api.json`, UNet `MINIMAX-H3/fasth3_omniref_8step_pruned_int8_convrot.safetensors`, Sigma Shift video `12`, Sigma Shift audio `3`, dan Model Sparse Attention dengan `start_percent=0.00`.
 - `Mode Khusus` tersedia pada seluruh tab MiniMax H3: T2V, I2V, I2V-Panjang, S2V, dan R2V. Mode ini memakai model MiniMax H3 turbo 8-step khusus.
 - `Mode Cepat` dan `Mode Khusus` tidak dapat aktif bersamaan. Jika salah satunya dipilih, mode yang lain otomatis dimatikan.
-- Jika kedua mode tidak dipilih, scene memakai workflow MiniMax H3 normal dan pengaturan H3 Cache yang tersedia pada tab tersebut tetap digunakan.
+- Jika kedua mode tidak dipilih, scene memakai workflow MiniMax H3 normal dan pengaturan jumlah step yang tersedia pada tab tersebut tetap digunakan.
 
 - semua `scene_type`
   - `scene_title` dan `scene_description` wajib diisi
@@ -291,7 +291,7 @@ Catatan voice dan caption:
   - caption tidak membuat file `__captioned` tambahan pada alur otomatis; video final ditimpa dengan versi yang sudah bercaption
 
 Catatan trimming video:
-- seluruh output scene MiniMax (`minimax-h3_i2v`, `minimax-h3_t2v_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`) dipertahankan utuh setelah download; frame alignment `17n+5` adalah bagian dari hasil generasi, bukan padding pascaproses yang dibuang
+- seluruh output scene MiniMax (`minimax-h3_t2v`, `minimax-h3_i2v`, `minimax-h3_s2v`, dan `minimax-h3_r2v`) dipertahankan utuh setelah download; frame alignment `17n+5` adalah bagian dari hasil generasi, bukan padding pascaproses yang dibuang
 - khusus `minimax-h3_s2v` dengan provider Gemini, setelah WAV TTS dibuat:
   - sample rate harus `24 kHz`; jika bukan, proses menampilkan warning dan padding tidak diterapkan
   - durasi WAV dikonversi ke frame video dengan `round(sample_count * 24 / 24000)`
@@ -308,7 +308,7 @@ Catatan trimming video:
 Scene berikut menghasilkan video scene yang sudah memiliki audio setelah eksekusi scene selesai:
 
 - `minimax-h3_i2v`
-- `minimax-h3_t2v_i2v`
+- `minimax-h3_t2v`
 
 Mix audio scene mengikuti pola berikut:
 
@@ -318,7 +318,7 @@ video ComfyUI
 = video scene ber-audio
 ```
 
-Untuk `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`:
+Untuk `minimax-h3_i2v` dan `minimax-h3_t2v`:
 
 - `remove_sound=true`: audio bawaan ComfyUI dihapus terlebih dahulu, kemudian voice di-mix
 - `remove_sound=false`: audio bawaan ComfyUI dipertahankan dan di-mix bersama voice
@@ -395,7 +395,7 @@ Subcommand:
   - setelah scene dibuat, ukuran project otomatis disinkronkan ke file prompt scene yang relevan
 
 Pilihan `scene_type`:
-- `minimax-h3_t2v_i2v`
+- `minimax-h3_t2v`
 - `minimax-h3_i2v`
 - `i2v`
 - `image_pan`
@@ -421,11 +421,9 @@ Contoh dari folder `api_production`:
 Script utama: `main.py`
 
 Fungsi:
-- `scene_type=minimax-h3_t2v_i2v`
-  - stage MiniMax H3 T2V dijalankan lebih dahulu
-  - untuk durasi di atas `15.0`, frame terakhir T2V dipakai sebagai input `first_frame` stage MiniMax H3 I2V
-  - stage I2V memakai sisa durasi scene dan FPS yang dipilih pada tab T2V
-  - hasil kedua stage digabung menjadi satu video final
+- `scene_type=minimax-h3_t2v`
+  - satu workflow MiniMax H3 T2V dijalankan untuk seluruh durasi scene
+  - tidak ada upload frame terakhir atau stage I2V lanjutan
 - `scene_type=minimax-h3_i2v`
   - ambil satu gambar terbaru dari root folder scene
   - upload image ke ComfyUI
@@ -504,12 +502,6 @@ Fungsi utama:
 - edit prompt image
 - tab `Prompt Tambahan` untuk 3 prompt image tambahan berbasis aturan `Gambar Awal`
 - tab `Qwen Image Edit` untuk edit gambar berbasis referensi multimodal
-- dropdown `Variasi` di toolbar untuk melihat isi `variasiN` secara read-only
-- tombol di sebelah dropdown `Variasi` untuk mengkopikan video terbaru dari variasi terpilih ke root scene
-  - dipakai saat ingin memakai satu hasil video terbaru sebagai isi root sebelum proses `combine all`
-  - file video root lama akan dihapus, folder variasi tetap dipertahankan
-  - folder `variasi*` tetap dipertahankan
-- saat pindah scene, tampilan otomatis kembali ke `Root Scene`
 - untuk voice, tersedia field:
 - `Pilihan Suara Scene` (per scene): 13 karakter suara
 - group `Audio` berisi proses generate voice/sound untuk scene atau semua scene
@@ -540,13 +532,11 @@ Fungsi utama:
 
 Perilaku UI:
 - operasi scene hanya aktif jika project sudah dibuka
-- menyisipkan scene mempertahankan seluruh file dan folder variasi dari scene yang sudah ada
 - scene dengan tipe yang tidak didukung hanya menampilkan tab `Meta` dan `Aset`; Save, autosave, dan eksekusi diblok sampai pengguna memilih tipe yang didukung secara eksplisit
 - konfigurasi cover disimpan global per project di `project_settings.json.cover`
 - hasil generate cover disimpan ke `api_production/<project_name>/cover/cover.png`
 - `Status Adegan` menampilkan masalah validasi scene aktif
 - `Jalankan Adegan` dan `Jalankan Semua Adegan` diblok jika masih ada scene bermasalah
-- tombol `Clear VRAM` tersedia di dialog `Konfigurasi Project`
 - daftar LoRa dimuat sekali saat UI dijalankan, lalu dipakai dari memory cache untuk semua dropdown LoRa
 - jika ComfyUI tidak menjawab saat startup UI, akan muncul popup error berbahasa Indonesia dan daftar LoRa tidak dimuat
 - callback pemuatan LoRa, status runtime, dan log diproses di thread UI; request jaringan berjalan di background
@@ -594,7 +584,7 @@ Perilaku UI:
   - input `Lanjutan` integer `0` sampai `3`
   - empat input JSON prompt: `Prompt 1`, `Prompt 2`, `Prompt 3`, dan `Prompt 4`
   - prompt yang tidak termasuk jumlah lanjutan dibuat disabled di UI
-  - urutan input: `Prompt 1`, `Lanjutan`, `Prompt 2`, `Prompt 3`, `Prompt 4`, kemudian `H3 Cache`
+  - urutan input: `Prompt 1`, `Lanjutan`, `Prompt 2`, `Prompt 3`, `Prompt 4`, kemudian `Jumlah Step`
   - `Buat Prompt` dan translasi runtime memakai aturan JSON MiniMax H3 I2VA
 - scene type `minimax-h3_s2v` menampilkan tab berurutan:
   - `Meta`
@@ -609,13 +599,9 @@ Perilaku UI:
   - `Lora` dan kekuatannya
   - `Prompt Positif` berupa JSON `id_new`
   - tombol `Buat Prompt`
-  - tombol `Edit Variasi`
-- `Edit Variasi` MiniMax T2V hanya mengkopikan `lora_name` dan `lora_strength` dari `minimax_h3_t2v_prompt.json` ke file T2V semua variasi
-- `Edit Variasi` MiniMax I2V melakukan hal yang sama secara terpisah dari `minimax_h3_i2v_prompt.json`; LoRA T2V dan I2V tidak harus sama
 - tab `MINIMAX-H3_S2V` tidak menampilkan CFG atau Negative Prompt; prompt positif memakai JSON `id_new` Ref2VA dan tombol `Buat Prompt` mengikuti schema enam field Ref2VA
 - tab `MINIMAX-H3_R2V` menyediakan `Ukuran`, FPS `24`, dua LoRA, manifest reference, dan prompt positif Ref2VA
 - tab `MINIMAX-H3_S2V` menyediakan `Ukuran`, FPS `24`, dua LoRA, dan prompt positif Ref2VA
-- tombol `Edit Variasi` hanya aktif saat `Root Scene` sedang dipilih dan scene aktif memang memiliki folder variasi
 - saat model image `Gemini` dipilih:
   - field `Model Gemini` (image only) ditampilkan untuk memilih model Gemini spesifik
   - negative prompt dinonaktifkan
@@ -627,7 +613,7 @@ Perilaku UI:
   - tombol `Buat Image`
   - semua grup memakai aturan model/ukuran/seed/Lora/Gemini yang sama seperti tab `Gambar Awal`
 - `Generate Caption` default aktif untuk project baru dan disimpan di `project_settings.json.caption`
-- caption tidak lagi dibuat per-scene; timing tetap dihitung per-scene lalu caption dibakar sekali saat final compose jika `project_settings.caption.generate_caption` aktif
+- timing caption dihitung per-scene lalu caption dibakar sekali saat final compose jika `project_settings.caption.generate_caption` aktif
 - untuk scene type `i2v`, `image_pan`, dan `image_zoom`:
   - durasi scene dapat diisi sebagai angka integer antara `1` sampai `15` detik
 - untuk `image_pan`:
@@ -670,18 +656,6 @@ Linux/macOS:
 Catatan:
 - `run_ui.bat` otomatis memakai Python dari `.venv` sehingga tidak perlu aktivasi manual virtual environment.
 - `run_ui.sh` otomatis memakai Python dari `.venv` dan menjalankan UI di background.
-
-## VRAM Cleanup
-
-Cleanup VRAM dijalankan otomatis setelah proses yang berhasil selesai:
-
-- setelah generate gambar awal
-- setelah generate cover
-
-File workflow yang dikirim ke ComfyUI:
-- `api_template/vram-cleaner-api.json`
-
-Di UI tersedia tombol manual `Clear VRAM` di dialog `Konfigurasi Project` untuk mengirim workflow ini secara langsung ke ComfyUI aktif.
 
 ## Image Models
 
@@ -821,7 +795,7 @@ Perilaku:
 - caption timing dihitung per-scene, tetapi burn dilakukan sekali ke `combined/combined_all.mp4` setelah final compose jika `project_settings.caption.generate_caption=true`
 - sumber teks caption selalu dari `voice_text`
 - `faster-whisper` hanya membantu menentukan waktu caption; isi teks tidak diambil dari hasil transkripsi
-- alur burn caption final tidak membuat file `.caption.srt` dan tidak lagi memakai jalur SRT/libass
+- caption final dibakar langsung ke video menggunakan renderer Pillow
 - timing caption tetap dihitung berdasarkan audio dan voice text masing-masing scene, lalu diberi offset sesuai posisi scene pada timeline final
 - pada `compose-song`, timing caption mengikuti chunk audio yang menjadi master timeline
 - ukuran font caption memakai tinggi video final setelah upscale:
@@ -857,10 +831,10 @@ Script: `scripts/generate_compose.py`
 Fungsi:
 - compose per scene ke folder `api_production/<project_name>/combined` dengan mix audio:
   - `minimax-h3_s2v` dan `minimax-h3_r2v`: mempertahankan speech/audio bawaan video dan tidak mencampurkan ulang file `speech_*`
-  - `minimax-h3_i2v` dan `minimax-h3_t2v_i2v`: mempertahankan audio hasil ComfyUI lalu mencampurkannya dengan file `speech_*`
-  - video root/variasi MiniMax tetap merupakan video asli hasil ComfyUI; master audio tidak dicampurkan dan tidak menimpa file video pada tahap generation
+  - `minimax-h3_i2v` dan `minimax-h3_t2v`: mempertahankan audio hasil ComfyUI lalu mencampurkannya dengan file `speech_*`
+  - video root MiniMax tetap merupakan video asli hasil ComfyUI; master audio tidak dicampurkan dan tidak menimpa file video pada tahap generation
   - saat Compose Scene/Compose All dijalankan, master audio ComfyUI dibuat dari video root ke `.comfy_audio_source/audio.wav` jika cache belum ada, lalu dipakai untuk membangun mix tanpa menggandakan audio scene
-  - Compose All memakai satu video final terbaru untuk scene MiniMax H3, sehingga file stage T2V tidak tergabung ulang bersama hasil T2V-I2V
+  - Compose All memakai satu video final terbaru untuk scene MiniMax H3
   - scene type lain: mix speech ke video scene
 - merge semua hasil scene di `combined` menjadi `combined_all.mp4`
 - dari setiap nomor scene, hanya video output terbaru yang dipakai untuk proses merge; file output scene lama tidak ikut digabungkan
@@ -903,11 +877,6 @@ Di UI:
 - tersedia tombol `Compose Per Scene`; dialognya memiliki pilihan music, volume, dan scale tanpa opsi `Compose Lagu`
 - `Compose Per Scene` menghasilkan satu video per scene dari video terbaru dan tidak membuat `combined_all.mp4`
 - tombol `2x` di group Compose menjalankan upscale GAN untuk root scene yang memiliki `upscale=true`
-- tombol `720p` di sebelah tombol `2x` menjalankan workflow SeedVR2 yang sama cakupannya dengan upscale GAN
-- tombol `720p` memakai `api_template/seedvr2_upscale_api.json` dan menyimpan output scene sebagai `seedvr2_upscaled_720p.mp4`
-- workflow SeedVR2 memakai `SeedVR2VideoUpscaler` dengan resolusi `720`, VAE `ema_vae_fp16.safetensors`, dan DiT `seedvr2_ema_3b-Q4_K_M.gguf`
-- output SeedVR2 diambil hanya dari node `SaveVideo`, bukan file input dari node `LoadVideo`
-
 Contoh:
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_compose.py --project demo_project --scene scene_1
@@ -944,37 +913,30 @@ Di UI:
 - tombol `Save` ada di grup `Backup`
 - saat diklik, UI akan konfirmasi backup project aktif dengan nama file tetap `<project_name>.zip`
 
-## MiniMax H3 T2V-I2V Workflow
+## MiniMax H3 T2V Workflow
 
-Scene type: `minimax-h3_t2v_i2v`
+Scene type: `minimax-h3_t2v`
 
 Implementasi adapter:
 
 - `minimax_h3_t2v/minimax_h3_t2v.py`
-- `minimax_h3_i2v/minimax_h3_i2v.py`
 - `api_template/minimax_h3_t2v_api.json`
-- `api_template/minimax_h3_i2v_api.json`
 
 File prompt scene:
 
 - `minimax_h3_t2v_prompt.json`
-- `minimax_h3_i2v_prompt.json`
 
-Kedua file memakai satu `positive_prompt` nested dengan field `id_old`, `id_new`, dan `en`; ketiganya berupa object JSON dengan struktur yang sama. Scene MiniMax H3 tidak memakai `negative_prompt`. Konfigurasi `lora_name` dan `lora_strength` untuk stage T2V dan I2V terpisah, tidak harus sama, dan masing-masing harus berasal dari folder `MINIMAX-H3` di ComfyUI.
+File memakai satu `positive_prompt` nested dengan field `id_old`, `id_new`, dan `en`; ketiganya berupa object JSON dengan struktur yang sama. Scene MiniMax H3 tidak memakai `negative_prompt`. Konfigurasi `lora_name` dan `lora_strength` harus berasal dari folder `MINIMAX-H3` di ComfyUI.
 
-Setiap tab MiniMax H3 memiliki group `H3 Cache` di bawah prompt. Konfigurasi ini disimpan pada key `h3_cache` di file prompt scene:
+Setiap tab MiniMax H3 memiliki input `Jumlah Step` di bawah prompt. Untuk kompatibilitas dengan file scene lama, nilainya tetap disimpan pada key `h3_cache.steps`:
 
 ```json
 "h3_cache": {
-  "steps": 20,
-  "reuse_threshold": 0.05,
-  "start_percent": 0.15,
-  "end_percent": 0.90,
-  "max_steps": 1
+  "steps": 20
 }
 ```
 
-Checkbox `H3 Cache` disimpan sebagai `h3_cache_enabled` dan default-nya `true`. Jika dicentang, workflow memakai node `UC_MiniMaxH3Cache` dari API saat ini. Jika tidak dicentang, node Cache dihapus dari workflow in-memory sebelum dikirim ke ComfyUI; template API di disk tetap tidak berubah.
+Nilai `h3_cache.steps` diterapkan ke input `steps` pada `BasicScheduler` untuk workflow normal.
 
 #### Mode Cepat FastH3
 
@@ -984,15 +946,15 @@ Tab MiniMax H3 T2V, I2V, R2V, dan S2V menyediakan checkbox `Mode Cepat`. Nilainy
 - I2V: `api_template/minimax_fasth3_i2v_api.json` melalui `minimax_h3_i2v/minimax_h3fast_i2v.py`;
 - R2V/S2V: `api_template/minimax_fasth3_r2v_api.json` melalui builder R2V.
 
-Mode ini hanya mengekspos prompt, durasi, resolusi, LoRA 1, dan LoRA 2. FastH3 selalu memakai 8 step dan FPS `24`; pengaturan jumlah step serta H3 Cache tidak digunakan dan group Cache disembunyikan di UI ketika Mode Cepat aktif. Untuk `minimax-h3_i2v-panjang`, satu `fast_mode` pada prompt root berlaku seragam untuk seluruh empat stage dan setiap `last_frame` tetap diinjeksi oleh runtime ke node `LoadImage` FastH3 pada stage berikutnya.
+Mode ini hanya mengekspos prompt, durasi, resolusi, LoRA 1, dan LoRA 2. FastH3 selalu memakai 8 step dan FPS `24`; input jumlah step disembunyikan dan tidak digunakan pada Mode Cepat. Untuk `minimax-h3_i2v-panjang`, satu `fast_mode` pada prompt root berlaku seragam untuk seluruh empat stage dan setiap `last_frame` tetap diinjeksi oleh runtime ke node `LoadImage` FastH3 pada stage berikutnya.
 
 #### Mode Khusus
 
 `Mode Khusus` tersedia pada tab MiniMax H3 T2V, I2V, I2V-Panjang, S2V, dan R2V. Mode ini memakai model turbo 8-step khusus. Pada `minimax-h3_i2v-panjang`, satu pilihan Mode Khusus berlaku untuk semua stage yang dijalankan dan input `last frame` tetap digunakan pada stage lanjutan.
 
-Mode Cepat dan Mode Khusus tidak dapat aktif bersamaan. Jika salah satunya dipilih, mode yang lain otomatis dimatikan. Jika Mode Khusus dipilih, workflow memakai alur MiniMax H3 normal dengan model khusus; jika tidak, workflow normal tetap menggunakan model default dan H3 Cache sesuai pengaturan tab.
+Mode Cepat dan Mode Khusus tidak dapat aktif bersamaan. Jika salah satunya dipilih, mode yang lain otomatis dimatikan. Jika Mode Khusus dipilih, workflow memakai alur MiniMax H3 normal dengan model khusus dan tetap menggunakan jumlah step dari tab; jika tidak, workflow normal tetap menggunakan model default.
 
-Saat Cache dinonaktifkan, koneksi wajib tetap melewati LoRA 2:
+Koneksi model normal tetap melewati kedua LoRA secara berurutan:
 
 ```text
 UNETLoader → LoRA 2 → LoRA 1 → BasicScheduler/BasicGuider
@@ -1000,64 +962,40 @@ UNETLoader → LoRA 2 → LoRA 1 → BasicScheduler/BasicGuider
 
 LoRA 1 tidak boleh dihubungkan langsung ke `UNETLoader`, karena hal tersebut akan membypass LoRA 2.
 
-Validasi field H3 Cache: `Steps` integer `4`-`50`, `Reuse Threshold` `0.00`-`0.50`, `Start Percent` dan `End Percent` `0.00`-`1.00` dengan tepat dua desimal, serta `Max Steps` integer `1`-`3`. Semua field wajib diisi. Nilai default mengikuti API workflow MiniMax H3 dan konfigurasi ini ikut disalin oleh tombol `Edit Variasi`.
+Validasi field Steps: integer `4`-`50`.
 
 Aturan durasi:
 
 - durasi scene adalah angka `0.0` sampai `30.0` dengan maksimal 4 angka desimal; durasi `0.0` menghasilkan output minimum 5 frame;
-- durasi `<= 15.0` hanya menjalankan T2V;
-- durasi `> 15.0` menjalankan T2V selama `15.0` detik lalu I2V dengan sisa durasi;
-- contoh `23.2` menjadi T2V `15.0` detik + I2V `8.2` detik.
+- seluruh durasi dijalankan oleh satu workflow T2V;
+- contoh `23.2` menjalankan T2V selama `23.2` detik.
 
-Untuk durasi di atas 15 detik, frame terakhir video T2V diekstrak, di-upload ke ComfyUI, lalu dipakai sebagai `first_frame` pada workflow I2V. Misalnya, durasi `17.5` detik menjalankan T2V `15.0` detik dan I2V `2.5` detik.
+Secara default audio hasil ComfyUI dipertahankan di video root, lalu saat Compose dibuat sebagai master `.comfy_audio_source/audio.wav` jika cache belum ada dan dicampur dengan speech.
 
-Secara default audio hasil ComfyUI dipertahankan di video root/variasi. Pada alur dua stage, audio T2V dan I2V tetap disusun berurutan pada video hasil stage, lalu saat Compose audio tersebut dibuat sebagai master `.comfy_audio_source/audio.wav` jika cache belum ada dan dicampur dengan speech.
-
-Kontrol audio per stage:
+Kontrol audio:
 
 - tab `MINIMAX-H3_T2V` memiliki checkbox `Hapus Sound` untuk output T2V;
-- tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound` untuk output I2V;
 - setelah file video selesai diunduh, seluruh frame hasil generasi dipertahankan;
-- jika `Hapus Sound` dicentang, audio output stage kemudian dihapus sebelum ekstraksi frame, concat T2V-I2V, penyimpanan master audio, atau proses audio scene berikutnya;
-- jika hanya satu stage yang dibisukan, concat memasukkan audio silence pada stage tersebut sehingga audio stage lain tetap berada pada timeline yang benar.
+- jika `Hapus Sound` dicentang, audio output dihapus sebelum proses audio scene berikutnya.
 
 Node workflow utama:
 
 - T2V:
   - durasi: node `133`, input `value`
-  - H3 Cache: Steps node `124`; parameter cache node `137`
-  - Cache aktif: `127 → 137 → 136 → 135`
-- Cache nonaktif: `127 → 136 → 135`
-- node Steps tetap dioverwrite dari konfigurasi tab walaupun Cache nonaktif
+  - jalur model: `127` ke `136` lalu `135`
+  - node Steps: `124`, dioverwrite dari konfigurasi tab
   - resolusi: node `115` (`ResolutionSelector`)
   - FPS workflow tetap `24` pada node `130`; expression frame pada node `132` menggunakan FPS `24`
 - LoRA: node `135`
 - LoRA kedua: node `136`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
-- I2V:
-  - durasi: node `135`, input `value`
-  - H3 Cache: Steps node `126`; parameter cache node `138`
-  - Cache aktif: `129 → 138 → 137 → 136`
-- Cache nonaktif: `129 → 137 → 136`
-- node Steps tetap dioverwrite dari konfigurasi tab walaupun Cache nonaktif
-  - resolusi: node `115` (`ResolutionSelector`)
-  - FPS workflow tetap `24` pada node `132`; expression frame pada node `134` menggunakan FPS `24`
-- gambar awal: node `114`
-- LoRA: node `136`
-- LoRA kedua: node `137`; konfigurasi disimpan sebagai `lora_name_2` dan `lora_strength_2`
 
-Untuk scene `minimax-h3_s2v` dan `minimax-h3_r2v`, H3 Cache memakai Steps node `124` dan parameter cache node `162`:
-
-- Cache aktif: `127 → 162 → 156 → 157` pada template R2V saat ini;
-- Cache nonaktif: `127 → 157 → 156`;
-- node Steps tetap dioverwrite dari konfigurasi tab walaupun Cache nonaktif;
-- node `162` dihapus dari workflow in-memory saat checkbox tidak dicentang;
-- S2V menggunakan adapter R2V yang sama.
+Untuk scene `minimax-h3_s2v` dan `minimax-h3_r2v`, jalur model langsung adalah `127` ke `157` lalu `156`, dan node Steps `124` dioverwrite dari konfigurasi tab. S2V menggunakan adapter R2V yang sama.
 
 Prompt MiniMax H3 mengikuti:
 
 - `api_production/AGENT-SKILLS/MINIMAX-H3/SKILL.md`
 - `api_production/AGENT-SKILLS/MINIMAX-H3/references/base-en.txt`
-- `api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V-I2V.md`
+- `api_production/AGENT-SKILLS/SCENE-MINIMAX-H3-T2V.md`
 
 ## MiniMax H3 I2V Workflow
 
@@ -1068,12 +1006,12 @@ Scene type: `minimax-h3_i2v`
 - gambar terbaru di root scene menjadi `Picture 1` dan input node `LoadImage`
 - hanya workflow MiniMax H3 I2VA yang dijalankan; tidak ada stage T2V
 - setelah output ComfyUI diunduh, seluruh frame hasil generasi MiniMax dipertahankan;
-- secara default audio hasil ComfyUI dipertahankan di video root/variasi dan baru dicampur dengan speech saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
+- secara default audio hasil ComfyUI dipertahankan di video root dan baru dicampur dengan speech saat Compose; master audio dibuat saat Compose di `.comfy_audio_source/audio.wav`
 - tab `MINIMAX-H3_I2V` memiliki checkbox `Hapus Sound`; jika aktif, audio output ComfyUI dihapus setelah video selesai diunduh dan sebelum proses audio scene berikutnya; Compose tidak membuat master dari video yang sudah tidak memiliki audio
 - prompt utama ada di `minimax_h3_i2v_prompt.json` dan tidak memiliki `negative_prompt`
 - jika `id_new` diedit, runtime meregenerasi `en` memakai aturan prompt I2VA MiniMax H3 dan menolak format yang tidak valid
 - LoRA pertama dan kedua dibaca dari `lora_name`/`lora_strength` serta `lora_name_2`/`lora_strength_2` pada file prompt dan folder `MINIMAX-H3`
-- ukuran scene pada prompt JSON diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`; untuk `minimax-h3_t2v_i2v`, ukuran pada tab T2V menjadi sumber ukuran kedua stage
+- ukuran scene pada prompt JSON diterjemahkan ke `aspect_ratio` dan `megapixels` pada node `ResolutionSelector`
 - FPS workflow ditetapkan `24`; nilai FPS diterapkan ke node `132` dan expression frame node `134`
 - tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA
 - checkbox `Mode Cepat` memilih workflow FastH3 tanpa mengubah schema prompt; FastH3 tetap memakai prompt bilingual dan dua LoRA yang sama
@@ -1083,7 +1021,9 @@ Scene type: `minimax-h3_i2v`
 Scene type: `minimax-h3_i2v-panjang`
 
 - workflow dasar setiap stage memakai `api_template/minimax_h3_i2v_api.json`; jika `fast_mode` aktif, semua stage memakai `api_template/minimax_fasth3_i2v_api.json`
-- input awal berasal dari gambar terbaru di root scene
+- tombol `Buat Prompt` memakai `SCENE-MINIMAX-H3-I2V-PANJANG.md`, `MINIMAX-H3/SKILL.md`, `MINIMAX-H3/references/base-en.txt`, serta mode I2VA dengan instruksi first/last frame
+- setiap stage aktif menerima dua image referensi dalam urutan first frame lalu last frame
+- first frame dan last frame dapat dipilih dari image lokal atau frame terakhir stage sebelumnya; keduanya wajib valid
 - setelah stage selesai, frame terakhir diekstrak dan di-upload kembali sebagai input stage berikutnya
 - jumlah stage adalah `continuations + 1`, dengan maksimum 4 stage
 - file `minimax_h3_i2v_panjang_prompt.json` mempunyai struktur root:
@@ -1097,6 +1037,24 @@ Scene type: `minimax-h3_i2v-panjang`
     {"id_old": {}, "id_new": {}, "en": {}},
     {"id_old": {}, "id_new": {}, "en": {}},
     {"id_old": {}, "id_new": {}, "en": {}}
+  ],
+  "stage_references": [
+    {
+      "first": {"source": "scene", "name": "awal.png"},
+      "last": {"source": "scene", "name": "akhir.png"}
+    },
+    {
+      "first": {"source": "stage_last", "stage": 1, "name": ""},
+      "last": {"source": "scene", "name": "akhir-2.png"}
+    },
+    {
+      "first": {"source": "stage_last", "stage": 2, "name": ""},
+      "last": {"source": "scene", "name": "akhir-3.png"}
+    },
+    {
+      "first": {"source": "stage_last", "stage": 3, "name": ""},
+      "last": {"source": "scene", "name": "akhir-4.png"}
+    }
   ]
 }
 ```
@@ -1110,7 +1068,8 @@ Scene type: `minimax-h3_i2v-panjang`
 - untuk partial run, segment video dari proses sebelum `run_start_stage` harus sudah ada; file frame terakhir akan digunakan jika ada atau dibuat ulang dari segment tersebut
 - setiap proses yang selesai selalu menyimpan frame terakhirnya agar dapat dipakai sebagai referensi pada run berikutnya
 - setiap item memakai schema I2VA dan `mode: "I2VA"`
-- FastH3 I2V tetap menginjeksi `last_frame` secara dinamis pada setiap stage lanjutan; FastH3 memakai 8 step, tanpa H3 Cache atau pengaturan Steps
+- setiap stage aktif harus memiliki `first` dan `last` pada `stage_references`; nilai `source: "none"` tidak valid
+- FastH3 I2V tetap menginjeksi `last_frame` secara dinamis pada setiap stage lanjutan; FastH3 memakai 8 step dan tidak memakai input Steps normal
 - setiap prompt lanjutan diterjemahkan secara runtime jika `id_new` berbeda dari `id_old` atau `en` belum valid
 - semua segment yang tersedia digabung berurutan menjadi `minimax_h3_i2v_panjang_final.mp4`, terlepas dari nilai `continuations` atau `run_start_stage`
 - color match dilakukan setelah seluruh stage digabung, menggunakan frame pertama video gabungan sebagai referensi
@@ -1134,7 +1093,7 @@ Template workflow:
 - field prompt `lora_name`/`lora_strength` dan `lora_name_2`/`lora_strength_2` diisi melalui dropdown UI
 - output video disimpan melalui node `92`
 - setelah proses selesai, frame pertama dan terakhir video diekstrak ke file dengan pola `<nama_file_video>_first_frame.png` dan `<nama_file_video>_last_frame.png` di folder scene
-- jika `fast_mode=true`, workflow memakai FastH3 Ref2VA tanpa H3 Cache, 8 step, Sigma Shift `12/3`, dan Model Sparse Attention mulai `0.00`
+- jika `fast_mode=true`, workflow memakai FastH3 Ref2VA dengan 8 step, Sigma Shift `12/3`, dan Model Sparse Attention mulai `0.00`
 
 Workflow ini memakai mode full-reference `Ref2VA` dari skill `MINIMAX-H3`. Formatnya berbeda dari `T2VA`/`I2VA`: prompt harus mempunyai enam section berikut secara berurutan:
 
@@ -1232,7 +1191,7 @@ Aturan tambahan:
 - Speaker memakai ID stabil `(S1)`, `(S2)`, dan seterusnya. Dialog/lyrics ditulis dalam `<d>[Language] ...</d>`.
 - Dialog dan lirik lengkap hanya ditulis di `detailed_description`, bukan di `overall_soundscape` atau `non_diegetic_music`.
 
-Adapter `minimax_h3_r2v/minimax_h3_r2v.py` sekarang menyediakan builder workflow in-memory. Adapter ini dipakai oleh scene `minimax-h3_s2v` dan dapat menghapus referensi yang tidak digunakan sebelum workflow dikirim ke ComfyUI.
+Adapter `minimax_h3_r2v/minimax_h3_r2v.py` menyediakan builder workflow in-memory sesuai manifest referensi scene. Adapter ini dipakai oleh scene `minimax-h3_s2v`.
 
 ## MiniMax H3 S2V Workflow
 
@@ -1252,8 +1211,7 @@ Pemetaan input runtime:
 
 - gambar terbaru di root scene di-upload ke node `143` (`Picture 1`), lalu masuk ke `ref_images.ref_image_0`;
 - audio speech terbaru yang berawalan `speech_` di root scene di-upload ke node `153` (`Audio 1`), lalu masuk ke `ref_audios.ref_audio_0`;
-- node Picture 2 (`144`), Picture 3 (`151`), Video 1 (`152`), Audio 2 (`154`), dan Audio 3 (`155`) dihapus dari workflow in-memory;
-- koneksi `ref_images.ref_image_1`, `ref_images.ref_image_2`, `ref_videos.ref_video_0`, `ref_video_audios.ref_video_audio_0`, `ref_audios.ref_audio_1`, dan `ref_audios.ref_audio_2` juga dihapus.
+- workflow hanya menggunakan Picture 1 pada node `143` dan Audio 1 pada node `153`.
 
 Durasi:
 
@@ -1391,7 +1349,7 @@ MINIMAX-H3/qwen3vl_32b_minimax_h3_int8_convrot.safetensors
 - `minimax-h3_i2v-panjang` menggunakan template I2V yang sama pada setiap stage
 - `minimax-h3_s2v` menggunakan workflow R2V secara in-memory sehingga memakai encoder R2V yang sama
 
-Mapping ini berlaku untuk `minimax-h3_t2v_i2v`, `minimax-h3_i2v`, `minimax-h3_i2v-panjang`, `minimax-h3_s2v`, dan `minimax-h3_r2v`. Nilai `width` dan `height` tetap disimpan di file prompt scene; workflow JSON meneruskannya melalui node `115` (`ResolutionSelector`) sebagai kombinasi `aspect_ratio`, `megapixels`, dan `multiple`.
+Mapping ini berlaku untuk `minimax-h3_t2v`, `minimax-h3_i2v`, `minimax-h3_i2v-panjang`, `minimax-h3_s2v`, dan `minimax-h3_r2v`. Nilai `width` dan `height` tetap disimpan di file prompt scene; workflow JSON meneruskannya melalui node `115` (`ResolutionSelector`) sebagai kombinasi `aspect_ratio`, `megapixels`, dan `multiple`.
 
 Pada workflow MiniMax, expression jumlah frame selalu menggunakan FPS `24`. Formula frame mengikuti grid valid `frame_count % 17 == 5`, sehingga durasi aktual dapat sedikit lebih panjang dari durasi input. Seluruh frame tersebut merupakan bagian dari output generasi dan tidak dipotong oleh aplikasi.
 

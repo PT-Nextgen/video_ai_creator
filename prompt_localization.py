@@ -47,7 +47,7 @@ RUNTIME_PROMPT_FILENAMES = (
 # operation (for example, an incomplete MiniMax T2V prompt blocking Flux
 # initial-image generation in a MiniMax I2V scene).
 RUNTIME_PROMPTS_BY_SCENE_TYPE = {
-    "minimax-h3_t2v_i2v": ("minimax_h3_t2v_prompt.json", "minimax_h3_i2v_prompt.json"),
+    "minimax-h3_t2v": ("minimax_h3_t2v_prompt.json",),
     "minimax-h3_i2v": ("z_image_prompt.json", "minimax_h3_i2v_prompt.json"),
     "minimax-h3_i2v-panjang": ("z_image_prompt.json", "minimax_h3_i2v_panjang_prompt.json"),
     "minimax-h3_s2v": ("z_image_prompt.json", "minimax_h3_s2v_prompt.json"),

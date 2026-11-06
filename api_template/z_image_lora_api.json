@@ -138,26 +138,12 @@
             "title": "Load CLIP"
         }
     },
-    "29": {
-        "inputs": {
-            "sage_attention": "disabled",
-            "allow_compile": false,
-            "model": [
-                "16",
-                0
-            ]
-        },
-        "class_type": "PathchSageAttentionKJ",
-        "_meta": {
-            "title": "Patch Sage Attention KJ"
-        }
-    },
     "30": {
         "inputs": {
             "lora_name": "lora name",
             "strength_model": 1,
             "model": [
-                "29",
+                "16",
                 0
             ]
         },

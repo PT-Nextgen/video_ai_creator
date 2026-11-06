@@ -168,26 +168,12 @@
             "title": "Flux2Scheduler"
         }
     },
-    "67": {
-        "inputs": {
-            "sage_attention": "disabled",
-            "allow_compile": false,
-            "model": [
-                "12",
-                0
-            ]
-        },
-        "class_type": "PathchSageAttentionKJ",
-        "_meta": {
-            "title": "Patch Sage Attention KJ"
-        }
-    },
     "82": {
         "inputs": {
             "lora_name": "lora name",
             "strength_model": 1,
             "model": [
-                "67",
+                "12",
                 0
             ]
         },

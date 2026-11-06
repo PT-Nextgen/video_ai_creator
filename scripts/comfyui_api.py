@@ -1,13 +1,10 @@
 import requests
 from scripts.timeout_config import COMFYUI_WORKFLOW_TIMEOUT_SECONDS
 import os
-import json
 from datetime import datetime
 from logging_config import get_logger, write_log
 
 logger = get_logger(__name__)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VRAM_CLEANER_API_PATH = os.path.join(PROJECT_ROOT, "api_template", "vram-cleaner-api.json")
 
 def _normalize_server(server: str) -> str:
     if not server.startswith('http://') and not server.startswith('https://'):
@@ -35,22 +32,6 @@ def post_workflow_api(workflow_json: dict, server: str):
             f"{resp.status_code} Client Error for url: {url_api}; response={resp.text[:4000]}"
         )
     return resp.json()
-
-
-def run_vram_cleaner(server: str, workflow_path: str = VRAM_CLEANER_API_PATH) -> bool:
-    try:
-        with open(workflow_path, "r", encoding="utf-8") as f:
-            workflow = json.load(f)
-    except Exception as e:
-        write_log(f"Failed to load VRAM cleaner workflow: {e}", level="error")
-        return False
-    try:
-        result = post_workflow_api(workflow, server)
-        write_log(f"Posted VRAM cleaner workflow: {json.dumps(result, ensure_ascii=False)}")
-        return True
-    except Exception as e:
-        write_log(f"Failed to post VRAM cleaner workflow: {e}", level="error")
-        return False
 
 
 def upload_file(server: str, file_path: str, file_type: str = "image"):

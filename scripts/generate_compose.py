@@ -1530,7 +1530,7 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             is_minimax_h3_av = scene_type in {
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
-                'minimax-h3_t2v_i2v',
+                'minimax-h3_t2v',
             }
             latest_video = _get_latest_scene_video(scene_dir)
             audio_composed = is_audio_composed_for_video(scene_dir, latest_video)
@@ -1548,14 +1548,14 @@ def main(project_name, specific_scenes=None, speech_volume=1.0, no_final_merge=F
             if not compose_per_scene and audio_composed and scene_type in {
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
-                'minimax-h3_t2v_i2v',
+                'minimax-h3_t2v',
             }:
                 export_scene_video_to_combined(scene_dir)
                 continue
             if compose_per_scene and audio_composed and scene_type in {
                 'minimax-h3_i2v',
                 'minimax-h3_i2v-panjang',
-                'minimax-h3_t2v_i2v',
+                'minimax-h3_t2v',
             }:
                 output_path = export_scene_video_to_combined(scene_dir)
                 if not output_path:

@@ -261,31 +261,13 @@
       "lora_name": "MINIMAX-H3/AI-Girl-Fictional.safetensors",
       "strength_model": 0,
       "model": [
-        "137",
+        "127",
         0
       ]
     },
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
       "title": "Load LoRA"
-    }
-  },
-  "137": {
-    "inputs": {
-      "reuse_threshold": 0.05,
-      "start_percent": 0.15,
-      "end_percent": 0.9,
-      "max_steps": 1,
-      "device": "auto",
-      "verbose": true,
-      "model": [
-        "127",
-        0
-      ]
-    },
-    "class_type": "UC_MiniMaxH3Cache",
-    "_meta": {
-      "title": "MiniMax H3 Cache"
     }
   }
 }

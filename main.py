@@ -553,7 +553,7 @@ def process_scene(scene_dir, server):
         if compose_audio and scene_type in {
             'minimax-h3_i2v',
             'minimax-h3_i2v-panjang',
-            'minimax-h3_t2v_i2v',
+            'minimax-h3_t2v',
         }:
             try:
                 marker_path = write_audio_composed_marker(
@@ -784,14 +784,14 @@ def process_scene(scene_dir, server):
                 pass
             return None
 
-    if scene_type == 'minimax-h3_t2v_i2v':
+    if scene_type == 'minimax-h3_t2v':
         try:
             scene_duration = float(scene_meta.get('duration_seconds', 0))
         except Exception:
             scene_duration = 0
         if not (MINIMAX_H3_DURATION_MIN <= scene_duration <= 30.0 and scene_duration == round(scene_duration, MINIMAX_H3_DURATION_DECIMALS)):
             write_log(
-                "minimax-h3_t2v_i2v scene duration must be between 0.0 and 30.0 seconds with at most 4 decimals: "
+                "minimax-h3_t2v scene duration must be between 0.0 and 30.0 seconds with at most 4 decimals: "
                 f"{scene_duration}"
             )
             return False
@@ -801,12 +801,6 @@ def process_scene(scene_dir, server):
             'minimax_h3_t2v_prompt.json',
             DEFAULT_MINIMAX_H3_T2V_PROMPT,
         )
-        _ensure_scene_json(
-            scene_dir,
-            'minimax_h3_i2v_prompt.json',
-            DEFAULT_MINIMAX_H3_I2V_PROMPT,
-        )
-
         try:
             t2v_prompt = _read_scene_json(
                 scene_dir,
@@ -814,21 +808,11 @@ def process_scene(scene_dir, server):
                 required=True,
             )
             t2v_prompt = copy.deepcopy(t2v_prompt) if isinstance(t2v_prompt, dict) else {}
-            i2v_prompt = {}
-            if scene_duration > 15:
-                i2v_prompt = _read_scene_json(
-                    scene_dir,
-                    'minimax_h3_i2v_prompt.json',
-                    required=True,
-                    preserve_structured=True,
-                )
-                i2v_prompt = copy.deepcopy(i2v_prompt) if isinstance(i2v_prompt, dict) else {}
-
         except Exception as e:
             write_log(f"Failed to read MiniMax H3 prompt files for {scene_dir}: {e}")
             return False
 
-        t2v_duration = scene_duration if scene_duration <= 15 else 15
+        t2v_duration = scene_duration
         use_fast_t2v = bool(t2v_prompt.get("fast_mode", False))
         if use_fast_t2v and bool(t2v_prompt.get("special_mode", False)):
             write_log(
@@ -914,157 +898,12 @@ def process_scene(scene_dir, server):
             write_log(f"Failed to invalidate old MiniMax H3 T2V audio source for {scene_dir}: {e}")
             return False
 
-        if scene_duration <= 15:
-            return _finalize_scene_success(
-                t2v_video_out_path,
-                is_s2v=False,
-                preserve_comfy_audio=not bool(t2v_prompt.get("remove_sound", False)),
-                compose_audio=True,
-                success_message=(
-                    f"Completed minimax-h3_t2v_i2v T2V-only processing for {scene_dir}"
-                ),
-            )
-
-        last_frame_path = os.path.join(scene_dir, 'minimax_h3_t2v_last_frame.png')
-        try:
-            _extract_last_frame_image(t2v_video_out_path, last_frame_path)
-        except Exception as e:
-            write_log(f"Failed to extract MiniMax H3 T2V last frame for {scene_dir}: {e}")
-            return False
-
-        uploaded_name = _upload_to_comfy(last_frame_path)
-        if not uploaded_name:
-            write_log(f"Failed to upload MiniMax H3 T2V last frame for {scene_dir}")
-            return False
-
-        i2v_duration = scene_duration - 15
-        use_fast_i2v = bool(i2v_prompt.get("fast_mode", False))
-        if use_fast_i2v and bool(i2v_prompt.get("special_mode", False)):
-            write_log(
-                f"MiniMax H3 I2V tidak boleh mengaktifkan Mode Cepat dan Mode Khusus bersamaan untuk {scene_dir}"
-            )
-            return False
-        i2v_build_workflow = (
-            build_minimax_h3fast_i2v_workflow
-            if use_fast_i2v
-            else build_minimax_h3_i2v_workflow
-        )
-        i2v_send_workflow = (
-            send_minimax_h3fast_i2v_workflow
-            if use_fast_i2v
-            else send_minimax_h3_i2v_workflow
-        )
-        try:
-            i2v_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
-                i2v_prompt,
-                i2v_duration,
-                include_last_frame=False,
-            )
-            i2v_workflow = i2v_build_workflow(
-                i2v_prompt,
-                scene_meta,
-                uploaded_name=uploaded_name,
-                duration_override=i2v_duration,
-                fps_override=t2v_prompt.get("fps", 24),
-            )
-            _validate_minimax_h3_i2v_workflow_frame_contract(
-                i2v_workflow,
-                i2v_duration,
-                include_last_frame=False,
-            )
-        except Exception as e:
-            write_log(f"Failed to build MiniMax H3 I2V workflow for {scene_dir}: {e}")
-            return False
-
-        i2v_result = i2v_send_workflow(
-            i2v_workflow,
-            uploaded_name,
-            server,
-            log_file=LOG_FILE,
-            source_label=os.path.join(scene_dir, 'minimax_h3_i2v_prompt.json'),
-        )
-        if not i2v_result:
-            write_log(f"send_minimax_h3_i2v_workflow failed for {scene_dir}")
-            return False
-        prompt_id = i2v_result.get('prompt_id') or i2v_result.get('id')
-        write_log(f"Posted MiniMax H3 I2V workflow for {scene_dir}, prompt_id={prompt_id}")
-        video_out = None
-        if prompt_id:
-            video_out = comfyui_api.wait_for_output(
-                server,
-                prompt_id,
-                output_type='video',
-                timeout=COMFYUI_WORKFLOW_TIMEOUT_SECONDS,
-                interval=POLL_INTERVAL,
-            )
-        if not video_out:
-            write_log(f"No MiniMax H3 I2V video found for {scene_dir} (prompt_id={prompt_id})")
-            return False
-
-        video_filename = video_out.get('filename') or video_out.get('name') or video_out.get('file')
-        video_subfolder = video_out.get('subfolder')
-        video_type = video_out.get('type')
-        if not video_filename:
-            write_log(f"Cannot determine MiniMax H3 I2V video filename: {json.dumps(video_out)}")
-            return False
-        video_url = comfyui_api.get_file_url(
-            server,
-            video_filename,
-            subfolder=video_subfolder,
-            type_=video_type,
-        )
-        i2v_video_out_path = os.path.join(scene_dir, video_filename)
-        try:
-            comfyui_api.download_file_url(video_url, i2v_video_out_path)
-            if not os.path.exists(i2v_video_out_path) or os.path.getsize(i2v_video_out_path) == 0:
-                write_log(f"Downloaded MiniMax H3 I2V file missing or empty: {i2v_video_out_path}")
-                return False
-        except Exception as e:
-            write_log(f"Failed to download MiniMax H3 I2V video {video_filename}: {e}")
-            return False
-
-        if bool(i2v_prompt.get("remove_sound", False)):
-            try:
-                _remove_video_audio(i2v_video_out_path)
-            except Exception as e:
-                write_log(f"Failed to remove MiniMax H3 I2V sound for {scene_dir}: {e}")
-                return False
-
-        try:
-            concat_tmp_path = os.path.join(scene_dir, "__minimax_h3_t2v_i2v_concat_tmp__.mp4")
-            _concat_video_segments(
-                [t2v_video_out_path, i2v_video_out_path],
-                concat_tmp_path,
-                preserve_audio=True,
-            )
-            os.replace(concat_tmp_path, i2v_video_out_path)
-            write_log(
-                f"Combined MiniMax H3 T2V + I2V stages into final video: {i2v_video_out_path}"
-            )
-        except Exception as e:
-            write_log(f"Failed to concat MiniMax H3 T2V + I2V for {scene_dir}: {e}")
-            return False
-        try:
-            _invalidate_comfy_audio_source(scene_dir)
-        except Exception as e:
-            write_log(f"Failed to invalidate old MiniMax H3 T2V-I2V audio source for {scene_dir}: {e}")
-            return False
-        final_remove_sound = bool(
-            t2v_prompt.get("remove_sound", False)
-            or i2v_prompt.get("remove_sound", False)
-        )
-        if final_remove_sound:
-            try:
-                _remove_video_audio(i2v_video_out_path)
-            except Exception as e:
-                write_log(f"Failed to remove MiniMax H3 T2V-I2V sound after concat for {scene_dir}: {e}")
-                return False
         return _finalize_scene_success(
-            i2v_video_out_path,
+            t2v_video_out_path,
             is_s2v=False,
-            preserve_comfy_audio=not final_remove_sound,
+            preserve_comfy_audio=not bool(t2v_prompt.get("remove_sound", False)),
             compose_audio=True,
-            success_message=f"Completed minimax-h3_t2v_i2v processing for {scene_dir}",
+            success_message=f"Completed minimax-h3_t2v processing for {scene_dir}",
         )
 
     if scene_type == 'minimax-h3_i2v-panjang':
@@ -1233,9 +1072,8 @@ def process_scene(scene_dir, server):
         def _validate_reference(reference, stage_number, kind):
             source = str(reference.get('source', 'none')).strip().lower()
             if source in {'', 'none'}:
-                if kind == 'first':
-                    return f"Proses {stage_number} wajib memiliki image referensi awal."
-                return None
+                label = 'awal' if kind == 'first' else 'akhir'
+                return f"Proses {stage_number} wajib memiliki image referensi {label}."
             if source == 'scene':
                 name = str(reference.get('name', '')).strip()
                 path = os.path.join(scene_dir, name) if name else None
@@ -1309,13 +1147,13 @@ def process_scene(scene_dir, server):
                 write_log(f"Failed to upload first image for minimax-h3_i2v-panjang process {stage_number}")
                 return False
             last_path = _resolve_reference(last_reference, stage_number, generated_frames)
-            if last_reference.get('source') not in {'none', ''} and not last_path:
+            if not last_path:
                 write_log(
-                    f"MiniMax H3 I2V panjang last frame reference process {stage_number} tidak ditemukan"
+                    f"MiniMax H3 I2V panjang process {stage_number} wajib memiliki image referensi akhir yang valid"
                 )
                 return False
-            last_uploaded_name = _upload_to_comfy(last_path) if last_path else None
-            if last_path and not last_uploaded_name:
+            last_uploaded_name = _upload_to_comfy(last_path)
+            if not last_uploaded_name:
                 write_log(f"Failed to upload last image for minimax-h3_i2v-panjang process {stage_number}")
                 return False
             raw_entry = prompts[stage_index]
@@ -1332,7 +1170,7 @@ def process_scene(scene_dir, server):
                 stage_prompt = _prepare_minimax_h3_i2v_prompt_for_run(
                     stage_prompt,
                     scene_duration,
-                    include_last_frame=bool(last_path),
+                    include_last_frame=True,
                 )
                 i2v_workflow = i2v_build_workflow(
                     stage_prompt,
@@ -1345,7 +1183,7 @@ def process_scene(scene_dir, server):
                 _validate_minimax_h3_i2v_workflow_frame_contract(
                     i2v_workflow,
                     scene_duration,
-                    include_last_frame=bool(last_path),
+                    include_last_frame=True,
                 )
             except Exception as e:
                 write_log(f"Failed to build MiniMax H3 I2V panjang stage {stage_index + 1}: {e}")

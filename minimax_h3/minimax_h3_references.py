@@ -137,27 +137,21 @@ def resolve_long_i2v_prompt_images(
     stage_references: list[dict] | None,
     stage_number: int,
 ) -> list[str]:
-    """Return first-frame then optional last-frame paths in ComfyUI order."""
+    """Return the required first-frame and last-frame paths in ComfyUI order."""
     stage = int(stage_number)
     configured = stage_references if isinstance(stage_references, list) else []
     if not configured:
-        first = (
-            find_latest_root_image(scene_dir)
-            if stage == 1
-            else ensure_stage_last_frame(scene_dir, stage - 1)
-        )
-        return [first] if first else []
+        return []
     entry = configured[stage - 1] if 0 < stage <= len(configured) else {}
     entry = entry if isinstance(entry, dict) else {}
     first = resolve_stage_reference_path(scene_dir, entry.get("first"), stage)
     if not first:
         return []
-    paths = [first]
     last_reference = entry.get("last") if isinstance(entry.get("last"), dict) else {}
     last_source = str(last_reference.get("source", "none") or "none").strip().lower()
-    if last_source not in {"", "none"}:
-        last = resolve_stage_reference_path(scene_dir, last_reference, stage)
-        if not last:
-            return []
-        paths.append(last)
-    return paths
+    if last_source in {"", "none"}:
+        return []
+    last = resolve_stage_reference_path(scene_dir, last_reference, stage)
+    if not last:
+        return []
+    return [first, last]

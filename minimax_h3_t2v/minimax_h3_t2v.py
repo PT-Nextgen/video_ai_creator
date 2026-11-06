@@ -35,13 +35,7 @@ SIZE_OPTIONS = [
     ("1344x768", 1344, 768),
 ]
 
-DEFAULT_H3_CACHE = {
-    "steps": 20,
-    "reuse_threshold": 0.05,
-    "start_percent": 0.15,
-    "end_percent": 0.90,
-    "max_steps": 1,
-}
+DEFAULT_H3_STEPS = 20
 
 DEFAULT_PROMPT = {
     "prompt_instruction": "",
@@ -60,51 +54,31 @@ DEFAULT_PROMPT = {
     "remove_sound": False,
     "fast_mode": False,
     "special_mode": False,
-    "h3_cache_enabled": True,
-    "h3_cache": copy.deepcopy(DEFAULT_H3_CACHE),
+    # Keep the legacy storage key so existing scene files retain their Steps
+    # value while the H3 Cache node itself is no longer part of the workflow.
+    "h3_cache": {"steps": DEFAULT_H3_STEPS},
 }
 
 
-def _h3_cache_values(prompt: dict) -> dict:
+def _steps_value(prompt: dict) -> int:
     raw = prompt.get("h3_cache") if isinstance(prompt, dict) else None
     raw = raw if isinstance(raw, dict) else {}
-    values = {}
-    specs = {
-        "steps": (int, 4, 50),
-        "reuse_threshold": (float, 0.0, 0.5),
-        "start_percent": (float, 0.0, 1.0),
-        "end_percent": (float, 0.0, 1.0),
-        "max_steps": (int, 1, 3),
-    }
-    for key, (converter, minimum, maximum) in specs.items():
-        value = raw[key] if key in raw else DEFAULT_H3_CACHE[key]
-        if isinstance(value, str) and not value.strip():
-            raise ValueError(f"H3 Cache {key} wajib diisi")
-        try:
-            parsed = converter(value)
-        except (TypeError, ValueError):
-            raise ValueError(f"H3 Cache {key} tidak valid") from None
-        if converter is int and isinstance(value, float) and not value.is_integer():
-            raise ValueError(f"H3 Cache {key} harus integer")
-        if not minimum <= parsed <= maximum:
-            raise ValueError(f"H3 Cache {key} di luar rentang")
-        values[key] = parsed
-    return values
+    value = raw.get("steps", prompt.get("steps", DEFAULT_H3_STEPS) if isinstance(prompt, dict) else DEFAULT_H3_STEPS)
+    if isinstance(value, str) and not value.strip():
+        raise ValueError("Steps wajib diisi")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Steps tidak valid") from None
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("Steps harus integer")
+    if not 4 <= parsed <= 50:
+        raise ValueError("Steps harus berada pada 4 sampai 50")
+    return parsed
 
 
-def _apply_h3_cache(workflow: dict, prompt: dict) -> None:
-    values = _h3_cache_values(prompt)
-    # Steps adalah parameter sampler terpisah dari node H3 Cache dan selalu
-    # diterapkan, termasuk saat node cache dinonaktifkan.
-    _set_input(workflow, "124", "steps", values["steps"])
-    if not bool(prompt.get("h3_cache_enabled", True)):
-        workflow.pop("137", None)
-        _set_input(workflow, "136", "model", ["127", 0])
-        return
-    _set_input(workflow, "137", "reuse_threshold", values["reuse_threshold"])
-    _set_input(workflow, "137", "start_percent", values["start_percent"])
-    _set_input(workflow, "137", "end_percent", values["end_percent"])
-    _set_input(workflow, "137", "max_steps", values["max_steps"])
+def _apply_steps(workflow: dict, prompt: dict) -> None:
+    _set_input(workflow, "124", "steps", _steps_value(prompt))
 
 
 def _load_template(name: str = TEMPLATE) -> dict:
@@ -255,7 +229,7 @@ def build_workflow(
         prompt.get("lora_name_2", DEFAULT_PROMPT["lora_name_2"]),
         prompt.get("lora_strength_2", DEFAULT_PROMPT["lora_strength_2"]),
     )
-    _apply_h3_cache(workflow, prompt)
+    _apply_steps(workflow, prompt)
     return _inject_random_noise_seed(workflow)
 
 
